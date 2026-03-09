@@ -8,16 +8,17 @@ from . import APP_NAME, DEFAULT_BOTTLE_NAME
 from .advisor import recommend_dependencies
 from .bottle import app_support_root, bottle_paths, ensure_bottle_dirs
 from .dxvk import install_dxvk
-from .runtime import is_apple_silicon, resolve_executable, run_logged
+from .runtime import is_apple_silicon, resolve_executable, resolve_with_fallback, run_logged
 from .scanner import scan_game_dir
 from .steam import find_app, install_steam, launch_app, list_installed_apps, run_steam, steam_windows_path
 from .winetricks import run_winetricks
 
 
 def _require_wine64(args: argparse.Namespace) -> Path:
-    if not args.wine64:
+    wine_arg = args.wine64 or args.wine
+    if not wine_arg:
         raise SystemExit("--wine64 is required for this command")
-    return resolve_executable(args.wine64, "wine64")
+    return resolve_with_fallback(wine_arg, "wine64", ("wine",))
 
 
 def cmd_info(args: argparse.Namespace) -> None:
@@ -155,7 +156,8 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--bottle", default=DEFAULT_BOTTLE_NAME, help=f"Bottle name (default: {DEFAULT_BOTTLE_NAME})")
-    parser.add_argument("--wine64", help="Path to wine64 executable (example: /opt/local/bin/wine64)")
+    parser.add_argument("--wine64", help="Path to the Wine launcher (example: /opt/local/bin/wine64 or /opt/local/bin/wine)")
+    parser.add_argument("--wine", dest="wine", help="Alias for --wine64 for compatibility with older usage")
 
     sub = parser.add_subparsers(dest="cmd", required=True)
 

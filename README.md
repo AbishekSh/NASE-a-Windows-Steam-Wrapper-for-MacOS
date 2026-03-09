@@ -19,19 +19,19 @@ Basic usage:
 python3 mysteamwine.py info
 
 # initialize a bottle
-python3 mysteamwine.py --wine64 /opt/local/bin/wine64 init
+python3 mysteamwine.py --wine64 /opt/local/bin/wine init
 
 # download and install Steam
-python3 mysteamwine.py --wine64 /opt/local/bin/wine64 install-steam
+python3 mysteamwine.py --wine64 /opt/local/bin/wine install-steam
 
 # launch Steam
-python3 mysteamwine.py --wine64 /opt/local/bin/wine64 run-steam
+python3 mysteamwine.py --wine64 /opt/local/bin/wine run-steam
 
 # list installed Steam games from manifests
 python3 mysteamwine.py list-games
 
 # launch a game by Steam AppID
-python3 mysteamwine.py --wine64 /opt/local/bin/wine64 launch-game --appid 620
+python3 mysteamwine.py --wine64 /opt/local/bin/wine launch-game --appid 620
 ```
 
 Dependency tools:
@@ -44,7 +44,7 @@ python3 mysteamwine.py winetricks --verbs vcrun2019,d3dx9
 python3 mysteamwine.py install-dxvk --dxvk-source ~/Downloads/dxvk-2.4.tar.gz
 
 # scan a game folder and get rule-based recommendations
-python3 mysteamwine.py advise-game --appid 620
+python3 mysteamwine.py advise-game --appid 2056220
 python3 mysteamwine.py scan-game --path "/path/to/game"
 ```
 

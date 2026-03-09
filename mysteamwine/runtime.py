@@ -40,6 +40,29 @@ def resolve_executable(path_or_name: str, label: str) -> Path:
     return resolved
 
 
+def resolve_with_fallback(path_or_name: str, label: str, fallback_names: tuple[str, ...]) -> Path:
+    try:
+        return resolve_executable(path_or_name, label)
+    except FileNotFoundError:
+        original = Path(path_or_name).expanduser()
+        candidates: list[str] = []
+
+        if original.name:
+            for fallback in fallback_names:
+                if original.is_absolute() or "/" in path_or_name:
+                    candidates.append(str(original.with_name(fallback)))
+                else:
+                    candidates.append(fallback)
+
+        for candidate in candidates:
+            try:
+                return resolve_executable(candidate, label)
+            except FileNotFoundError:
+                continue
+
+        raise
+
+
 def download(url: str, dest: Path) -> None:
     ensure_dirs(dest.parent)
     if dest.exists() and dest.stat().st_size > 0:
