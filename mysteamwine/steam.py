@@ -30,6 +30,19 @@ def steam_setup_exe(bottle: Bottle) -> Path:
     return bottle.downloads / "SteamSetup.exe"
 
 
+def _wineserver_path(wine_path: Path) -> Path:
+    candidate = wine_path.with_name("wineserver")
+    if candidate.exists():
+        return candidate
+    raise FileNotFoundError(f"wineserver not found next to Wine binary: {candidate}")
+
+
+def _dxvk_launch_env(bottle: Bottle, wine_debug: str) -> dict[str, str]:
+    env = {"WINEPREFIX": str(bottle.prefix), "WINEDEBUG": wine_debug}
+    env["WINEDLLOVERRIDES"] = "d3d11=n;dxgi=n;d3d10core=n;d3d9=n"
+    return env
+
+
 def install_steam(*, bottle: Bottle, wine64_path: Path) -> tuple[int, str]:
     ensure_bottle_dirs(bottle)
     installer = steam_setup_exe(bottle)
@@ -41,16 +54,38 @@ def install_steam(*, bottle: Bottle, wine64_path: Path) -> tuple[int, str]:
     )
 
 
-def run_steam(*, bottle: Bottle, wine64_path: Path, steam_path: str | None = None, extra_args: list[str] | None = None) -> tuple[int, str]:
+def run_steam(
+    *,
+    bottle: Bottle,
+    wine64_path: Path,
+    steam_path: str | None = None,
+    extra_args: list[str] | None = None,
+    wait: bool = True,
+    extra_env: dict[str, str] | None = None,
+) -> tuple[int, str]:
     ensure_bottle_dirs(bottle)
     args = [str(wine64_path), steam_path or steam_windows_path()]
     if extra_args:
         args.extend(extra_args)
-    return run_logged(
+    env = {"WINEPREFIX": str(bottle.prefix), "WINEDEBUG": "-all"}
+    if extra_env:
+        env.update(extra_env)
+    code, tail = run_logged(
         cmd=args,
-        env={"WINEPREFIX": str(bottle.prefix), "WINEDEBUG": "-all"},
+        env=env,
         log_file=bottle.logs / "03_run_steam.log",
     )
+    if code != 0 or not wait:
+        return code, tail
+
+    wineserver = _wineserver_path(wine64_path)
+    wait_code, wait_tail = run_logged(
+        cmd=[str(wineserver), "-w"],
+        env=env,
+        log_file=bottle.logs / "03_run_steam.log",
+    )
+    combined_tail = "\n".join(part for part in (tail, wait_tail) if part)
+    return wait_code, combined_tail
 
 
 def launch_app(*, bottle: Bottle, wine64_path: Path, appid: str) -> tuple[int, str]:
@@ -59,7 +94,65 @@ def launch_app(*, bottle: Bottle, wine64_path: Path, appid: str) -> tuple[int, s
         wine64_path=wine64_path,
         steam_path=steam_windows_path(),
         extra_args=["-applaunch", appid],
+        wait=True,
+        extra_env={"WINEDLLOVERRIDES": "d3d11=n;dxgi=n;d3d10core=n;d3d9=n"},
     )
+
+
+def guess_game_executable(install_dir: Path) -> Path:
+    candidates = sorted(install_dir.glob("*.exe"))
+    if not candidates:
+        raise FileNotFoundError(f"No .exe files found in {install_dir}")
+
+    def rank(path: Path) -> tuple[int, str]:
+        name = path.name.lower()
+        penalty = 0
+        if "crashhandler" in name:
+            penalty += 100
+        if "unins" in name or "setup" in name or "launcher" in name:
+            penalty += 50
+        if path.stem.lower() == install_dir.name.lower():
+            penalty -= 20
+        return penalty, name
+
+    return min(candidates, key=rank)
+
+
+def run_game_executable(
+    *,
+    bottle: Bottle,
+    wine64_path: Path,
+    executable: Path,
+    extra_args: list[str] | None = None,
+    wine_debug: str = "+timestamp,+seh,+loaddll",
+    wait: bool = True,
+) -> tuple[int, str]:
+    ensure_bottle_dirs(bottle)
+    exe_path = executable.expanduser().resolve()
+    if not exe_path.exists():
+        raise FileNotFoundError(f"Game executable not found: {exe_path}")
+
+    command = [str(wine64_path), str(exe_path)]
+    if extra_args:
+        command.extend(extra_args)
+
+    code, tail = run_logged(
+        cmd=command,
+        env=_dxvk_launch_env(bottle, wine_debug),
+        log_file=bottle.logs / "04_debug_game.log",
+        cwd=exe_path.parent,
+    )
+    if code != 0 or not wait:
+        return code, tail
+
+    wineserver = _wineserver_path(wine64_path)
+    wait_code, wait_tail = run_logged(
+        cmd=[str(wineserver), "-w"],
+        env=_dxvk_launch_env(bottle, wine_debug),
+        log_file=bottle.logs / "04_debug_game.log",
+    )
+    combined_tail = "\n".join(part for part in (tail, wait_tail) if part)
+    return wait_code, combined_tail
 
 
 def _tokenize_vdf(text: str) -> Iterator[str]:

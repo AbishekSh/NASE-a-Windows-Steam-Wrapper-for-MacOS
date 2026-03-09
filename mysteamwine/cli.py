@@ -10,7 +10,16 @@ from .bottle import app_support_root, bottle_paths, ensure_bottle_dirs
 from .dxvk import install_dxvk
 from .runtime import is_apple_silicon, resolve_executable, resolve_with_fallback, run_logged
 from .scanner import scan_game_dir
-from .steam import find_app, install_steam, launch_app, list_installed_apps, run_steam, steam_windows_path
+from .steam import (
+    find_app,
+    guess_game_executable,
+    install_steam,
+    launch_app,
+    list_installed_apps,
+    run_game_executable,
+    run_steam,
+    steam_windows_path,
+)
 from .winetricks import run_winetricks
 
 
@@ -61,10 +70,18 @@ def cmd_run_steam(args: argparse.Namespace) -> None:
     wine64 = _require_wine64(args)
     bottle = bottle_paths(args.bottle)
     print(f"Launching Steam in bottle '{bottle.name}'...")
-    code, tail = run_steam(bottle=bottle, wine64_path=wine64, steam_path=args.steam_path)
+    code, tail = run_steam(
+        bottle=bottle,
+        wine64_path=wine64,
+        steam_path=args.steam_path,
+        wait=not args.no_wait,
+    )
     if code != 0:
         raise SystemExit(f"Steam launch failed (exit {code}). Tail:\n{tail}")
-    print("Steam exited.")
+    if args.no_wait:
+        print("Steam launched.")
+    else:
+        print("Steam exited.")
 
 
 def cmd_run_winetricks(args: argparse.Namespace) -> None:
@@ -108,6 +125,37 @@ def cmd_launch_game(args: argparse.Namespace) -> None:
     code, tail = launch_app(bottle=bottle, wine64_path=wine64, appid=args.appid)
     if code != 0:
         raise SystemExit(f"App launch failed (exit {code}). Tail:\n{tail}")
+
+
+def _resolve_debug_executable(args: argparse.Namespace) -> Path:
+    if args.exe:
+        return Path(args.exe)
+    if args.appid:
+        bottle = bottle_paths(args.bottle)
+        app = find_app(bottle, args.appid)
+        return guess_game_executable(app.install_dir)
+    raise SystemExit("Provide either --appid or --exe")
+
+
+def cmd_debug_game(args: argparse.Namespace) -> None:
+    wine64 = _require_wine64(args)
+    bottle = bottle_paths(args.bottle)
+    executable = _resolve_debug_executable(args)
+    extra_args = list(args.game_args or [])
+    if extra_args and extra_args[0] == "--":
+        extra_args = extra_args[1:]
+    print(f"Launching {executable.name} directly with Wine debug logging...")
+    code, tail = run_game_executable(
+        bottle=bottle,
+        wine64_path=wine64,
+        executable=executable,
+        extra_args=extra_args,
+        wine_debug=args.wine_debug,
+        wait=not args.no_wait,
+    )
+    if code != 0:
+        raise SystemExit(f"Direct game launch failed (exit {code}). Tail:\n{tail}")
+    print("Game process exited.")
 
 
 def _resolve_scan_target(args: argparse.Namespace) -> Path:
@@ -167,6 +215,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     run_cmd = sub.add_parser("run-steam", help="Launch Steam.exe inside the bottle")
     run_cmd.add_argument("--steam-path", default=steam_windows_path(), help="Windows path to Steam.exe")
+    run_cmd.add_argument("--no-wait", action="store_true", help="Return immediately after launching Steam")
     run_cmd.set_defaults(func=cmd_run_steam)
 
     tricks_cmd = sub.add_parser("winetricks", help="Run winetricks verbs against the bottle")
@@ -186,6 +235,14 @@ def build_parser() -> argparse.ArgumentParser:
     launch_cmd = sub.add_parser("launch-game", help="Launch a Steam game by AppID")
     launch_cmd.add_argument("--appid", required=True, help="Steam AppID")
     launch_cmd.set_defaults(func=cmd_launch_game)
+
+    debug_cmd = sub.add_parser("debug-game", help="Launch a game executable directly with Wine debug logging")
+    debug_cmd.add_argument("--appid", help="Steam AppID to resolve to an installed game executable")
+    debug_cmd.add_argument("--exe", help="Explicit path to a Windows game executable inside the bottle")
+    debug_cmd.add_argument("--wine-debug", default="+timestamp,+seh,+loaddll", help="WINEDEBUG value for the direct launch")
+    debug_cmd.add_argument("--no-wait", action="store_true", help="Return immediately after launching the executable")
+    debug_cmd.add_argument("game_args", nargs=argparse.REMAINDER, help="Arguments passed through to the game after --")
+    debug_cmd.set_defaults(func=cmd_debug_game)
 
     for name, handler, help_text in (
         ("scan-game", cmd_scan_game, "Scan a game folder for dependency markers"),

@@ -41,7 +41,7 @@ Dependency tools:
 python3 mysteamwine.py winetricks --verbs vcrun2019,d3dx9
 
 # install DXVK from a local release archive or extracted folder
-python3 mysteamwine.py install-dxvk --dxvk-source ~/Downloads/dxvk-2.4.tar.gz
+python3 mysteamwine.py install-dxvk --dxvk-source ~/Downloads/dxvk-2.3.tar.gz
 
 # scan a game folder and get rule-based recommendations
 python3 mysteamwine.py advise-game --appid 2056220
