@@ -8,7 +8,8 @@ from .bottle import Bottle, ensure_bottle_dirs
 from .runtime import run_logged
 
 
-DXVK_DLL_OVERRIDES = ("d3d9", "d3d10core", "d3d11", "dxgi")
+UPSTREAM_DXVK_DLL_OVERRIDES = ("d3d9", "d3d10core", "d3d11", "dxgi")
+MACOS_DXVK_DLL_OVERRIDES = ("d3d10core", "d3d11")
 
 
 def _extract_archive(archive: Path, target_dir: Path) -> Path:
@@ -78,8 +79,14 @@ def _upsert_user_reg_section(user_reg: Path, section: str, entries: dict[str, st
     user_reg.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def _enable_dxvk_overrides(bottle: Bottle, without_dxgi: bool) -> None:
-    overrides = {name: "native" for name in DXVK_DLL_OVERRIDES if not (without_dxgi and name == "dxgi")}
+def _select_overrides(dxvk_flavor: str, without_dxgi: bool) -> tuple[str, ...]:
+    if dxvk_flavor == "macos":
+        return MACOS_DXVK_DLL_OVERRIDES
+    return tuple(name for name in UPSTREAM_DXVK_DLL_OVERRIDES if not (without_dxgi and name == "dxgi"))
+
+
+def _enable_dxvk_overrides(bottle: Bottle, *, dxvk_flavor: str, without_dxgi: bool) -> None:
+    overrides = {name: "native" for name in _select_overrides(dxvk_flavor, without_dxgi)}
     _upsert_user_reg_section(
         bottle.prefix / "user.reg",
         r"Software\\Wine\\DllOverrides",
@@ -87,12 +94,20 @@ def _enable_dxvk_overrides(bottle: Bottle, without_dxgi: bool) -> None:
     )
 
 
-def _copy_dxvk_payload(*, dxvk_root: Path, bottle: Bottle) -> tuple[int, str]:
-    x64_dir = dxvk_root / "x64"
-    x32_dir = dxvk_root / "x32"
+def _copy_dxvk_payload(*, dxvk_root: Path, bottle: Bottle, dxvk_flavor: str, without_dxgi: bool) -> tuple[int, str]:
+    if (dxvk_root / "x64").is_dir() and (dxvk_root / "x32").is_dir():
+        x64_dir = dxvk_root / "x64"
+        x32_dir = dxvk_root / "x32"
+    elif (dxvk_root / "x86_64-windows").is_dir() and (dxvk_root / "i386-windows").is_dir():
+        x64_dir = dxvk_root / "x86_64-windows"
+        x32_dir = dxvk_root / "i386-windows"
+    else:
+        x64_dir = dxvk_root / "x64"
+        x32_dir = dxvk_root / "x32"
     if not x64_dir.is_dir() or not x32_dir.is_dir():
         raise FileNotFoundError(
-            f"DXVK directory must contain either setup_dxvk.sh or x32/ and x64/ folders: {dxvk_root}"
+            "DXVK directory must contain either setup_dxvk.sh, x32/ and x64/, "
+            f"or i386-windows/ and x86_64-windows/: {dxvk_root}"
         )
 
     system32 = bottle.drive_c / "windows" / "system32"
@@ -107,7 +122,7 @@ def _copy_dxvk_payload(*, dxvk_root: Path, bottle: Bottle) -> tuple[int, str]:
             shutil.copy2(dll, destination)
             copied.append(str(destination))
 
-    _enable_dxvk_overrides(bottle, without_dxgi=False)
+    _enable_dxvk_overrides(bottle, dxvk_flavor=dxvk_flavor, without_dxgi=without_dxgi)
     return 0, "\n".join(copied)
 
 
@@ -115,6 +130,7 @@ def install_dxvk(
     *,
     bottle: Bottle,
     dxvk_source: Path,
+    dxvk_flavor: str = "upstream",
     use_symlinks: bool = False,
     without_dxgi: bool = False,
 ) -> tuple[int, str]:
@@ -123,9 +139,14 @@ def install_dxvk(
     try:
         setup_script = find_setup_script(dxvk_root)
     except FileNotFoundError:
-        if use_symlinks or without_dxgi:
+        if use_symlinks:
             raise
-        return _copy_dxvk_payload(dxvk_root=dxvk_root, bottle=bottle)
+        return _copy_dxvk_payload(
+            dxvk_root=dxvk_root,
+            bottle=bottle,
+            dxvk_flavor=dxvk_flavor,
+            without_dxgi=without_dxgi,
+        )
 
     command = ["/bin/bash", str(setup_script), "install"]
     if use_symlinks:
@@ -140,5 +161,5 @@ def install_dxvk(
         cwd=dxvk_root,
     )
     if code == 0:
-        _enable_dxvk_overrides(bottle, without_dxgi=without_dxgi)
+        _enable_dxvk_overrides(bottle, dxvk_flavor=dxvk_flavor, without_dxgi=without_dxgi)
     return code, tail

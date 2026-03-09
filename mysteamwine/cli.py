@@ -7,6 +7,7 @@ from pathlib import Path
 from . import APP_NAME, DEFAULT_BOTTLE_NAME
 from .advisor import recommend_dependencies
 from .bottle import app_support_root, bottle_paths, ensure_bottle_dirs
+from .dxmt import install_dxmt
 from .dxvk import install_dxvk
 from .runtime import is_apple_silicon, resolve_executable, resolve_with_fallback, run_logged
 from .scanner import scan_game_dir
@@ -75,6 +76,7 @@ def cmd_run_steam(args: argparse.Namespace) -> None:
         wine64_path=wine64,
         steam_path=args.steam_path,
         wait=not args.no_wait,
+        graphics_backend=args.graphics_backend,
     )
     if code != 0:
         raise SystemExit(f"Steam launch failed (exit {code}). Tail:\n{tail}")
@@ -100,11 +102,22 @@ def cmd_install_dxvk(args: argparse.Namespace) -> None:
     code, tail = install_dxvk(
         bottle=bottle,
         dxvk_source=Path(args.dxvk_source),
+        dxvk_flavor=args.dxvk_flavor,
         use_symlinks=args.symlink,
         without_dxgi=args.without_dxgi,
     )
     if code != 0:
         raise SystemExit(f"DXVK install failed (exit {code}). Tail:\n{tail}")
+
+
+def cmd_install_dxmt(args: argparse.Namespace) -> None:
+    bottle = bottle_paths(args.bottle)
+    code, tail = install_dxmt(
+        bottle=bottle,
+        dxmt_source=Path(args.dxmt_source),
+    )
+    if code != 0:
+        raise SystemExit(f"DXMT install failed (exit {code}). Tail:\n{tail}")
 
 
 def cmd_list_games(args: argparse.Namespace) -> None:
@@ -122,7 +135,12 @@ def cmd_launch_game(args: argparse.Namespace) -> None:
     bottle = bottle_paths(args.bottle)
     app = find_app(bottle, args.appid)
     print(f"Launching {app.name} ({app.appid}) via Steam.")
-    code, tail = launch_app(bottle=bottle, wine64_path=wine64, appid=args.appid)
+    code, tail = launch_app(
+        bottle=bottle,
+        wine64_path=wine64,
+        appid=args.appid,
+        graphics_backend=args.graphics_backend,
+    )
     if code != 0:
         raise SystemExit(f"App launch failed (exit {code}). Tail:\n{tail}")
 
@@ -152,6 +170,7 @@ def cmd_debug_game(args: argparse.Namespace) -> None:
         extra_args=extra_args,
         wine_debug=args.wine_debug,
         wait=not args.no_wait,
+        graphics_backend=args.graphics_backend,
     )
     if code != 0:
         raise SystemExit(f"Direct game launch failed (exit {code}). Tail:\n{tail}")
@@ -204,8 +223,17 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--bottle", default=DEFAULT_BOTTLE_NAME, help=f"Bottle name (default: {DEFAULT_BOTTLE_NAME})")
-    parser.add_argument("--wine64", help="Path to the Wine launcher (example: /opt/local/bin/wine64 or /opt/local/bin/wine)")
+    parser.add_argument(
+        "--wine64",
+        help="Path to the Wine launcher (example: /opt/homebrew/bin/wine or /opt/homebrew/bin/wine64)",
+    )
     parser.add_argument("--wine", dest="wine", help="Alias for --wine64 for compatibility with older usage")
+    parser.add_argument(
+        "--graphics-backend",
+        choices=("dxvk", "dxmt", "none"),
+        default="dxvk",
+        help="Graphics backend override to apply at launch time (default: dxvk)",
+    )
 
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -226,9 +254,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     dxvk_cmd = sub.add_parser("install-dxvk", help="Install DXVK into the bottle from a local folder or tar.gz")
     dxvk_cmd.add_argument("--dxvk-source", required=True, help="Path to a DXVK directory or tar.gz archive")
+    dxvk_cmd.add_argument(
+        "--dxvk-flavor",
+        choices=("upstream", "macos"),
+        default="upstream",
+        help="DXVK layout to install (default: upstream)",
+    )
     dxvk_cmd.add_argument("--symlink", action="store_true", help="Use symlinks instead of copying DLLs")
     dxvk_cmd.add_argument("--without-dxgi", action="store_true", help="Skip dxgi.dll override")
     dxvk_cmd.set_defaults(func=cmd_install_dxvk)
+
+    dxmt_cmd = sub.add_parser("install-dxmt", help="Install DXMT into the bottle from a local folder or tar.gz")
+    dxmt_cmd.add_argument("--dxmt-source", required=True, help="Path to a DXMT directory or tar.gz archive")
+    dxmt_cmd.set_defaults(func=cmd_install_dxmt)
 
     sub.add_parser("list-games", help="List installed Steam games discovered from manifests").set_defaults(func=cmd_list_games)
 

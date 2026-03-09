@@ -37,9 +37,12 @@ def _wineserver_path(wine_path: Path) -> Path:
     raise FileNotFoundError(f"wineserver not found next to Wine binary: {candidate}")
 
 
-def _dxvk_launch_env(bottle: Bottle, wine_debug: str) -> dict[str, str]:
+def _graphics_launch_env(bottle: Bottle, wine_debug: str, graphics_backend: str) -> dict[str, str]:
     env = {"WINEPREFIX": str(bottle.prefix), "WINEDEBUG": wine_debug}
-    env["WINEDLLOVERRIDES"] = "d3d11=n;dxgi=n;d3d10core=n;d3d9=n"
+    if graphics_backend == "dxvk":
+        env["WINEDLLOVERRIDES"] = "d3d11=n;dxgi=n;d3d10core=n;d3d9=n"
+    elif graphics_backend == "dxmt":
+        env["WINEDLLOVERRIDES"] = "dxgi=n,b;d3d11=n,b;d3d10core=n,b;winemetal=n,b"
     return env
 
 
@@ -62,12 +65,13 @@ def run_steam(
     extra_args: list[str] | None = None,
     wait: bool = True,
     extra_env: dict[str, str] | None = None,
+    graphics_backend: str = "dxvk",
 ) -> tuple[int, str]:
     ensure_bottle_dirs(bottle)
     args = [str(wine64_path), steam_path or steam_windows_path()]
     if extra_args:
         args.extend(extra_args)
-    env = {"WINEPREFIX": str(bottle.prefix), "WINEDEBUG": "-all"}
+    env = _graphics_launch_env(bottle, "-all", graphics_backend)
     if extra_env:
         env.update(extra_env)
     code, tail = run_logged(
@@ -88,14 +92,14 @@ def run_steam(
     return wait_code, combined_tail
 
 
-def launch_app(*, bottle: Bottle, wine64_path: Path, appid: str) -> tuple[int, str]:
+def launch_app(*, bottle: Bottle, wine64_path: Path, appid: str, graphics_backend: str = "dxvk") -> tuple[int, str]:
     return run_steam(
         bottle=bottle,
         wine64_path=wine64_path,
         steam_path=steam_windows_path(),
         extra_args=["-applaunch", appid],
         wait=True,
-        extra_env={"WINEDLLOVERRIDES": "d3d11=n;dxgi=n;d3d10core=n;d3d9=n"},
+        graphics_backend=graphics_backend,
     )
 
 
@@ -126,6 +130,7 @@ def run_game_executable(
     extra_args: list[str] | None = None,
     wine_debug: str = "+timestamp,+seh,+loaddll",
     wait: bool = True,
+    graphics_backend: str = "dxvk",
 ) -> tuple[int, str]:
     ensure_bottle_dirs(bottle)
     exe_path = executable.expanduser().resolve()
@@ -138,7 +143,7 @@ def run_game_executable(
 
     code, tail = run_logged(
         cmd=command,
-        env=_dxvk_launch_env(bottle, wine_debug),
+        env=_graphics_launch_env(bottle, wine_debug, graphics_backend),
         log_file=bottle.logs / "04_debug_game.log",
         cwd=exe_path.parent,
     )
@@ -148,7 +153,7 @@ def run_game_executable(
     wineserver = _wineserver_path(wine64_path)
     wait_code, wait_tail = run_logged(
         cmd=[str(wineserver), "-w"],
-        env=_dxvk_launch_env(bottle, wine_debug),
+        env=_graphics_launch_env(bottle, wine_debug, graphics_backend),
         log_file=bottle.logs / "04_debug_game.log",
     )
     combined_tail = "\n".join(part for part in (tail, wait_tail) if part)
