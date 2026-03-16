@@ -65,7 +65,7 @@ def run_steam(
     extra_args: list[str] | None = None,
     wait: bool = True,
     extra_env: dict[str, str] | None = None,
-    graphics_backend: str = "dxvk",
+    graphics_backend: str = "none",
 ) -> tuple[int, str]:
     ensure_bottle_dirs(bottle)
     args = [str(wine64_path), steam_path or steam_windows_path()]
@@ -92,7 +92,7 @@ def run_steam(
     return wait_code, combined_tail
 
 
-def launch_app(*, bottle: Bottle, wine64_path: Path, appid: str, graphics_backend: str = "dxvk") -> tuple[int, str]:
+def launch_app(*, bottle: Bottle, wine64_path: Path, appid: str, graphics_backend: str = "dxmt") -> tuple[int, str]:
     return run_steam(
         bottle=bottle,
         wine64_path=wine64_path,
@@ -130,7 +130,7 @@ def run_game_executable(
     extra_args: list[str] | None = None,
     wine_debug: str = "+timestamp,+seh,+loaddll",
     wait: bool = True,
-    graphics_backend: str = "dxvk",
+    graphics_backend: str = "dxmt",
 ) -> tuple[int, str]:
     ensure_bottle_dirs(bottle)
     exe_path = executable.expanduser().resolve()

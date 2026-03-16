@@ -6,7 +6,7 @@ from pathlib import Path
 
 from . import APP_NAME, DEFAULT_BOTTLE_NAME
 from .advisor import recommend_dependencies
-from .bottle import app_support_root, bottle_paths, ensure_bottle_dirs
+from .bottle import app_support_root, bottle_paths, ensure_bottle_dirs, external_prefix_paths, wipe_all_bottles
 from .dxmt import install_dxmt
 from .dxvk import install_dxvk
 from .runtime import is_apple_silicon, resolve_executable, resolve_with_fallback, run_logged
@@ -31,8 +31,20 @@ def _require_wine64(args: argparse.Namespace) -> Path:
     return resolve_with_fallback(wine_arg, "wine64", ("wine",))
 
 
+def _resolve_bottle(args: argparse.Namespace):
+    if getattr(args, "prefix", None):
+        return external_prefix_paths(Path(args.prefix))
+    return bottle_paths(args.bottle)
+
+
+def _resolved_graphics_backend(args: argparse.Namespace, *, for_steam: bool) -> str:
+    if args.graphics_backend == "auto":
+        return "none" if for_steam else "dxmt"
+    return args.graphics_backend
+
+
 def cmd_info(args: argparse.Namespace) -> None:
-    bottle = bottle_paths(args.bottle)
+    bottle = _resolve_bottle(args)
     print(f"APP SUPPORT ROOT: {app_support_root()}")
     print(f"BOTTLE ROOT:      {bottle.root}")
     print(f"PREFIX:           {bottle.prefix}")
@@ -44,7 +56,7 @@ def cmd_info(args: argparse.Namespace) -> None:
 
 def cmd_init(args: argparse.Namespace) -> None:
     wine64 = _require_wine64(args)
-    bottle = bottle_paths(args.bottle)
+    bottle = _resolve_bottle(args)
     ensure_bottle_dirs(bottle)
     print(f"Initializing bottle '{bottle.name}' at: {bottle.prefix}")
     code, tail = run_logged(
@@ -59,7 +71,7 @@ def cmd_init(args: argparse.Namespace) -> None:
 
 def cmd_install_steam(args: argparse.Namespace) -> None:
     wine64 = _require_wine64(args)
-    bottle = bottle_paths(args.bottle)
+    bottle = _resolve_bottle(args)
     print(f"Installing Steam into bottle '{bottle.name}'...")
     code, tail = install_steam(bottle=bottle, wine64_path=wine64)
     if code != 0:
@@ -69,14 +81,14 @@ def cmd_install_steam(args: argparse.Namespace) -> None:
 
 def cmd_run_steam(args: argparse.Namespace) -> None:
     wine64 = _require_wine64(args)
-    bottle = bottle_paths(args.bottle)
+    bottle = _resolve_bottle(args)
     print(f"Launching Steam in bottle '{bottle.name}'...")
     code, tail = run_steam(
         bottle=bottle,
         wine64_path=wine64,
         steam_path=args.steam_path,
         wait=not args.no_wait,
-        graphics_backend=args.graphics_backend,
+        graphics_backend=_resolved_graphics_backend(args, for_steam=True),
     )
     if code != 0:
         raise SystemExit(f"Steam launch failed (exit {code}). Tail:\n{tail}")
@@ -87,7 +99,7 @@ def cmd_run_steam(args: argparse.Namespace) -> None:
 
 
 def cmd_run_winetricks(args: argparse.Namespace) -> None:
-    bottle = bottle_paths(args.bottle)
+    bottle = _resolve_bottle(args)
     winetricks = resolve_executable(args.winetricks, "winetricks")
     verbs = [verb.strip() for verb in args.verbs.split(",") if verb.strip()]
     if not verbs:
@@ -98,7 +110,7 @@ def cmd_run_winetricks(args: argparse.Namespace) -> None:
 
 
 def cmd_install_dxvk(args: argparse.Namespace) -> None:
-    bottle = bottle_paths(args.bottle)
+    bottle = _resolve_bottle(args)
     code, tail = install_dxvk(
         bottle=bottle,
         dxvk_source=Path(args.dxvk_source),
@@ -111,17 +123,71 @@ def cmd_install_dxvk(args: argparse.Namespace) -> None:
 
 
 def cmd_install_dxmt(args: argparse.Namespace) -> None:
-    bottle = bottle_paths(args.bottle)
+    bottle = _resolve_bottle(args)
+    wine64 = _require_wine64(args)
     code, tail = install_dxmt(
         bottle=bottle,
         dxmt_source=Path(args.dxmt_source),
+        wine64_path=wine64,
     )
     if code != 0:
         raise SystemExit(f"DXMT install failed (exit {code}). Tail:\n{tail}")
 
 
+def cmd_setup_metal(args: argparse.Namespace) -> None:
+    wine64 = _require_wine64(args)
+    bottle = _resolve_bottle(args)
+    ensure_bottle_dirs(bottle)
+
+    print(f"Initializing prefix at: {bottle.prefix}")
+    code, tail = run_logged(
+        cmd=[str(wine64), "wineboot", "-u"],
+        env={"WINEPREFIX": str(bottle.prefix), "WINEDEBUG": "-all"},
+        log_file=bottle.logs / "01_wineboot.log",
+    )
+    if code != 0:
+        raise SystemExit(f"wineboot failed (exit {code}). Tail:\n{tail}")
+
+    winetricks = resolve_executable(args.winetricks, "winetricks")
+    print("Installing Steam via winetricks...")
+    code, tail = run_winetricks(
+        bottle=bottle,
+        winetricks_path=winetricks,
+        verbs=["steam"],
+        log_name="02_winetricks_steam.log",
+        unattended=not args.interactive,
+    )
+    if code != 0:
+        raise SystemExit(f"winetricks steam failed (exit {code}). Tail:\n{tail}")
+
+    print("Installing DXMT into the Wine runtime and prefix...")
+    code, tail = install_dxmt(
+        bottle=bottle,
+        dxmt_source=Path(args.dxmt_source),
+        wine64_path=wine64,
+    )
+    if code != 0:
+        raise SystemExit(f"DXMT install failed (exit {code}). Tail:\n{tail}")
+
+    print("Metal setup complete.")
+    print("Next step:")
+    print(f"python3 mysteamwine.py --prefix {bottle.prefix} --wine {wine64} run-steam")
+
+
+def cmd_wipe_bottles(args: argparse.Namespace) -> None:
+    if not args.yes:
+        raise SystemExit("Refusing to wipe all bottles without --yes")
+    removed = wipe_all_bottles()
+    if not removed:
+        print("No bottles found.")
+        return
+    print(f"Removed {len(removed)} bottle(s):")
+    for bottle_root in removed:
+        print(bottle_root)
+
+
 def cmd_list_games(args: argparse.Namespace) -> None:
-    bottle = bottle_paths(args.bottle)
+    bottle = _resolve_bottle(args)
     apps = list_installed_apps(bottle)
     if not apps:
         print("No Steam manifests found.")
@@ -132,14 +198,14 @@ def cmd_list_games(args: argparse.Namespace) -> None:
 
 def cmd_launch_game(args: argparse.Namespace) -> None:
     wine64 = _require_wine64(args)
-    bottle = bottle_paths(args.bottle)
+    bottle = _resolve_bottle(args)
     app = find_app(bottle, args.appid)
     print(f"Launching {app.name} ({app.appid}) via Steam.")
     code, tail = launch_app(
         bottle=bottle,
         wine64_path=wine64,
         appid=args.appid,
-        graphics_backend=args.graphics_backend,
+        graphics_backend=_resolved_graphics_backend(args, for_steam=False),
     )
     if code != 0:
         raise SystemExit(f"App launch failed (exit {code}). Tail:\n{tail}")
@@ -149,7 +215,7 @@ def _resolve_debug_executable(args: argparse.Namespace) -> Path:
     if args.exe:
         return Path(args.exe)
     if args.appid:
-        bottle = bottle_paths(args.bottle)
+        bottle = _resolve_bottle(args)
         app = find_app(bottle, args.appid)
         return guess_game_executable(app.install_dir)
     raise SystemExit("Provide either --appid or --exe")
@@ -157,7 +223,7 @@ def _resolve_debug_executable(args: argparse.Namespace) -> Path:
 
 def cmd_debug_game(args: argparse.Namespace) -> None:
     wine64 = _require_wine64(args)
-    bottle = bottle_paths(args.bottle)
+    bottle = _resolve_bottle(args)
     executable = _resolve_debug_executable(args)
     extra_args = list(args.game_args or [])
     if extra_args and extra_args[0] == "--":
@@ -170,7 +236,7 @@ def cmd_debug_game(args: argparse.Namespace) -> None:
         extra_args=extra_args,
         wine_debug=args.wine_debug,
         wait=not args.no_wait,
-        graphics_backend=args.graphics_backend,
+        graphics_backend=_resolved_graphics_backend(args, for_steam=False),
     )
     if code != 0:
         raise SystemExit(f"Direct game launch failed (exit {code}). Tail:\n{tail}")
@@ -181,7 +247,7 @@ def _resolve_scan_target(args: argparse.Namespace) -> Path:
     if args.path:
         return Path(args.path)
     if args.appid:
-        bottle = bottle_paths(args.bottle)
+        bottle = _resolve_bottle(args)
         return find_app(bottle, args.appid).install_dir
     raise SystemExit("Provide either --path or --appid")
 
@@ -223,6 +289,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--bottle", default=DEFAULT_BOTTLE_NAME, help=f"Bottle name (default: {DEFAULT_BOTTLE_NAME})")
+    parser.add_argument("--prefix", help="Use an existing Wine prefix directly, for example: ~/.wine-bluearchive")
     parser.add_argument(
         "--wine64",
         help="Path to the Wine launcher (example: /opt/homebrew/bin/wine or /opt/homebrew/bin/wine64)",
@@ -230,9 +297,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--wine", dest="wine", help="Alias for --wine64 for compatibility with older usage")
     parser.add_argument(
         "--graphics-backend",
-        choices=("dxvk", "dxmt", "none"),
-        default="dxvk",
-        help="Graphics backend override to apply at launch time (default: dxvk)",
+        choices=("auto", "dxvk", "dxmt", "none"),
+        default="auto",
+        help="Graphics backend override to apply at launch time (default: auto: plain Steam, DXMT for games)",
     )
 
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -267,6 +334,16 @@ def build_parser() -> argparse.ArgumentParser:
     dxmt_cmd = sub.add_parser("install-dxmt", help="Install DXMT into the bottle from a local folder or tar.gz")
     dxmt_cmd.add_argument("--dxmt-source", required=True, help="Path to a DXMT directory or tar.gz archive")
     dxmt_cmd.set_defaults(func=cmd_install_dxmt)
+
+    setup_cmd = sub.add_parser("setup-metal", help="Initialize a prefix, install Steam via winetricks, and install DXMT")
+    setup_cmd.add_argument("--dxmt-source", required=True, help="Path to a DXMT directory or tar.gz archive")
+    setup_cmd.add_argument("--winetricks", default="winetricks", help="Path to the winetricks executable")
+    setup_cmd.add_argument("--interactive", action="store_true", help="Run winetricks steam without -q")
+    setup_cmd.set_defaults(func=cmd_setup_metal)
+
+    wipe_cmd = sub.add_parser("wipe-bottles", help="Delete every bottle under app support")
+    wipe_cmd.add_argument("--yes", action="store_true", help="Confirm deletion of all bottles")
+    wipe_cmd.set_defaults(func=cmd_wipe_bottles)
 
     sub.add_parser("list-games", help="List installed Steam games discovered from manifests").set_defaults(func=cmd_list_games)
 

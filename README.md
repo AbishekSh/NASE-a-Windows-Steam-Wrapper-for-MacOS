@@ -31,6 +31,10 @@ python3 mysteamwine.py --wine64 /opt/homebrew/bin/wine run-steam
 # list installed Steam games from manifests
 python3 mysteamwine.py list-games
 
+# use an existing Wine prefix directly instead of a managed bottle
+python3 mysteamwine.py --prefix ~/.wine-bluearchive info
+python3 mysteamwine.py --prefix ~/.wine-bluearchive list-games
+
 # launch a game by Steam AppID
 python3 mysteamwine.py --wine64 /opt/homebrew/bin/wine launch-game --appid 620
 ```
@@ -48,7 +52,13 @@ python3 mysteamwine.py install-dxvk --dxvk-source ~/Downloads/dxvk-2.3.tar.gz
 python3 mysteamwine.py install-dxvk --dxvk-source ~/Downloads/DXVK-macOS --dxvk-flavor macos
 
 # install DXMT from a local checkout or extracted folder
-python3 mysteamwine.py install-dxmt --dxmt-source ~/Downloads/dxmt
+python3 mysteamwine.py --wine /opt/homebrew/bin/wine install-dxmt --dxmt-source ~/Downloads/dxmt
+
+# one-shot Metal setup for a prefix: wineboot + winetricks steam + DXMT
+python3 mysteamwine.py --prefix ~/.wine-bluearchive --wine /opt/homebrew/bin/wine setup-metal --dxmt-source ~/Downloads/dxmt
+
+# wipe every bottle under MySteamWine app support
+python3 mysteamwine.py wipe-bottles --yes
 
 # scan a game folder and get rule-based recommendations
 python3 mysteamwine.py advise-game --appid 2056220
@@ -57,4 +67,6 @@ python3 mysteamwine.py scan-game --path "/path/to/game"
 
 Host dependencies still need to exist on the Mac side, for example Wine, winetricks, and Vulkan loader/tools where required by the chosen Wine build.
 
-To launch with DXMT instead of DXVK, add `--graphics-backend dxmt` to `run-steam`, `launch-game`, or `debug-game`.
+Graphics backend defaults are now split intentionally:
+- `run-steam` defaults to plain Wine (`--graphics-backend auto` resolves to `none`)
+- `launch-game` and `debug-game` default to DXMT (`--graphics-backend auto` resolves to `dxmt`)

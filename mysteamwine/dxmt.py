@@ -89,11 +89,14 @@ def _locate_unix_payload_dir(dxmt_root: Path) -> Path | None:
     return None
 
 
-def _active_wine_module_root() -> Path | None:
-    wine_path = shutil.which("wine")
-    if not wine_path:
-        return None
-    wine_bin = Path(wine_path).resolve()
+def _wine_module_root(wine_path: Path | None) -> Path | None:
+    if wine_path is None:
+        wine_bin_path = shutil.which("wine")
+        if not wine_bin_path:
+            return None
+        wine_bin = Path(wine_bin_path).resolve()
+    else:
+        wine_bin = wine_path.resolve()
     for ancestor in wine_bin.parents:
         candidate = ancestor / "lib" / "wine"
         if candidate.is_dir():
@@ -109,7 +112,7 @@ def _enable_dxmt_overrides(bottle: Bottle) -> None:
     )
 
 
-def install_dxmt(*, bottle: Bottle, dxmt_source: Path) -> tuple[int, str]:
+def install_dxmt(*, bottle: Bottle, dxmt_source: Path, wine64_path: Path | None = None) -> tuple[int, str]:
     ensure_bottle_dirs(bottle)
     dxmt_root = resolve_dxmt_root(dxmt_source, bottle.cache / "dxmt")
     x64_dir, x32_dir = _locate_payload_dirs(dxmt_root)
@@ -129,10 +132,16 @@ def install_dxmt(*, bottle: Bottle, dxmt_source: Path) -> tuple[int, str]:
                 shutil.copy2(source, destination)
                 copied.append(str(destination))
 
-    module_root = _active_wine_module_root()
+    module_root = _wine_module_root(wine64_path)
     if module_root:
         runtime_targets = (
+            (x64_dir / "d3d10core.dll", module_root / "x86_64-windows" / "d3d10core.dll"),
+            (x64_dir / "d3d11.dll", module_root / "x86_64-windows" / "d3d11.dll"),
+            (x64_dir / "dxgi.dll", module_root / "x86_64-windows" / "dxgi.dll"),
             (x64_dir / "winemetal.dll", module_root / "x86_64-windows" / "winemetal.dll"),
+            (x32_dir / "d3d10core.dll", module_root / "i386-windows" / "d3d10core.dll"),
+            (x32_dir / "d3d11.dll", module_root / "i386-windows" / "d3d11.dll"),
+            (x32_dir / "dxgi.dll", module_root / "i386-windows" / "dxgi.dll"),
             (x32_dir / "winemetal.dll", module_root / "i386-windows" / "winemetal.dll"),
         )
         if unix_dir:
