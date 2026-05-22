@@ -80,7 +80,12 @@ final class AppViewModel {
     var searchText: String = ""
     var rightPanelMessage: String = "Select a runner to see setup state and actions."
     var activityLog: String = "SwiftUI shell ready.\n"
-    var isBusy: Bool = false
+    var isBusy: Bool {
+        isActionRunning(.setupMetal)
+            || isActionRunning(.doctorFix)
+            || isActionRunning(.installDXMT)
+            || isActionRunning(.installDXVK)
+    }
     var isShowingSettings: Bool = false
     var isShowingGameSettings: Bool = false
     var isShowingGameDetails: Bool = false
@@ -236,6 +241,21 @@ final class AppViewModel {
         return "\(wineRuntimeSummary) • Managed bottle: \(backendContext.bottleName)"
     }
 
+    var steamLibraryCacheURL: URL? {
+        let prefixURL: URL
+        if let externalPrefix = backendContext.externalPrefix, !externalPrefix.isEmpty {
+            prefixURL = URL(fileURLWithPath: externalPrefix, isDirectory: true)
+        } else {
+            prefixURL = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Application Support/MySteamWine/bottles", isDirectory: true)
+                .appendingPathComponent(backendContext.bottleName, isDirectory: true)
+                .appendingPathComponent("prefix", isDirectory: true)
+        }
+
+        return prefixURL
+            .appendingPathComponent("drive_c/Program Files (x86)/Steam/appcache/librarycache", isDirectory: true)
+    }
+
     var currentOperationJob: BackendJob? {
         activeBackendJobs.first
     }
@@ -295,7 +315,7 @@ final class AppViewModel {
             rightPanelMessage = "Add native macOS apps here and launch them from one library."
         case .steam:
             rightPanelMessage = "Steam is ready for setup, launch, and refresh."
-            if !hasAttemptedSteamDetection && !isBusy {
+            if !hasAttemptedSteamDetection && !isActionRunning(.listGames) {
                 refreshSteamGames(announce: false)
             }
         case .wine:
@@ -936,8 +956,6 @@ final class AppViewModel {
     }
 
     func perform(_ operation: OperationCard) {
-        guard !isBusy else { return }
-
         let action: BackendAction
         switch operation.kind {
         case .setupMetal:
@@ -988,16 +1006,27 @@ final class AppViewModel {
             return
         }
 
-        isBusy = true
+        guard !isActionRunning(action) else { return }
+
         rightPanelMessage = "Running \(operation.title)..."
         appendLog("== \(operation.title) ==\n\(BackendBridge.preview(action, context: backendContext))")
 
         let context = backendContext
+        let activeJobID = beginBackendJob(for: action, message: "Running \(operation.title)...")
         Task.detached(priority: .userInitiated) {
             do {
-                let response = try await BackendBridge.execute(action, context: context)
+                let response = try await BackendBridge.executeStreaming(action, context: context) { update in
+                    await MainActor.run {
+                        self.applyStreamUpdate(update, fallbackActiveJobID: activeJobID, action: action)
+                    }
+                }
                 await MainActor.run {
-                    self.recordBackendJob(response.job)
+                    if let responseJob = response.job {
+                        self.reconcileDetachedJob(responseJob, fallbackActiveJobID: activeJobID, action: action)
+                    } else {
+                        let fallbackJob = self.makeFallbackJob(for: action, status: .completed, message: self.jobSuccessMessage(for: action))
+                        self.completeBackendJob(activeJobID, finalJob: fallbackJob)
+                    }
                     self.recordStructuredResult(response.structured, for: action)
                     switch action {
                     case .listGames:
@@ -1016,13 +1045,15 @@ final class AppViewModel {
                     }
                     self.appendLog(response.output)
                     self.rightPanelMessage = response.job?.message ?? "\(operation.title) finished."
-                    self.isBusy = false
                 }
             } catch {
                 await MainActor.run {
+                    if self.activeBackendJobs.contains(where: { $0.id == activeJobID }) {
+                        let failedJob = self.makeFallbackJob(for: action, status: .failed, message: "\(operation.title) failed.")
+                        self.completeBackendJob(activeJobID, finalJob: failedJob)
+                    }
                     self.appendLog("Command failed:\n\(error.localizedDescription)")
                     self.rightPanelMessage = "\(operation.title) failed."
-                    self.isBusy = false
                 }
             }
         }
@@ -1086,7 +1117,7 @@ final class AppViewModel {
     func initialLoad() {
         refreshWineRuntimes()
         performInitialSetupIfNeeded()
-        guard selectedRunner == .steam, !hasAttemptedSteamDetection, !isBusy else { return }
+        guard selectedRunner == .steam, !hasAttemptedSteamDetection, !isActionRunning(.listGames) else { return }
         refreshSteamGames(announce: false)
     }
 
@@ -1281,11 +1312,10 @@ final class AppViewModel {
     }
 
     private func refreshSteamGames(announce: Bool) {
-        guard !isBusy else { return }
+        guard !isActionRunning(.listGames) else { return }
 
         let action: BackendAction = .listGames
         let activeJobID = beginBackendJob(for: action, message: announce ? "Refreshing Steam library..." : "Detecting installed Steam games...")
-        isBusy = true
         hasAttemptedSteamDetection = true
         if announce {
             rightPanelMessage = "Refreshing installed Steam games..."
@@ -1320,7 +1350,6 @@ final class AppViewModel {
                 appendLog("Command failed:\n\(error.localizedDescription)")
                 rightPanelMessage = "Steam game detection failed."
             }
-            isBusy = false
         }
     }
 
@@ -1707,6 +1736,13 @@ final class AppViewModel {
         activeBackendJobs.removeAll { $0.action == job.action && $0.status == .started }
         activeBackendJobs.insert(job, at: 0)
         return job.id
+    }
+
+    private func isActionRunning(_ action: BackendAction) -> Bool {
+        let name = actionDisplayName(action)
+        return activeBackendJobs.contains { job in
+            job.action == name && (job.status == .started || job.status == .queued)
+        }
     }
 
     private func completeBackendJob(_ activeJobID: String, finalJob: BackendJob) {
@@ -2407,11 +2443,9 @@ final class AppViewModel {
         case .dxvk:
             "d3d11=n;dxgi=n;d3d10core=n;d3d9=n"
         case .dxmt:
-            "d3d9=b;dxgi=n,b;d3d11=n,b;d3d10core=n,b;winemetal=n,b"
+            "dxgi=n,b;d3d11=n,b;d3d10core=n,b;winemetal=n,b"
         case .none:
-            game.runner == .steam || game.runner == .wine
-                ? "d3d9=b;d3d10core=b;d3d11=b;dxgi=b;winemetal=b"
-                : nil
+            nil
         }
 
         let warnings = parseEnvironmentOverrides(environmentText)

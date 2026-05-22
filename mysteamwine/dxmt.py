@@ -9,7 +9,6 @@ from .runtime import find_wine_module_root, run_logged
 
 
 DXMT_DLL_OVERRIDES = {
-    "d3d9": "builtin",
     "dxgi": "native,builtin",
     "d3d11": "native,builtin",
     "d3d10core": "native,builtin",

@@ -6,7 +6,6 @@ from typing import Any, Iterator
 
 from . import DEFAULT_STEAM_WINDOWS_PATH, STEAM_SETUP_URL
 from .bottle import Bottle, ensure_bottle_dirs
-from .dxvk import restore_builtin_graphics_dlls
 from .runtime import download, run_logged, run_logged_detached
 
 
@@ -43,11 +42,7 @@ def _graphics_launch_env(bottle: Bottle, wine_debug: str, graphics_backend: str)
     if graphics_backend == "dxvk":
         env["WINEDLLOVERRIDES"] = "d3d11=n;dxgi=n;d3d10core=n;d3d9=n"
     elif graphics_backend == "dxmt":
-        env["WINEDLLOVERRIDES"] = "d3d9=b;dxgi=n,b;d3d11=n,b;d3d10core=n,b;winemetal=n,b"
-    elif graphics_backend == "none":
-        # Force Wine's builtin graphics stack so previously installed DXVK/DXMT
-        # DLLs in the prefix do not keep getting picked up for "plain Wine" runs.
-        env["WINEDLLOVERRIDES"] = "d3d9=b;d3d10core=b;d3d11=b;dxgi=b;winemetal=b"
+        env["WINEDLLOVERRIDES"] = "dxgi=n,b;d3d11=n,b;d3d10core=n,b;winemetal=n,b"
     return env
 
 
@@ -75,14 +70,6 @@ def run_steam(
 ) -> tuple[int, str]:
     ensure_bottle_dirs(bottle)
     wineserver = _wineserver_path(wine64_path)
-    restore_tail = ""
-    if graphics_backend == "none":
-        restore_code, restore_tail = restore_builtin_graphics_dlls(
-            bottle=bottle,
-            wine64_path=wine64_path,
-        )
-        if restore_code != 0:
-            return restore_code, restore_tail
     env = _graphics_launch_env(bottle, "-all", graphics_backend)
     if extra_env:
         env.update(extra_env)
@@ -165,10 +152,10 @@ def run_steam(
             env=env,
             log_file=bottle.logs / "03_run_steam.log",
         )
-        tail = "\n".join(part for part in (restore_tail, shutdown_tail, tail, open_tail) if part)
+        tail = "\n".join(part for part in (shutdown_tail, tail, open_tail) if part)
         code = open_code
     else:
-        tail = "\n".join(part for part in (restore_tail, shutdown_tail, tail) if part)
+        tail = "\n".join(part for part in (shutdown_tail, tail) if part)
     if code != 0 or not wait:
         return code, tail
 
@@ -265,15 +252,6 @@ def run_game_executable(
     if not exe_path.exists():
         raise FileNotFoundError(f"Game executable not found: {exe_path}")
 
-    restore_tail = ""
-    if graphics_backend == "none":
-        restore_code, restore_tail = restore_builtin_graphics_dlls(
-            bottle=bottle,
-            wine64_path=wine64_path,
-        )
-        if restore_code != 0:
-            return restore_code, restore_tail
-
     command = [str(wine64_path), str(exe_path)]
     if extra_args:
         command.extend(extra_args)
@@ -290,8 +268,6 @@ def run_game_executable(
         cwd=cwd or exe_path.parent,
         probe_seconds=probe_seconds if not wait else 0,
     )
-    if restore_tail:
-        tail = "\n".join(part for part in (restore_tail, tail) if part)
     if code != 0 or not wait:
         return code, tail
 

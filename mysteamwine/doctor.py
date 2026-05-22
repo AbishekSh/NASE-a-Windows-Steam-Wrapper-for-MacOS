@@ -75,21 +75,22 @@ def _check_dxmt_overrides(bottle: Bottle) -> CheckResult:
     return _result("ok", "DXMT overrides", "All DXMT DLL overrides present")
 
 
-def _read_prefix_windows_version(bottle: Bottle) -> tuple[str | None, str | None]:
+def _read_prefix_windows_version(bottle: Bottle) -> tuple[str | None, str | None, int | None]:
     system_reg = bottle.prefix / "system.reg"
     if not system_reg.exists():
-        return None, None
+        return None, None, None
 
     current_version = None
     product_name = None
+    major_version = None
     in_nt_current = False
     in_wow_current = False
 
     for raw_line in system_reg.read_text(encoding="utf-8", errors="replace").splitlines():
         line = raw_line.strip()
         if line.startswith("["):
-            in_nt_current = line == r"[Software\Microsoft\Windows NT\CurrentVersion]"
-            in_wow_current = line == r"[Software\Wow6432Node\Microsoft\Windows NT\CurrentVersion]"
+            in_nt_current = line.startswith(r"[Software\\Microsoft\\Windows NT\\CurrentVersion]")
+            in_wow_current = line.startswith(r"[Software\\Wow6432Node\\Microsoft\\Windows NT\\CurrentVersion]")
             continue
         if not (in_nt_current or in_wow_current):
             continue
@@ -97,19 +98,31 @@ def _read_prefix_windows_version(bottle: Bottle) -> tuple[str | None, str | None
             current_version = line.split("=", 1)[1].strip().strip('"')
         elif line.startswith('"ProductName"=') and product_name is None:
             product_name = line.split("=", 1)[1].strip().strip('"')
-        if current_version and product_name:
+        elif line.startswith('"CurrentMajorVersionNumber"=') and major_version is None:
+            value = line.split("=", 1)[1].strip()
+            if value.startswith("dword:"):
+                try:
+                    major_version = int(value.removeprefix("dword:"), 16)
+                except ValueError:
+                    major_version = None
+        if current_version and product_name and major_version is not None:
             break
 
-    return current_version, product_name
+    return current_version, product_name, major_version
 
 
 def _check_prefix_windows_version(bottle: Bottle) -> CheckResult:
-    current_version, product_name = _read_prefix_windows_version(bottle)
-    if not current_version and not product_name:
+    current_version, product_name, major_version = _read_prefix_windows_version(bottle)
+    if not current_version and not product_name and major_version is None:
         return _result("warn", "Prefix Windows version", "Could not read Windows version from system.reg")
 
-    detail = " / ".join(part for part in (product_name, current_version) if part)
-    if current_version == "10.0":
+    parts = [part for part in (product_name, current_version) if part]
+    if major_version is not None:
+        parts.append(f"major {major_version}")
+    detail = " / ".join(parts)
+    if major_version is not None and major_version >= 10:
+        return _result("ok", "Prefix Windows version", detail)
+    if product_name and "windows 10" in product_name.lower():
         return _result("ok", "Prefix Windows version", detail)
     return _result("fail", "Prefix Windows version", f"{detail} (Steam expects Windows 10+)")
 
