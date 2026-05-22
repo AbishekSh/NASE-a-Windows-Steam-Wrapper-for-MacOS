@@ -5,11 +5,12 @@ import tarfile
 from pathlib import Path
 
 from .bottle import Bottle, ensure_bottle_dirs
-from .runtime import run_logged
+from .runtime import find_wine_module_root, run_logged
 
 
 UPSTREAM_DXVK_DLL_OVERRIDES = ("d3d9", "d3d10core", "d3d11", "dxgi")
 MACOS_DXVK_DLL_OVERRIDES = ("d3d10core", "d3d11")
+BUILTIN_GRAPHICS_DLLS = ("d3d9", "d3d10core", "d3d11", "dxgi", "winemetal")
 
 
 def _extract_archive(archive: Path, target_dir: Path) -> Path:
@@ -40,22 +41,27 @@ def find_setup_script(dxvk_root: Path) -> Path:
 
 
 def _upsert_user_reg_section(user_reg: Path, section: str, entries: dict[str, str]) -> None:
-    lines = user_reg.read_text(encoding="utf-8", errors="replace").splitlines()
+    if user_reg.exists():
+        lines = user_reg.read_text(encoding="utf-8", errors="replace").splitlines()
+    else:
+        user_reg.parent.mkdir(parents=True, exist_ok=True)
+        lines = []
     header = f"[{section}]"
     start = None
     end = None
 
     for index, line in enumerate(lines):
-        if line == header:
+        if line == header or line.startswith(header + " "):
             start = index
             end = len(lines)
             for cursor in range(index + 1, len(lines)):
-                if lines[cursor].startswith("[") and lines[cursor].endswith("]"):
+                if lines[cursor].startswith("["):
                     end = cursor
                     break
             break
 
-    section_lines = [header]
+    section_header = lines[start] if start is not None else header
+    section_lines = [section_header]
     for key, value in entries.items():
         section_lines.append(f'"{key}"="{value}"')
 
@@ -76,6 +82,49 @@ def _upsert_user_reg_section(user_reg: Path, section: str, entries: dict[str, st
         merged = preserved + [f'"{key}"="{value}"' for key, value in entries.items()]
         lines[start:end] = [header, *merged]
 
+    user_reg.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _remove_user_reg_entries(user_reg: Path, section: str, keys: tuple[str, ...]) -> None:
+    if not user_reg.exists():
+        return
+
+    lines = user_reg.read_text(encoding="utf-8", errors="replace").splitlines()
+    header = f"[{section}]"
+    start = None
+    end = None
+
+    for index, line in enumerate(lines):
+        if line == header or line.startswith(header + " "):
+            start = index
+            end = len(lines)
+            for cursor in range(index + 1, len(lines)):
+                if lines[cursor].startswith("["):
+                    end = cursor
+                    break
+            break
+
+    if start is None or end is None:
+        return
+
+    section_header = lines[start]
+    filtered: list[str] = [section_header]
+    for line in lines[start + 1 : end]:
+        if line.startswith('"') and '"="' in line and line.endswith('"'):
+            key = line.split('"', 2)[1]
+            if key in keys:
+                continue
+        filtered.append(line)
+
+    while len(filtered) > 1 and filtered[-1] == "":
+        filtered.pop()
+
+    if len(filtered) == 1:
+        replacement: list[str] = []
+    else:
+        replacement = filtered
+
+    lines[start:end] = replacement
     user_reg.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -163,3 +212,39 @@ def install_dxvk(
     if code == 0:
         _enable_dxvk_overrides(bottle, dxvk_flavor=dxvk_flavor, without_dxgi=without_dxgi)
     return code, tail
+
+
+def restore_builtin_graphics_dlls(*, bottle: Bottle, wine64_path: Path) -> tuple[int, str]:
+    ensure_bottle_dirs(bottle)
+    module_root = find_wine_module_root(wine64_path)
+    if not module_root:
+        raise FileNotFoundError(f"Could not locate Wine module root for: {wine64_path}")
+
+    system32 = bottle.drive_c / "windows" / "system32"
+    syswow64 = bottle.drive_c / "windows" / "syswow64"
+    system32.mkdir(parents=True, exist_ok=True)
+    syswow64.mkdir(parents=True, exist_ok=True)
+
+    restored: list[str] = []
+    for runtime_dir, target_dir in (
+        (module_root / "x86_64-windows", system32),
+        (module_root / "i386-windows", syswow64),
+    ):
+        if not runtime_dir.is_dir():
+            continue
+        for dll_name in BUILTIN_GRAPHICS_DLLS:
+            source = runtime_dir / f"{dll_name}.dll"
+            if source.exists():
+                destination = target_dir / f"{dll_name}.dll"
+                shutil.copy2(source, destination)
+                restored.append(str(destination))
+
+    _remove_user_reg_entries(
+        bottle.prefix / "user.reg",
+        r"Software\\Wine\\DllOverrides",
+        BUILTIN_GRAPHICS_DLLS,
+    )
+
+    if not restored:
+        return 0, "Removed graphics DLL overrides for builtin graphics stack."
+    return 0, "\n".join(restored + ["Removed graphics DLL overrides for builtin graphics stack."])

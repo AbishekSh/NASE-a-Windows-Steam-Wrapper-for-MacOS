@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -9,6 +10,18 @@ import time
 import urllib.request
 from pathlib import Path
 from typing import Dict, Iterable, Optional, Tuple
+
+
+SANITIZED_METAL_ENV_KEYS = (
+    "MTL_DEBUG_LAYER",
+    "MTL_SHADER_VALIDATION",
+    "MTL_SHADER_VALIDATION_REPORT_TO_STDERR",
+    "MTL_HUD_ENABLED",
+    "METAL_DEVICE_WRAPPER_TYPE",
+    "METAL_CAPTURE_ENABLED",
+    "METAL_DEBUG_ERROR_MODE",
+    "DYLD_INSERT_LIBRARIES",
+)
 
 
 def ensure_dirs(*paths: Path) -> None:
@@ -72,6 +85,54 @@ def download(url: str, dest: Path) -> None:
         shutil.copyfileobj(response, handle)
 
 
+def detect_wine_runtime(wine_path: Path) -> dict[str, str | bool | None]:
+    resolved = wine_path.resolve()
+    app_name = None
+    for ancestor in resolved.parents:
+        if ancestor.name.endswith(".app"):
+            app_name = ancestor.name
+            break
+
+    version_output = None
+    version = None
+    try:
+        proc = subprocess.run(
+            [str(resolved), "--version"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+        version_output = (proc.stdout or "").strip()
+        match = re.search(r"wine-([0-9]+(?:\.[0-9]+)*)", version_output)
+        if match:
+            version = match.group(1)
+    except Exception:
+        version_output = None
+
+    is_stable_app = app_name == "Wine Stable.app"
+    is_stable_11 = is_stable_app and (version == "11.0" or version is None)
+
+    return {
+        "path": str(resolved),
+        "app_name": app_name,
+        "version_output": version_output,
+        "version": version,
+        "is_stable_app": is_stable_app,
+        "is_stable_11": is_stable_11,
+    }
+
+
+def find_wine_module_root(wine_path: Path) -> Path | None:
+    resolved = wine_path.resolve()
+    for ancestor in resolved.parents:
+        candidate = ancestor / "lib" / "wine"
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
 def run_logged(
     *,
     cmd: Iterable[str],
@@ -84,6 +145,8 @@ def run_logged(
 
     command = [str(part) for part in cmd]
     merged_env = os.environ.copy()
+    for key in SANITIZED_METAL_ENV_KEYS:
+        merged_env.pop(key, None)
     if env:
         merged_env.update(env)
 
@@ -132,3 +195,53 @@ def run_logged(
             handle.flush()
 
     return exit_code, "\n".join(tail_lines[-50:])
+
+
+def run_logged_detached(
+    *,
+    cmd: Iterable[str],
+    env: Optional[Dict[str, str]],
+    log_file: Path,
+    cwd: Optional[Path] = None,
+    probe_seconds: int = 0,
+) -> Tuple[int, str]:
+    ensure_dirs(log_file.parent)
+
+    command = [str(part) for part in cmd]
+    merged_env = os.environ.copy()
+    for key in SANITIZED_METAL_ENV_KEYS:
+        merged_env.pop(key, None)
+    if env:
+        merged_env.update(env)
+
+    with log_file.open("a", encoding="utf-8") as handle:
+        handle.write("\n" + "=" * 80 + "\n")
+        handle.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] SPAWN: {' '.join(command)}\n")
+        if env and env.get("WINEPREFIX"):
+            handle.write(f"ENV WINEPREFIX={env['WINEPREFIX']}\n")
+        handle.flush()
+
+        proc = subprocess.Popen(
+            command,
+            stdout=handle,
+            stderr=subprocess.STDOUT,
+            env=merged_env,
+            cwd=str(cwd) if cwd else None,
+            text=True,
+            start_new_session=True,
+        )
+
+        handle.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] PID: {proc.pid}\n")
+        handle.flush()
+
+        if probe_seconds > 0:
+            deadline = time.time() + probe_seconds
+            while time.time() < deadline:
+                exit_code = proc.poll()
+                if exit_code is not None:
+                    handle.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] EARLY EXIT: {exit_code}\n")
+                    handle.flush()
+                    return exit_code, f"Process exited within {probe_seconds}s (exit {exit_code})"
+                time.sleep(0.5)
+
+    return 0, f"Spawned PID {proc.pid}"

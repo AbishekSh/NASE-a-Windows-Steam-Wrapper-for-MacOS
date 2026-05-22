@@ -6,7 +6,8 @@ from typing import Any, Iterator
 
 from . import DEFAULT_STEAM_WINDOWS_PATH, STEAM_SETUP_URL
 from .bottle import Bottle, ensure_bottle_dirs
-from .runtime import download, run_logged
+from .dxvk import restore_builtin_graphics_dlls
+from .runtime import download, run_logged, run_logged_detached
 
 
 @dataclass(frozen=True)
@@ -42,7 +43,11 @@ def _graphics_launch_env(bottle: Bottle, wine_debug: str, graphics_backend: str)
     if graphics_backend == "dxvk":
         env["WINEDLLOVERRIDES"] = "d3d11=n;dxgi=n;d3d10core=n;d3d9=n"
     elif graphics_backend == "dxmt":
-        env["WINEDLLOVERRIDES"] = "dxgi=n,b;d3d11=n,b;d3d10core=n,b;winemetal=n,b"
+        env["WINEDLLOVERRIDES"] = "d3d9=b;dxgi=n,b;d3d11=n,b;d3d10core=n,b;winemetal=n,b"
+    elif graphics_backend == "none":
+        # Force Wine's builtin graphics stack so previously installed DXVK/DXMT
+        # DLLs in the prefix do not keep getting picked up for "plain Wine" runs.
+        env["WINEDLLOVERRIDES"] = "d3d9=b;d3d10core=b;d3d11=b;dxgi=b;winemetal=b"
     return env
 
 
@@ -66,23 +71,107 @@ def run_steam(
     wait: bool = True,
     extra_env: dict[str, str] | None = None,
     graphics_backend: str = "none",
+    restart_existing: bool = True,
 ) -> tuple[int, str]:
     ensure_bottle_dirs(bottle)
-    args = [str(wine64_path), steam_path or steam_windows_path()]
-    if extra_args:
-        args.extend(extra_args)
+    wineserver = _wineserver_path(wine64_path)
+    restore_tail = ""
+    if graphics_backend == "none":
+        restore_code, restore_tail = restore_builtin_graphics_dlls(
+            bottle=bottle,
+            wine64_path=wine64_path,
+        )
+        if restore_code != 0:
+            return restore_code, restore_tail
     env = _graphics_launch_env(bottle, "-all", graphics_backend)
     if extra_env:
         env.update(extra_env)
-    code, tail = run_logged(
-        cmd=args,
-        env=env,
-        log_file=bottle.logs / "03_run_steam.log",
-    )
+    open_main = False
+    passthrough_args: list[str] = []
+    for arg in extra_args or []:
+        if arg == "steam://open/main":
+            open_main = True
+        else:
+            passthrough_args.append(arg)
+
+    shutdown_tail = ""
+    if restart_existing:
+        shutdown_parts: list[str] = []
+        shutdown_code, step_tail = run_logged(
+            cmd=[str(wine64_path), steam_path or steam_windows_path(), "-shutdown"],
+            env=env,
+            log_file=bottle.logs / "03_run_steam.log",
+            timeout=8,
+        )
+        if step_tail:
+            shutdown_parts.append(step_tail)
+
+        if shutdown_code in (0, 124):
+            wait_code, wait_tail = run_logged(
+                cmd=[str(wineserver), "-w"],
+                env=env,
+                log_file=bottle.logs / "03_run_steam.log",
+                timeout=8,
+            )
+            if wait_tail:
+                shutdown_parts.append(wait_tail)
+
+            if wait_code == 124:
+                kill_code, kill_tail = run_logged(
+                    cmd=[str(wineserver), "-k"],
+                    env=env,
+                    log_file=bottle.logs / "03_run_steam.log",
+                    timeout=5,
+                )
+                if kill_tail:
+                    shutdown_parts.append(kill_tail)
+                if kill_code == 0:
+                    final_wait_code, final_wait_tail = run_logged(
+                        cmd=[str(wineserver), "-w"],
+                        env=env,
+                        log_file=bottle.logs / "03_run_steam.log",
+                        timeout=5,
+                    )
+                    if final_wait_tail:
+                        shutdown_parts.append(final_wait_tail)
+                    if final_wait_code not in (0, 124):
+                        return final_wait_code, "\n".join(shutdown_parts)
+                elif kill_code not in (0, 124):
+                    return kill_code, "\n".join(shutdown_parts)
+            elif wait_code not in (0, 124):
+                return wait_code, "\n".join(shutdown_parts)
+
+        shutdown_tail = "\n".join(part for part in shutdown_parts if part)
+
+    args = [str(wine64_path), steam_path or steam_windows_path()]
+    if passthrough_args:
+        args.extend(passthrough_args)
+    if wait:
+        code, tail = run_logged(
+            cmd=args,
+            env=env,
+            log_file=bottle.logs / "03_run_steam.log",
+        )
+    else:
+        code, tail = run_logged_detached(
+            cmd=args,
+            env=env,
+            log_file=bottle.logs / "03_run_steam.log",
+        )
+    if code == 0 and open_main:
+        opener = run_logged if wait else run_logged_detached
+        open_code, open_tail = opener(
+            cmd=[str(wine64_path), "start", "steam://open/main"],
+            env=env,
+            log_file=bottle.logs / "03_run_steam.log",
+        )
+        tail = "\n".join(part for part in (restore_tail, shutdown_tail, tail, open_tail) if part)
+        code = open_code
+    else:
+        tail = "\n".join(part for part in (restore_tail, shutdown_tail, tail) if part)
     if code != 0 or not wait:
         return code, tail
 
-    wineserver = _wineserver_path(wine64_path)
     wait_code, wait_tail = run_logged(
         cmd=[str(wineserver), "-w"],
         env=env,
@@ -92,14 +181,50 @@ def run_steam(
     return wait_code, combined_tail
 
 
-def launch_app(*, bottle: Bottle, wine64_path: Path, appid: str, graphics_backend: str = "dxmt") -> tuple[int, str]:
+def kill_wine_processes(
+    *,
+    bottle: Bottle,
+    wine64_path: Path,
+) -> tuple[int, str]:
+    ensure_bottle_dirs(bottle)
+    wineserver = _wineserver_path(wine64_path)
+    env = {"WINEPREFIX": str(bottle.prefix), "WINEDEBUG": "-all"}
+
+    kill_code, kill_tail = run_logged(
+        cmd=[str(wineserver), "-k"],
+        env=env,
+        log_file=bottle.logs / "05_kill_wine.log",
+        timeout=8,
+    )
+    if kill_code not in (0, 124):
+        return kill_code, kill_tail
+
+    wait_code, wait_tail = run_logged(
+        cmd=[str(wineserver), "-w"],
+        env=env,
+        log_file=bottle.logs / "05_kill_wine.log",
+        timeout=8,
+    )
+    combined_tail = "\n".join(part for part in (kill_tail, wait_tail) if part)
+    return wait_code, combined_tail
+
+
+def launch_app(
+    *,
+    bottle: Bottle,
+    wine64_path: Path,
+    appid: str,
+    graphics_backend: str = "dxmt",
+    wait: bool = True,
+) -> tuple[int, str]:
     return run_steam(
         bottle=bottle,
         wine64_path=wine64_path,
         steam_path=steam_windows_path(),
         extra_args=["-applaunch", appid],
-        wait=True,
+        wait=wait,
         graphics_backend=graphics_backend,
+        restart_existing=False,
     )
 
 
@@ -128,32 +253,52 @@ def run_game_executable(
     wine64_path: Path,
     executable: Path,
     extra_args: list[str] | None = None,
+    extra_env: dict[str, str] | None = None,
+    cwd: Path | None = None,
     wine_debug: str = "+timestamp,+seh,+loaddll",
     wait: bool = True,
     graphics_backend: str = "dxmt",
+    probe_seconds: int = 0,
 ) -> tuple[int, str]:
     ensure_bottle_dirs(bottle)
     exe_path = executable.expanduser().resolve()
     if not exe_path.exists():
         raise FileNotFoundError(f"Game executable not found: {exe_path}")
 
+    restore_tail = ""
+    if graphics_backend == "none":
+        restore_code, restore_tail = restore_builtin_graphics_dlls(
+            bottle=bottle,
+            wine64_path=wine64_path,
+        )
+        if restore_code != 0:
+            return restore_code, restore_tail
+
     command = [str(wine64_path), str(exe_path)]
     if extra_args:
         command.extend(extra_args)
 
-    code, tail = run_logged(
+    env = _graphics_launch_env(bottle, wine_debug, graphics_backend)
+    if extra_env:
+        env.update(extra_env)
+
+    runner = run_logged if wait else run_logged_detached
+    code, tail = runner(
         cmd=command,
-        env=_graphics_launch_env(bottle, wine_debug, graphics_backend),
+        env=env,
         log_file=bottle.logs / "04_debug_game.log",
-        cwd=exe_path.parent,
+        cwd=cwd or exe_path.parent,
+        probe_seconds=probe_seconds if not wait else 0,
     )
+    if restore_tail:
+        tail = "\n".join(part for part in (restore_tail, tail) if part)
     if code != 0 or not wait:
         return code, tail
 
     wineserver = _wineserver_path(wine64_path)
     wait_code, wait_tail = run_logged(
         cmd=[str(wineserver), "-w"],
-        env=_graphics_launch_env(bottle, wine_debug, graphics_backend),
+        env=env,
         log_file=bottle.logs / "04_debug_game.log",
     )
     combined_tail = "\n".join(part for part in (tail, wait_tail) if part)

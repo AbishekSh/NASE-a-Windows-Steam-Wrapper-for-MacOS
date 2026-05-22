@@ -1,0 +1,353 @@
+import Foundation
+
+enum RunnerKind: String, CaseIterable, Identifiable {
+    case home = "Home"
+    case mac = "macOS"
+    case steam = "Steam"
+    case wine = "Wine"
+    case epic = "Epic Games"
+    case gog = "GOG"
+
+    var id: String { rawValue }
+
+    var symbolName: String {
+        switch self {
+        case .home:
+            "house.fill"
+        case .mac:
+            "laptopcomputer"
+        case .steam:
+            "shippingbox.circle"
+        case .wine:
+            "wineglass"
+        case .epic:
+            "sparkles.rectangle.stack"
+        case .gog:
+            "square.stack.3d.up"
+        }
+    }
+
+    var accentName: String {
+        switch self {
+        case .home:
+            "HomeAccent"
+        case .mac:
+            "MacAccent"
+        case .steam:
+            "SteamAccent"
+        case .wine:
+            "WineAccent"
+        case .epic:
+            "SoonAccent"
+        case .gog:
+            "SoonAccent"
+        }
+    }
+
+    var isAvailable: Bool {
+        switch self {
+        case .home, .mac, .steam, .wine:
+            true
+        case .epic, .gog:
+            false
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .home:
+            "Pinned apps from every source"
+        case .mac:
+            "Native library and local launches"
+        case .steam:
+            "Windows Steam via managed Wine"
+        case .wine:
+            "Prefixes, runtime health, Metal stack"
+        case .epic:
+            "Planned"
+        case .gog:
+            "Planned"
+        }
+    }
+}
+
+struct SidebarSection: Identifiable {
+    let id: String
+    let title: String
+    let runners: [RunnerKind]
+}
+
+enum GraphicsBackendOption: String, CaseIterable, Identifiable, Codable {
+    case dxmt = "DXMT"
+    case dxvk = "DXVK"
+    case none = "None"
+
+    var id: String { rawValue }
+
+    var cliValue: String {
+        switch self {
+        case .dxmt:
+            return "dxmt"
+        case .dxvk:
+            return "dxvk"
+        case .none:
+            return "none"
+        }
+    }
+}
+
+enum GameCollection: String, CaseIterable, Identifiable, Codable {
+    case none = "None"
+    case favorites = "Favorites"
+    case finished = "Finished"
+    case testing = "Testing"
+    case broken = "Broken"
+
+    var id: String { rawValue }
+
+    var symbolName: String {
+        switch self {
+        case .none:
+            return "tray"
+        case .favorites:
+            return "star.fill"
+        case .finished:
+            return "checkmark.seal.fill"
+        case .testing:
+            return "testtube.2"
+        case .broken:
+            return "exclamationmark.triangle.fill"
+        }
+    }
+}
+
+enum LibrarySortOption: String, CaseIterable, Identifiable {
+    case manual = "Manual"
+    case title = "Title"
+    case size = "Size"
+    case recent = "Recent"
+
+    var id: String { rawValue }
+}
+
+enum GameStatusFilterOption: String, CaseIterable, Identifiable {
+    case all = "All"
+    case installed = "Installed"
+    case installers = "Installers"
+
+    var id: String { rawValue }
+}
+
+enum HealthStatus: String, Codable {
+    case unknown
+    case healthy
+    case warning
+    case error
+}
+
+enum BackendJobStatus: String, Codable, Hashable {
+    case queued
+    case started
+    case completed
+    case failed
+}
+
+enum SetupWizardStep: String, CaseIterable, Identifiable {
+    case welcome = "Welcome"
+    case wine = "Wine"
+    case winetricks = "Winetricks"
+    case graphics = "Graphics"
+    case bottle = "Bottle"
+    case steam = "Steam"
+    case finish = "Finish"
+
+    var id: String { rawValue }
+
+    var subtitle: String {
+        switch self {
+        case .welcome:
+            return "What the setup flow will do"
+        case .wine:
+            return "Detect Wine and explain install steps"
+        case .winetricks:
+            return "Detect Winetricks and explain install steps"
+        case .graphics:
+            return "Choose the DXMT payload for Metal support"
+        case .bottle:
+            return "Pick the managed bottle to create and maintain"
+        case .steam:
+            return "Run the managed Steam + Metal setup flow"
+        case .finish:
+            return "Review the result and open Steam"
+        }
+    }
+}
+
+struct BackendJob: Identifiable, Hashable {
+    let id: String
+    let action: String
+    let status: BackendJobStatus
+    let message: String
+    let progress: Double?
+    let completedSteps: Int?
+    let totalSteps: Int?
+}
+
+struct BackendCheckSummary: Identifiable, Hashable {
+    let id: String
+    let status: String
+    let name: String
+    let detail: String
+}
+
+struct BackendStepSummary: Identifiable, Hashable {
+    let id: String
+    let name: String
+    let status: String
+}
+
+struct BackendSignalSummary: Identifiable, Hashable {
+    let id: String
+    let key: String
+    let detail: String
+    let path: String
+}
+
+struct BackendRecommendationSummary: Identifiable, Hashable {
+    let id: String
+    let verb: String
+    let reason: String
+}
+
+struct BackendStructuredResult: Hashable {
+    let action: String
+    let root: String?
+    let target: String?
+    let worstStatus: String?
+    let fixes: [String]
+    let checks: [BackendCheckSummary]
+    let steps: [BackendStepSummary]
+    let signals: [BackendSignalSummary]
+    let recommendations: [BackendRecommendationSummary]
+    let warnings: [String]
+    let errors: [String]
+    let tail: String?
+    let completedSteps: Int?
+    let totalSteps: Int?
+}
+
+struct BackendStreamUpdate: Hashable {
+    let job: BackendJob?
+    let structured: BackendStructuredResult?
+}
+
+struct EffectiveGraphicsOverrides: Hashable {
+    let targetLabel: String
+    let prefixPath: String
+    let graphicsBackend: GraphicsBackendOption
+    let registryOverrides: [String]
+    let launchOverrides: String?
+    let environmentWarnings: [String]
+}
+
+struct WineRuntimeRecord: Identifiable, Codable, Hashable {
+    enum SourceKind: String, Codable, CaseIterable {
+        case bundled
+        case importedApp
+        case importedBinary
+        case detected
+    }
+
+    let id: String
+    var name: String
+    var executablePath: String
+    var sourceKind: SourceKind
+    var containerPath: String?
+    var isManaged: Bool
+
+    var displaySubtitle: String {
+        switch sourceKind {
+        case .bundled:
+            return "Managed by the launcher"
+        case .importedApp:
+            return "Imported Wine app"
+        case .importedBinary:
+            return "Imported executable"
+        case .detected:
+            return "Detected on this Mac"
+        }
+    }
+}
+
+enum LibrarySourceFilter: String, CaseIterable, Identifiable {
+    case all = "All Sources"
+    case mac = "macOS"
+    case steam = "Steam"
+    case wine = "Wine"
+
+    var id: String { rawValue }
+}
+
+struct LibraryGame: Identifiable, Hashable {
+    let id: UUID
+    let pinID: String
+    let backendID: String?
+    let title: String
+    let runner: RunnerKind
+    let capsule: String
+    let status: String
+    let statsText: String?
+    let bannerURL: URL?
+    let installURL: URL?
+    let launchURL: URL?
+    let storeURL: URL?
+
+    init(
+        id: UUID = UUID(),
+        pinID: String? = nil,
+        backendID: String? = nil,
+        title: String,
+        runner: RunnerKind,
+        capsule: String,
+        status: String,
+        statsText: String? = nil,
+        bannerURL: URL? = nil,
+        installURL: URL? = nil,
+        launchURL: URL? = nil,
+        storeURL: URL? = nil
+    ) {
+        self.id = id
+        self.pinID = pinID ?? "\(runner.rawValue):\(backendID ?? title)"
+        self.backendID = backendID
+        self.title = title
+        self.runner = runner
+        self.capsule = capsule
+        self.status = status
+        self.statsText = statsText
+        self.bannerURL = bannerURL
+        self.installURL = installURL
+        self.launchURL = launchURL
+        self.storeURL = storeURL
+    }
+}
+
+struct OperationCard: Identifiable {
+    let id = UUID()
+    let kind: OperationKind
+    let title: String
+    let detail: String
+    let symbolName: String
+}
+
+enum OperationKind {
+    case setupMetal
+    case doctor
+    case doctorFix
+    case winetricks
+    case installDXMT
+    case winecfg
+    case killWine
+    case openSteam
+    case refreshGames
+    case launchSelectedGame
+}

@@ -5,13 +5,28 @@ import tarfile
 from pathlib import Path
 
 from .bottle import Bottle, ensure_bottle_dirs
+from .runtime import find_wine_module_root, run_logged
 
 
 DXMT_DLL_OVERRIDES = {
+    "d3d9": "builtin",
     "dxgi": "native,builtin",
     "d3d11": "native,builtin",
     "d3d10core": "native,builtin",
+    "winemetal": "native,builtin",
 }
+OLD_GRAPHICS_OVERRIDES = (
+    "d3d9",
+    "d3d10core",
+    "d3d11",
+    "dxgi",
+    "winemetal",
+    "*d3d9",
+    "*d3d10core",
+    "*d3d11",
+    "*dxgi",
+    "*winemetal",
+)
 
 
 def _extract_archive(archive: Path, target_dir: Path) -> Path:
@@ -35,22 +50,27 @@ def resolve_dxmt_root(source: Path, cache_dir: Path) -> Path:
 
 
 def _upsert_user_reg_section(user_reg: Path, section: str, entries: dict[str, str]) -> None:
-    lines = user_reg.read_text(encoding="utf-8", errors="replace").splitlines()
+    if user_reg.exists():
+        lines = user_reg.read_text(encoding="utf-8", errors="replace").splitlines()
+    else:
+        user_reg.parent.mkdir(parents=True, exist_ok=True)
+        lines = []
     header = f"[{section}]"
     start = None
     end = None
 
     for index, line in enumerate(lines):
-        if line == header:
+        if line == header or line.startswith(header + " "):
             start = index
             end = len(lines)
             for cursor in range(index + 1, len(lines)):
-                if lines[cursor].startswith("[") and lines[cursor].endswith("]"):
+                if lines[cursor].startswith("["):
                     end = cursor
                     break
             break
 
-    section_lines = [header]
+    section_header = lines[start] if start is not None else header
+    section_lines = [section_header]
     for key, value in entries.items():
         section_lines.append(f'"{key}"="{value}"')
 
@@ -65,6 +85,44 @@ def _upsert_user_reg_section(user_reg: Path, section: str, entries: dict[str, st
                 existing.append(line)
         lines[start:end] = [header, *existing, *section_lines[1:]]
 
+    user_reg.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _remove_user_reg_entries(user_reg: Path, section: str, keys: tuple[str, ...]) -> None:
+    if not user_reg.exists():
+        return
+
+    lines = user_reg.read_text(encoding="utf-8", errors="replace").splitlines()
+    header = f"[{section}]"
+    start = None
+    end = None
+
+    for index, line in enumerate(lines):
+        if line == header or line.startswith(header + " "):
+            start = index
+            end = len(lines)
+            for cursor in range(index + 1, len(lines)):
+                if lines[cursor].startswith("["):
+                    end = cursor
+                    break
+            break
+
+    if start is None or end is None:
+        return
+
+    section_header = lines[start]
+    filtered: list[str] = [section_header]
+    for line in lines[start + 1 : end]:
+        if line.startswith('"') and '"="' in line and line.endswith('"'):
+            key = line.split('"', 2)[1]
+            if key in keys:
+                continue
+        filtered.append(line)
+
+    while len(filtered) > 1 and filtered[-1] == "":
+        filtered.pop()
+
+    lines[start:end] = [] if len(filtered) == 1 else filtered
     user_reg.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -89,22 +147,19 @@ def _locate_unix_payload_dir(dxmt_root: Path) -> Path | None:
     return None
 
 
-def _wine_module_root(wine_path: Path | None) -> Path | None:
-    if wine_path is None:
-        wine_bin_path = shutil.which("wine")
-        if not wine_bin_path:
-            return None
-        wine_bin = Path(wine_bin_path).resolve()
-    else:
-        wine_bin = wine_path.resolve()
-    for ancestor in wine_bin.parents:
-        candidate = ancestor / "lib" / "wine"
-        if candidate.is_dir():
-            return candidate
-    return None
+def _wineserver_path(wine_path: Path) -> Path:
+    candidate = wine_path.with_name("wineserver")
+    if candidate.exists():
+        return candidate
+    raise FileNotFoundError(f"wineserver not found next to Wine binary: {candidate}")
 
 
-def _enable_dxmt_overrides(bottle: Bottle) -> None:
+def enable_dxmt_overrides(bottle: Bottle) -> None:
+    _remove_user_reg_entries(
+        bottle.prefix / "user.reg",
+        r"Software\\Wine\\DllOverrides",
+        OLD_GRAPHICS_OVERRIDES,
+    )
     _upsert_user_reg_section(
         bottle.prefix / "user.reg",
         r"Software\\Wine\\DllOverrides",
@@ -132,17 +187,28 @@ def install_dxmt(*, bottle: Bottle, dxmt_source: Path, wine64_path: Path | None 
                 shutil.copy2(source, destination)
                 copied.append(str(destination))
 
-    module_root = _wine_module_root(wine64_path)
+    module_root = None
+    if wine64_path is None:
+        wine_bin_path = shutil.which("wine")
+        if wine_bin_path:
+            module_root = find_wine_module_root(Path(wine_bin_path))
+    else:
+        module_root = find_wine_module_root(wine64_path)
     if module_root:
+        builtin_d3d9_targets = (
+            (module_root / "x86_64-windows" / "d3d9.dll", system32 / "d3d9.dll"),
+            (module_root / "i386-windows" / "d3d9.dll", syswow64 / "d3d9.dll"),
+        )
+        for source, destination in builtin_d3d9_targets:
+            if source.exists():
+                shutil.copy2(source, destination)
+                copied.append(str(destination))
+
         runtime_targets = (
             (x64_dir / "d3d10core.dll", module_root / "x86_64-windows" / "d3d10core.dll"),
             (x64_dir / "d3d11.dll", module_root / "x86_64-windows" / "d3d11.dll"),
             (x64_dir / "dxgi.dll", module_root / "x86_64-windows" / "dxgi.dll"),
             (x64_dir / "winemetal.dll", module_root / "x86_64-windows" / "winemetal.dll"),
-            (x32_dir / "d3d10core.dll", module_root / "i386-windows" / "d3d10core.dll"),
-            (x32_dir / "d3d11.dll", module_root / "i386-windows" / "d3d11.dll"),
-            (x32_dir / "dxgi.dll", module_root / "i386-windows" / "dxgi.dll"),
-            (x32_dir / "winemetal.dll", module_root / "i386-windows" / "winemetal.dll"),
         )
         if unix_dir:
             runtime_targets += ((unix_dir / "winemetal.so", module_root / "x86_64-unix" / "winemetal.so"),)
@@ -151,8 +217,40 @@ def install_dxmt(*, bottle: Bottle, dxmt_source: Path, wine64_path: Path | None 
                 shutil.copy2(source, destination)
                 copied.append(str(destination))
 
+        i386_runtime = module_root / "i386-windows"
+        if i386_runtime.is_dir():
+            for source in sorted(x32_dir.glob("*")):
+                if not source.is_file():
+                    continue
+                destination = i386_runtime / source.name
+                shutil.copy2(source, destination)
+                copied.append(str(destination))
+
     if not copied:
         raise FileNotFoundError(f"No DXMT DLLs found under: {dxmt_root}")
 
-    _enable_dxmt_overrides(bottle)
-    return 0, "\n".join(copied)
+    enable_dxmt_overrides(bottle)
+    tail_parts = ["\n".join(copied)]
+    if wine64_path is not None:
+        wineserver = _wineserver_path(wine64_path)
+        code, tail = run_logged(
+            cmd=[str(wineserver), "-k"],
+            env={"WINEPREFIX": str(bottle.prefix), "WINEDEBUG": "-all"},
+            log_file=bottle.logs / "dxmt_install.log",
+            timeout=20,
+        )
+        if tail:
+            tail_parts.append(tail)
+        if code not in (0, 1, 124):
+            return code, "\n".join(part for part in tail_parts if part)
+        wait_code, wait_tail = run_logged(
+            cmd=[str(wineserver), "-w"],
+            env={"WINEPREFIX": str(bottle.prefix), "WINEDEBUG": "-all"},
+            log_file=bottle.logs / "dxmt_install.log",
+            timeout=20,
+        )
+        if wait_tail:
+            tail_parts.append(wait_tail)
+        if wait_code not in (0, 1, 124):
+            return wait_code, "\n".join(part for part in tail_parts if part)
+    return 0, "\n".join(part for part in tail_parts if part)

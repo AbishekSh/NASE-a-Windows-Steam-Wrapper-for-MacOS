@@ -1,0 +1,2665 @@
+import AppKit
+import CryptoKit
+import Foundation
+import Observation
+import UniformTypeIdentifiers
+
+private enum LibraryStorageKey {
+    static let nativeApps = "library.nativeApps"
+    static let wineApps = "library.wineApps"
+    static let pinnedIDs = "library.pinnedIDs"
+    static let steamOrder = "library.steamOrder"
+    static let hiddenSteamAppIDs = "library.hiddenSteamAppIDs"
+    static let gameSettings = "library.gameSettings"
+    static let sourceHealth = "library.sourceHealth"
+    static let wineRuntimes = "library.wineRuntimes"
+    static let didCompleteInitialSetup = "library.didCompleteInitialSetup"
+}
+
+private struct StoredLibraryItem: Codable {
+    let title: String
+    let runner: String
+    let installPath: String
+    let launchPath: String?
+    let status: String?
+}
+
+struct StoredGameSettings: Codable {
+    var launchArguments: String = ""
+    var workingDirectoryPath: String = ""
+    var environmentText: String = ""
+    var graphicsBackend: GraphicsBackendOption = .dxmt
+    var launchExecutablePath: String = ""
+    var customBannerPath: String = ""
+    var collection: GameCollection = .none
+    var assignedBottleName: String = ""
+    var assignedExternalPrefix: String = ""
+}
+
+fileprivate struct SteamLocalMetadata {
+    var playtimeMinutes: Int?
+    var lastPlayed: Date?
+}
+
+struct DisplayedLogEntry: Identifiable, Hashable {
+    let id: String
+    let title: String
+    let text: String
+}
+
+struct WinetricksComponentStatus: Identifiable, Hashable {
+    enum State: Hashable {
+        case installed
+        case missing
+        case unavailable
+    }
+
+    let id: String
+    let title: String
+    let state: State
+    let detail: String
+}
+
+enum BackendDebugSection: String, CaseIterable, Identifiable {
+    case activityLog = "Activity Log"
+    case bridgeCommands = "Backend Bridge"
+
+    var id: String { rawValue }
+}
+
+@MainActor
+@Observable
+final class AppViewModel {
+    let sidebarSections: [SidebarSection] = [
+        SidebarSection(id: "libraries", title: "Libraries", runners: [.home, .mac, .steam, .wine]),
+        SidebarSection(id: "coming-soon", title: "Coming Soon", runners: [.epic, .gog]),
+    ]
+
+    var selectedRunner: RunnerKind? = .home
+    var selectedGame: LibraryGame?
+    var searchText: String = ""
+    var rightPanelMessage: String = "Select a runner to see setup state and actions."
+    var activityLog: String = "SwiftUI shell ready.\n"
+    var isBusy: Bool = false
+    var isShowingSettings: Bool = false
+    var isShowingGameSettings: Bool = false
+    var isShowingGameDetails: Bool = false
+    var isShowingLogViewer: Bool = false
+    var isShowingWinetricks: Bool = false
+    var backendContext: BackendContext = .default()
+    var hasAttemptedSteamDetection: Bool = false
+    var sortOption: LibrarySortOption = .manual
+    var collectionFilter: GameCollection?
+    var sourceFilter: LibrarySourceFilter = .all
+    var editingGamePinID: String?
+    var selectedLogText: String = ""
+    var selectedLogTitle: String = "Logs"
+    var selectedLogEntries: [DisplayedLogEntry] = []
+    var selectedLogEntryID: String?
+    var expandedDebugSections: Set<BackendDebugSection> = []
+
+    private(set) var activeBackendJobs: [BackendJob] = []
+    private(set) var recentBackendJobs: [BackendJob] = []
+    private(set) var latestDoctorResult: BackendStructuredResult?
+    private(set) var latestSetupResult: BackendStructuredResult?
+    private(set) var latestScanResult: BackendStructuredResult?
+    private(set) var latestAdviceResult: BackendStructuredResult?
+    private(set) var wineRuntimes: [WineRuntimeRecord] = []
+    private(set) var discoveredSteamGames: [LibraryGame] = []
+    private(set) var nativeApps: [LibraryGame] = []
+    private(set) var wineApps: [LibraryGame] = []
+    private(set) var pinnedGameIDs: [String] = []
+    private(set) var steamOrderIDs: [String] = []
+    private(set) var hiddenSteamAppIDs: [String] = []
+    private(set) var sourceHealth: [RunnerKind: HealthStatus] = [.home: .healthy, .mac: .healthy, .steam: .unknown, .wine: .unknown]
+    private(set) var gameSettingsByPinID: [String: StoredGameSettings] = [:]
+    fileprivate var steamMetadataByAppID: [String: SteamLocalMetadata] = [:]
+    private var runningHealthChecks = Set<RunnerKind>()
+
+    var managedBottleNames: [String] {
+        let root = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/MySteamWine/bottles", isDirectory: true)
+        guard let contents = try? FileManager.default.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return [backendContext.bottleName].uniquedPreservingOrder()
+        }
+
+        let names = contents.compactMap { url -> String? in
+            let values = try? url.resourceValues(forKeys: [.isDirectoryKey])
+            guard values?.isDirectory == true else { return nil }
+            return url.lastPathComponent
+        }
+
+        return ([backendContext.bottleName] + names).uniquedPreservingOrder()
+    }
+
+    var selectedWineRuntimeID: String? {
+        wineRuntimes.first(where: { $0.executablePath == backendContext.winePath })?.id
+    }
+
+    var wineRuntimeSummary: String {
+        if let runtime = wineRuntimes.first(where: { $0.executablePath == backendContext.winePath }) {
+            return runtime.name
+        }
+        return URL(fileURLWithPath: backendContext.winePath).lastPathComponent
+    }
+
+    init() {
+        nativeApps = loadStoredItems(forKey: LibraryStorageKey.nativeApps)
+        wineApps = loadStoredItems(forKey: LibraryStorageKey.wineApps)
+        pinnedGameIDs = UserDefaults.standard.stringArray(forKey: LibraryStorageKey.pinnedIDs) ?? []
+        steamOrderIDs = UserDefaults.standard.stringArray(forKey: LibraryStorageKey.steamOrder) ?? []
+        hiddenSteamAppIDs = UserDefaults.standard.stringArray(forKey: LibraryStorageKey.hiddenSteamAppIDs) ?? []
+        gameSettingsByPinID = loadGameSettings()
+        sourceHealth = loadSourceHealth()
+        wineRuntimes = loadWineRuntimes()
+        refreshWineRuntimes()
+        selectedGame = nil
+    }
+
+    var operationCards: [OperationCard] {
+        switch selectedRunner ?? .home {
+        case .steam:
+            var cards = [
+                OperationCard(kind: .setupMetal, title: "Finish Setup", detail: "Create the default bottle, install Steam, add DXMT, and open Steam.", symbolName: "hammer"),
+                OperationCard(kind: .doctor, title: "Inspect Environment", detail: "Check Wine, DXMT, Steam, and the current bottle when something feels off.", symbolName: "stethoscope"),
+                OperationCard(kind: .installDXMT, title: "Install DXMT", detail: "Reinstall DXMT into the current bottle or prefix from the configured DXMT source.", symbolName: "shippingbox.circle"),
+                OperationCard(kind: .winecfg, title: "Wine Configuration", detail: "Open winecfg for the current managed bottle or external prefix.", symbolName: "slider.horizontal.3"),
+                OperationCard(kind: .winetricks, title: "Winetricks", detail: "Install runtime components like corefonts, vcrun, or dotnet into the current target.", symbolName: "shippingbox"),
+                OperationCard(kind: .killWine, title: "Kill All Wine Processes", detail: "Force-stop Wine processes for the current bottle or prefix when something gets stuck.", symbolName: "xmark.circle"),
+                OperationCard(kind: .openSteam, title: "Open Steam", detail: "Launch Windows Steam without waiting for it to exit.", symbolName: "play.circle"),
+                OperationCard(kind: .refreshGames, title: "Refresh Games", detail: "Pull the current Steam manifest list from the Python backend.", symbolName: "arrow.clockwise"),
+            ]
+            if selectedGame?.runner == .steam {
+                cards.append(OperationCard(kind: .launchSelectedGame, title: "Launch Selected", detail: "Launch the selected Steam title through the managed backend.", symbolName: "gamecontroller"))
+            }
+            return cards
+        case .wine:
+            return [
+                OperationCard(kind: .doctor, title: "Inspect Environment", detail: "Check the current Wine setup and collect a clean summary.", symbolName: "stethoscope"),
+                OperationCard(kind: .doctorFix, title: "Repair Environment", detail: "Apply safe DXMT and prefix repairs, then rerun checks.", symbolName: "cross.case"),
+                OperationCard(kind: .installDXMT, title: "Install DXMT", detail: "Reinstall DXMT into the current bottle or prefix from the configured DXMT source.", symbolName: "shippingbox.circle"),
+                OperationCard(kind: .winecfg, title: "Wine Configuration", detail: "Open winecfg for the current managed bottle or external prefix.", symbolName: "slider.horizontal.3"),
+                OperationCard(kind: .winetricks, title: "Winetricks", detail: "Install runtime components like corefonts, vcrun, or dotnet into the current target.", symbolName: "shippingbox"),
+                OperationCard(kind: .killWine, title: "Kill All Wine Processes", detail: "Force-stop Wine processes for the current bottle or prefix when something gets stuck.", symbolName: "xmark.circle"),
+                OperationCard(kind: .setupMetal, title: "Finish Setup", detail: "Run the managed Metal setup flow again.", symbolName: "hammer"),
+            ]
+        case .home, .mac:
+            return []
+        case .epic, .gog:
+            return []
+        }
+    }
+
+    var filteredGames: [LibraryGame] {
+        let source = sourceGames.map(enrichedGame)
+        let filteredBySource = source.filter(matchesSourceFilter)
+        let filteredByCollection = filteredBySource.filter { game in
+            guard let collectionFilter else { return true }
+            return settings(for: game).collection == collectionFilter
+        }
+        let searched = filteredByCollection.filter(matchesSearch)
+        return sortGames(searched)
+    }
+
+    var bridgeCommands: [BackendCommand] {
+        BackendBridge.commands(for: selectedRunner ?? .steam, context: backendContext, selectedGame: selectedGame)
+    }
+
+    var libraryEmptyMessage: String {
+        switch selectedRunner ?? .home {
+        case .home:
+            return pinnedGames.isEmpty
+                ? "Pin apps from Steam, macOS, or Wine so your favorites show up here."
+                : "Pinned apps from every source show up here."
+        case .steam:
+            if !hasAttemptedSteamDetection {
+                return "Detecting installed Steam games..."
+            }
+            return "No installed Steam games were found in the current target. Check the backend settings, then run Refresh Games."
+        case .wine:
+            return "Add Windows games, folders, or installers with the + button."
+        case .mac:
+            return "Add native macOS apps with the + button."
+        case .epic, .gog:
+            return "This source is planned but not wired yet."
+        }
+    }
+
+    var settingsSummary: String {
+        if let externalPrefix = backendContext.externalPrefix, !externalPrefix.isEmpty {
+            return "\(wineRuntimeSummary) • External prefix: \(externalPrefix)"
+        }
+        return "\(wineRuntimeSummary) • Managed bottle: \(backendContext.bottleName)"
+    }
+
+    var currentOperationJob: BackendJob? {
+        activeBackendJobs.first
+    }
+
+    var currentOperationResult: BackendStructuredResult? {
+        if let currentOperationJob {
+            switch currentOperationJob.action {
+            case "Doctor", "Doctor + Fix":
+                return latestDoctorResult
+            case "Setup Metal":
+                return latestSetupResult
+            default:
+                break
+            }
+        }
+
+        return latestSetupResult ?? latestDoctorResult ?? latestAdviceResult ?? latestScanResult
+    }
+
+    var shouldShowSteamEmptyStateActions: Bool {
+        (selectedRunner ?? .home) == .steam
+    }
+
+    var shouldShowAddButton: Bool {
+        guard let selectedRunner else { return false }
+        return selectedRunner == .mac || selectedRunner == .wine
+    }
+
+    var shouldShowWineAddMenu: Bool {
+        selectedRunner == .wine
+    }
+
+    var editingGame: LibraryGame? {
+        guard let editingGamePinID else { return nil }
+        return (nativeApps + discoveredSteamGames + wineApps).first(where: { $0.pinID == editingGamePinID })
+    }
+
+    var selectedRunnerActionTitle: String {
+        switch selectedRunner ?? .home {
+        case .mac:
+            return "Add macOS Apps"
+        case .wine:
+            return "Add Wine Apps"
+        default:
+            return "Add"
+        }
+    }
+
+    func selectRunner(_ runner: RunnerKind) {
+        selectedRunner = runner
+        selectedGame = filteredGames.first
+
+        switch runner {
+        case .home:
+            rightPanelMessage = "Home keeps your pinned apps from every source in one place."
+        case .mac:
+            rightPanelMessage = "Add native macOS apps here and launch them from one library."
+        case .steam:
+            rightPanelMessage = "Steam is ready for setup, launch, and refresh."
+            if !hasAttemptedSteamDetection && !isBusy {
+                refreshSteamGames(announce: false)
+            }
+        case .wine:
+            rightPanelMessage = "Add Windows executables or folders here and launch them through Wine."
+        case .epic, .gog:
+            rightPanelMessage = "These are placeholders for the future multi-store layout."
+        }
+    }
+
+    func selectGame(_ game: LibraryGame) {
+        selectedGame = game
+    }
+
+    func openSettings() {
+        isShowingSettings = true
+    }
+
+    func closeSetupWizard() {}
+
+    func openWinetricks() {
+        isShowingWinetricks = true
+    }
+
+    func openWinetricksAfterSettingsDismiss() {
+        isShowingSettings = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            Task { @MainActor in
+                self?.isShowingWinetricks = true
+            }
+        }
+    }
+
+    func performAfterSettingsDismiss(_ operation: OperationCard) {
+        isShowingSettings = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            Task { @MainActor in
+                self?.perform(operation)
+            }
+        }
+    }
+
+    func closeWinetricks() {
+        isShowingWinetricks = false
+    }
+
+    func selectWineRuntime(id: String) {
+        guard let runtime = wineRuntimes.first(where: { $0.id == id }) else { return }
+        backendContext = BackendContext(
+            repoRoot: backendContext.repoRoot,
+            pythonCommand: backendContext.pythonCommand,
+            winePath: runtime.executablePath,
+            dxmtSource: backendContext.dxmtSource,
+            dxvkSource: backendContext.dxvkSource,
+            bottleName: backendContext.bottleName,
+            externalPrefix: backendContext.externalPrefix
+        )
+        backendContext.persist()
+        rightPanelMessage = "Using \(runtime.name)."
+        appendLog("Selected Wine runtime: \(runtime.name)\n\(runtime.executablePath)")
+    }
+
+    func refreshWineRuntimes() {
+        var byID = Dictionary(uniqueKeysWithValues: wineRuntimes.map { ($0.id, $0) })
+        for runtime in scanWineRuntimes() {
+            byID[runtime.id] = runtime
+        }
+
+        let currentPath = backendContext.winePath
+        if !currentPath.isEmpty {
+            let fallbackID = "custom:\(currentPath)"
+            if byID[fallbackID] == nil, FileManager.default.isExecutableFile(atPath: currentPath) {
+                byID[fallbackID] = WineRuntimeRecord(
+                    id: fallbackID,
+                    name: URL(fileURLWithPath: currentPath).lastPathComponent,
+                    executablePath: currentPath,
+                    sourceKind: .detected,
+                    containerPath: nil,
+                    isManaged: false
+                )
+            }
+        }
+
+        wineRuntimes = byID.values.sorted {
+            if $0.isManaged != $1.isManaged {
+                return $0.isManaged && !$1.isManaged
+            }
+            return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
+        persistWineRuntimes()
+    }
+
+    func importWineAppRuntime() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = [.applicationBundle]
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Import Wine App"
+        panel.message = "Choose a Wine app to copy into the launcher's managed runtimes folder."
+
+        guard panel.runModal() == .OK, let sourceURL = panel.url else { return }
+        do {
+            let runtimesRoot = managedWineRuntimesRoot()
+            try FileManager.default.createDirectory(at: runtimesRoot, withIntermediateDirectories: true, attributes: nil)
+            let targetURL = uniqueManagedRuntimeDestination(for: sourceURL)
+            try FileManager.default.copyItem(at: sourceURL, to: targetURL)
+            guard let executablePath = detectWineExecutable(in: targetURL) else {
+                throw NSError(domain: "SteamWineApp.WineRuntime", code: 2, userInfo: [NSLocalizedDescriptionKey: "Could not locate a Wine executable inside \(targetURL.lastPathComponent)."])
+            }
+
+            let runtime = WineRuntimeRecord(
+                id: "managed:\(targetURL.path)",
+                name: targetURL.deletingPathExtension().lastPathComponent,
+                executablePath: executablePath,
+                sourceKind: .importedApp,
+                containerPath: targetURL.path,
+                isManaged: true
+            )
+            wineRuntimes.removeAll { $0.id == runtime.id }
+            wineRuntimes.append(runtime)
+            persistWineRuntimes()
+            selectWineRuntime(id: runtime.id)
+            refreshWineRuntimes()
+        } catch {
+            rightPanelMessage = "Could not import Wine app."
+            appendLog("Wine runtime import failed:\n\(error.localizedDescription)")
+        }
+    }
+
+    func importWineBinaryRuntime() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Choose Wine Binary"
+        panel.message = "Choose a Wine executable to register with the launcher."
+
+        guard panel.runModal() == .OK, let sourceURL = panel.url else { return }
+        guard FileManager.default.isExecutableFile(atPath: sourceURL.path) else {
+            rightPanelMessage = "That file is not executable."
+            return
+        }
+
+        let runtime = WineRuntimeRecord(
+            id: "binary:\(sourceURL.path)",
+            name: sourceURL.deletingPathExtension().lastPathComponent,
+            executablePath: sourceURL.path,
+            sourceKind: .importedBinary,
+            containerPath: nil,
+            isManaged: false
+        )
+        wineRuntimes.removeAll { $0.id == runtime.id }
+        wineRuntimes.append(runtime)
+        persistWineRuntimes()
+        selectWineRuntime(id: runtime.id)
+        refreshWineRuntimes()
+    }
+
+    func revealManagedWineRuntimes() {
+        let root = managedWineRuntimesRoot()
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: nil)
+        NSWorkspace.shared.activateFileViewerSelecting([root])
+    }
+
+    func detectedWinePathStatus(_ path: String) -> String {
+        validateWinePath(path.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    func detectedWinetricksPath() -> String? {
+        let fileManager = FileManager.default
+        let commonPaths = [
+            "/opt/homebrew/bin/winetricks",
+            "/usr/local/bin/winetricks",
+            "/opt/local/bin/winetricks",
+        ]
+        if let found = commonPaths.first(where: { fileManager.isExecutableFile(atPath: $0) }) {
+            return found
+        }
+
+        let pathEntries = (ProcessInfo.processInfo.environment["PATH"] ?? "")
+            .split(separator: ":")
+            .map(String.init)
+        for entry in pathEntries {
+            let candidate = URL(fileURLWithPath: entry).appendingPathComponent("winetricks").path
+            if fileManager.isExecutableFile(atPath: candidate) {
+                return candidate
+            }
+        }
+
+        return nil
+    }
+
+    func detectedWinetricksStatus() -> String {
+        if let path = detectedWinetricksPath() {
+            return "OK: Winetricks found at \(path)"
+        }
+        return "FAIL: Winetricks was not found on this Mac"
+    }
+
+    func setupWizardCanRun(winePath: String, dxmtSource: String, bottleName: String) -> Bool {
+        let wineStatus = detectedWinePathStatus(winePath)
+        let winetricksStatus = detectedWinetricksStatus()
+        let dxmtStatuses = validateDXMTSource(dxmtSource)
+        let cleanedBottle = bottleName.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return wineStatus.hasPrefix("OK:")
+            && winetricksStatus.hasPrefix("OK:")
+            && dxmtStatuses.contains(where: { $0.hasPrefix("OK: DXMT payload folders look valid") || $0.hasPrefix("OK: DXMT source is a .tar.gz archive") })
+            && !cleanedBottle.isEmpty
+    }
+
+    func validateDXMTSourceForWizard(_ path: String) -> [String] {
+        validateDXMTSource(path.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    func validateDXVKSourceForWizard(_ path: String) -> [String] {
+        validateDXVKSource(path.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    func runSetupWizard(winePath: String, dxmtSource: String, dxvkSource: String, bottleName: String) {
+        applySettings(
+            winePath: winePath,
+            dxmtSource: dxmtSource,
+            dxvkSource: dxvkSource,
+            bottleName: bottleName,
+            externalPrefix: nil,
+            useExternalPrefix: false
+        )
+        UserDefaults.standard.set(true, forKey: LibraryStorageKey.didCompleteInitialSetup)
+        selectedRunner = .steam
+        executeDetached(
+            .setupMetal,
+            successMessage: "Setup Metal finished.",
+            context: backendContext
+        )
+    }
+
+    func installDXVKFromWizard(winePath: String, dxmtSource: String, dxvkSource: String, bottleName: String) {
+        applySettings(
+            winePath: winePath,
+            dxmtSource: dxmtSource,
+            dxvkSource: dxvkSource,
+            bottleName: bottleName,
+            externalPrefix: nil,
+            useExternalPrefix: false
+        )
+        executeDetached(
+            .installDXVK,
+            successMessage: "Installed DXVK.",
+            context: backendContext
+        )
+    }
+
+    func detectedWinetricksComponents() -> [WinetricksComponentStatus] {
+        guard let prefixURL = currentPrefixURL(for: backendContext) else {
+            return [
+                WinetricksComponentStatus(id: "prefix", title: "Prefix", state: .unavailable, detail: "Current bottle/prefix could not be resolved.")
+            ]
+        }
+
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: prefixURL.path) else {
+            return [
+                WinetricksComponentStatus(id: "prefix", title: "Prefix", state: .unavailable, detail: "Prefix does not exist yet.")
+            ]
+        }
+
+        let system32 = prefixURL.appendingPathComponent("drive_c/windows/system32", isDirectory: true)
+        let syswow64 = prefixURL.appendingPathComponent("drive_c/windows/syswow64", isDirectory: true)
+        let fonts = prefixURL.appendingPathComponent("drive_c/windows/Fonts", isDirectory: true)
+        let registryText = [prefixURL.appendingPathComponent("system.reg"), prefixURL.appendingPathComponent("user.reg")]
+            .compactMap { try? String(contentsOf: $0, encoding: .utf8) }
+            .joined(separator: "\n")
+
+        func exists(_ base: URL, _ name: String) -> Bool {
+            fileManager.fileExists(atPath: base.appendingPathComponent(name).path)
+        }
+
+        func status(id: String, title: String, installed: Bool, detail: String) -> WinetricksComponentStatus {
+            WinetricksComponentStatus(
+                id: id,
+                title: title,
+                state: installed ? .installed : .missing,
+                detail: detail
+            )
+        }
+
+        let coreFontsInstalled =
+            ["arial.ttf", "times.ttf", "cour.ttf", "verdana.ttf", "trebuc.ttf"]
+            .contains { exists(fonts, $0) }
+        let vcrun2019Installed =
+            exists(system32, "vcruntime140.dll")
+            || exists(system32, "msvcp140.dll")
+            || exists(syswow64, "vcruntime140.dll")
+            || registryText.localizedCaseInsensitiveContains("Visual C++")
+        let d3dcompilerInstalled =
+            exists(system32, "d3dcompiler_47.dll")
+            || exists(syswow64, "d3dcompiler_47.dll")
+        let dotnet48Installed =
+            registryText.localizedCaseInsensitiveContains("NDP\\v4\\Full")
+            || registryText.localizedCaseInsensitiveContains("dotnet")
+        let xactInstalled =
+            exists(system32, "xaudio2_7.dll")
+            || exists(system32, "x3daudio1_7.dll")
+            || exists(syswow64, "xaudio2_7.dll")
+        let directPlayInstalled =
+            exists(system32, "dplayx.dll")
+            || exists(syswow64, "dplayx.dll")
+            || registryText.localizedCaseInsensitiveContains("DirectPlay")
+
+        return [
+            status(id: "corefonts", title: "Core Fonts", installed: coreFontsInstalled, detail: coreFontsInstalled ? "Common Microsoft font files found." : "No common core font files detected."),
+            status(id: "vcrun2019", title: "VC++ 2019", installed: vcrun2019Installed, detail: vcrun2019Installed ? "Visual C++ runtime files or registry entries found." : "VC++ runtime files were not found."),
+            status(id: "d3dcompiler_47", title: "D3D Compiler 47", installed: d3dcompilerInstalled, detail: d3dcompilerInstalled ? "d3dcompiler_47.dll found in the prefix." : "d3dcompiler_47.dll not found in the prefix."),
+            status(id: "dotnet48", title: ".NET 4.8", installed: dotnet48Installed, detail: dotnet48Installed ? ".NET registry markers found." : "No .NET 4.x registry markers were found."),
+            status(id: "xact", title: "XACT", installed: xactInstalled, detail: xactInstalled ? "XAudio/X3DAudio files found." : "XACT audio runtime files were not found."),
+            status(id: "directplay", title: "DirectPlay", installed: directPlayInstalled, detail: directPlayInstalled ? "DirectPlay DLL or registry markers found." : "DirectPlay was not detected."),
+        ]
+    }
+
+    func performPrimaryAddAction() {
+        switch selectedRunner ?? .home {
+        case .mac:
+            importMacApps()
+        case .wine:
+            importWineTargets()
+        default:
+            break
+        }
+    }
+
+    func openWineInstaller() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = [
+            UTType(filenameExtension: "exe"),
+            UTType(filenameExtension: "msi"),
+        ].compactMap { $0 }
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Open Installer"
+        panel.message = "Choose a Windows installer to open with Wine."
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        let installerGame = LibraryGame(
+            title: url.deletingPathExtension().lastPathComponent,
+            runner: .wine,
+            capsule: "Wine",
+            status: "Installer",
+            statsText: directorySizeText(url),
+            installURL: url,
+            launchURL: url
+        )
+
+        wineApps = mergeLibraryGames(existing: wineApps, incoming: [installerGame])
+        persistStoredItems(wineApps, forKey: LibraryStorageKey.wineApps)
+        selectedGame = installerGame
+
+        executeDetached(
+            .debugExecutable(
+                path: url.path,
+                graphicsBackend: .none,
+                wineDebug: "-all"
+            ),
+            successMessage: "Opened installer \(url.lastPathComponent).",
+            context: backendContext
+        )
+
+        let alert = NSAlert()
+        alert.messageText = "Installer opened"
+        alert.informativeText = "When the installer finishes, you can add the resulting app or game to the Wine library now or later."
+        alert.addButton(withTitle: "Add Installed App")
+        alert.addButton(withTitle: "Later")
+        if alert.runModal() == .alertFirstButtonReturn {
+            importWineTargets()
+        }
+    }
+
+    func refreshGames() {
+        refreshSteamGames(announce: true)
+    }
+
+    func runDoctor() {
+        perform(
+            OperationCard(
+                kind: .doctor,
+                title: "Inspect Environment",
+                detail: "Check Wine, DXMT, Steam, and the current bottle.",
+                symbolName: "stethoscope"
+            )
+        )
+    }
+
+    func togglePin(for game: LibraryGame) {
+        if let index = pinnedGameIDs.firstIndex(of: game.pinID) {
+            pinnedGameIDs.remove(at: index)
+        } else {
+            pinnedGameIDs.append(game.pinID)
+        }
+        persistPinnedIDs()
+    }
+
+    func isPinned(_ game: LibraryGame) -> Bool {
+        pinnedGameIDs.contains(game.pinID)
+    }
+
+    func removeGameFromLibrary(_ game: LibraryGame) {
+        let alert = NSAlert()
+        alert.messageText = game.runner == .steam ? "Hide this Steam game from the launcher?" : "Remove this item from the library?"
+        alert.informativeText = game.runner == .steam
+            ? "This only hides the game from the launcher. It does not uninstall it from Steam."
+            : "This only removes the saved launcher entry or path. It does not delete files from disk."
+        alert.addButton(withTitle: game.runner == .steam ? "Hide Game" : "Remove Entry")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        pinnedGameIDs.removeAll { $0 == game.pinID }
+        persistPinnedIDs()
+        gameSettingsByPinID.removeValue(forKey: game.pinID)
+        persistGameSettings()
+
+        switch game.runner {
+        case .mac:
+            nativeApps.removeAll { $0.pinID == game.pinID }
+            persistStoredItems(nativeApps, forKey: LibraryStorageKey.nativeApps)
+        case .wine:
+            wineApps.removeAll { $0.pinID == game.pinID }
+            persistStoredItems(wineApps, forKey: LibraryStorageKey.wineApps)
+        case .steam:
+            if let appid = game.backendID, !appid.isEmpty {
+                hiddenSteamAppIDs.append(appid)
+                hiddenSteamAppIDs = hiddenSteamAppIDs.uniquedPreservingOrder()
+                UserDefaults.standard.set(hiddenSteamAppIDs, forKey: LibraryStorageKey.hiddenSteamAppIDs)
+            }
+            discoveredSteamGames.removeAll { $0.pinID == game.pinID }
+            steamOrderIDs.removeAll { $0 == game.pinID }
+            persistSteamOrder()
+        case .home:
+            if let sourceGame = underlyingGame(for: game) {
+                removeGameFromLibrary(sourceGame)
+                return
+            }
+        case .epic, .gog:
+            break
+        }
+
+        if editingGamePinID == game.pinID {
+            closeGameDetails()
+            closeGameSettings()
+            closeLogViewer()
+            editingGamePinID = nil
+        }
+
+        selectedGame = filteredGames.first
+        rightPanelMessage = game.runner == .steam ? "Game hidden from launcher." : "Entry removed from library."
+    }
+
+    func moveGame(_ dragged: LibraryGame, before target: LibraryGame) {
+        guard dragged.pinID != target.pinID else { return }
+
+        switch selectedRunner ?? .home {
+        case .home:
+            reorderIDs(&pinnedGameIDs, draggedID: dragged.pinID, targetID: target.pinID)
+            persistPinnedIDs()
+        case .mac:
+            reorderGames(&nativeApps, draggedID: dragged.pinID, targetID: target.pinID)
+            persistStoredItems(nativeApps, forKey: LibraryStorageKey.nativeApps)
+        case .wine:
+            reorderGames(&wineApps, draggedID: dragged.pinID, targetID: target.pinID)
+            persistStoredItems(wineApps, forKey: LibraryStorageKey.wineApps)
+        case .steam:
+            reorderGames(&discoveredSteamGames, draggedID: dragged.pinID, targetID: target.pinID)
+            steamOrderIDs = discoveredSteamGames.map(\.pinID)
+            persistSteamOrder()
+        case .epic, .gog:
+            break
+        }
+
+        selectedGame = sourceGames.first(where: { $0.pinID == dragged.pinID }) ?? selectedGame
+    }
+
+    func openSteamStorePage(for game: LibraryGame) {
+        guard let storeURL = game.storeURL else { return }
+        NSWorkspace.shared.open(storeURL)
+    }
+
+    func revealLocalFiles(for game: LibraryGame) {
+        guard let url = game.installURL else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    func openGameSettings(for game: LibraryGame) {
+        selectedGame = game
+        editingGamePinID = game.pinID
+        isShowingGameSettings = true
+    }
+
+    func closeGameSettings() {
+        isShowingGameSettings = false
+    }
+
+    func openGameDetails(for game: LibraryGame) {
+        selectedGame = game
+        editingGamePinID = game.pinID
+        isShowingGameDetails = true
+    }
+
+    func closeGameDetails() {
+        isShowingGameDetails = false
+    }
+
+    func closeLogViewer() {
+        isShowingLogViewer = false
+    }
+
+    func openGameSettingsFromDetails(for game: LibraryGame) {
+        closeGameDetails()
+        Task { @MainActor in
+            openGameSettings(for: game)
+        }
+    }
+
+    func changeAppIcon() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = [.png, .jpeg, .tiff, .image, UTType(filenameExtension: "icns")].compactMap { $0 }
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url, let image = NSImage(contentsOf: url) else {
+            return
+        }
+        NSApplication.shared.applicationIconImage = image
+    }
+
+    func launch(_ game: LibraryGame) {
+        selectGame(game)
+
+        switch game.runner {
+        case .steam:
+            launchSteamGame(game)
+        case .mac:
+            guard let url = game.launchURL else {
+                rightPanelMessage = "No launch target is set for \(game.title)."
+                return
+            }
+            let opened = NSWorkspace.shared.open(url)
+            rightPanelMessage = opened ? "Opened \(game.title)." : "Could not open \(game.title)."
+            appendLog("== Launch ==\nmacOS app\n\(url.path)")
+        case .wine:
+            launchWineGame(game)
+        case .home:
+            if let sourceGame = underlyingGame(for: game) {
+                launch(sourceGame)
+            }
+        case .epic, .gog:
+            break
+        }
+    }
+
+    func debugLaunch(_ game: LibraryGame) {
+        selectGame(game)
+        let settings = settings(for: game)
+        let args = parseLaunchArguments(settings.launchArguments)
+        let env = parseEnvironmentOverrides(settings.environmentText)
+        let cwd = normalizedOptionalPath(settings.workingDirectoryPath)
+        let context = effectiveContext(for: game)
+
+        switch game.runner {
+        case .steam:
+            guard let appid = game.backendID, !appid.isEmpty else { return }
+            executeDetached(
+                .debugGame(
+                    appid: appid,
+                    gameArgs: args,
+                    graphicsBackend: settings.graphicsBackend,
+                    workingDirectory: cwd,
+                    environment: env
+                ),
+                successMessage: "Debug launch started for \(game.title).",
+                context: context
+            )
+        case .wine:
+            guard let executable = resolvedLaunchURL(for: game) else {
+                rightPanelMessage = "Set a launch executable for \(game.title) first."
+                editingGamePinID = game.pinID
+                isShowingGameSettings = true
+                return
+            }
+            executeDetached(
+                .debugExecutable(
+                    path: executable.path,
+                    gameArgs: args,
+                    graphicsBackend: settings.graphicsBackend,
+                    workingDirectory: cwd,
+                    environment: env
+                ),
+                successMessage: "Debug launch started for \(game.title).",
+                context: context
+            )
+        case .mac, .home, .epic, .gog:
+            break
+        }
+    }
+
+    func revealLogs(for runner: RunnerKind? = nil) {
+        let logsURL = logsDirectoryURL(for: runner ?? selectedRunner ?? .steam, context: backendContext)
+        NSWorkspace.shared.activateFileViewerSelecting([logsURL])
+    }
+
+    func openLogViewer(for game: LibraryGame? = nil) {
+        let targetGame = game ?? selectedGame
+        editingGamePinID = targetGame?.pinID
+        let context = targetGame.map(effectiveContext(for:)) ?? backendContext
+        let logsURL = logsDirectoryURL(for: targetGame?.runner ?? selectedRunner ?? .steam, context: context)
+        let logFiles = ["04_debug_game.log", "03_run_steam.log", "02_install_steam.log", "01_wineboot.log"]
+            .map { logsURL.appendingPathComponent($0) }
+            .filter { FileManager.default.fileExists(atPath: $0.path) }
+
+        let entries = logFiles.compactMap { url -> DisplayedLogEntry? in
+            guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+            return DisplayedLogEntry(id: url.lastPathComponent, title: url.lastPathComponent, text: text)
+        }
+
+        selectedLogTitle = targetGame.map { "\($0.title) Logs" } ?? "Logs"
+        selectedLogEntries = entries
+        selectedLogEntryID = entries.first?.id
+        selectedLogText = entries.first?.text ?? "No logs found yet."
+        isShowingLogViewer = true
+    }
+
+    func refreshLogViewer() {
+        if let game = editingGame {
+            openLogViewer(for: game)
+        } else {
+            openLogViewer()
+        }
+    }
+
+    func perform(_ operation: OperationCard) {
+        guard !isBusy else { return }
+
+        let action: BackendAction
+        switch operation.kind {
+        case .setupMetal:
+            action = .setupMetal
+        case .doctor:
+            action = .doctor
+        case .doctorFix:
+            action = .doctorFix
+        case .installDXMT:
+            action = .installDXMT
+        case .winetricks:
+            openWinetricks()
+            return
+        case .winecfg:
+            executeDetached(
+                .openWinecfg,
+                successMessage: "Opened winecfg.",
+                context: backendContext
+            )
+            return
+        case .killWine:
+            executeDetached(
+                .killWine,
+                successMessage: "Stopped Wine processes.",
+                context: backendContext
+            )
+            return
+        case .openSteam:
+            executeDetached(
+                .openSteam,
+                successMessage: "Opened Steam.",
+                context: backendContext
+            )
+            return
+        case .refreshGames:
+            refreshSteamGames(announce: true)
+            return
+        case .launchSelectedGame:
+            guard let appid = selectedGame?.backendID, !appid.isEmpty else {
+                rightPanelMessage = "Select a Steam game first."
+                return
+            }
+            executeDetached(
+                .launchGame(appid: appid),
+                successMessage: "Launched selected Steam title.",
+                context: backendContext
+            )
+            return
+        }
+
+        isBusy = true
+        rightPanelMessage = "Running \(operation.title)..."
+        appendLog("== \(operation.title) ==\n\(BackendBridge.preview(action, context: backendContext))")
+
+        let context = backendContext
+        Task.detached(priority: .userInitiated) {
+            do {
+                let response = try await BackendBridge.execute(action, context: context)
+                await MainActor.run {
+                    self.recordBackendJob(response.job)
+                    self.recordStructuredResult(response.structured, for: action)
+                    switch action {
+                    case .listGames:
+                        self.discoveredSteamGames = self.mappedSteamGames(from: response.games)
+                        if self.selectedRunner == .steam, let first = self.filteredGames.first {
+                            self.selectedGame = first
+                        }
+                    case .doctor, .doctorFix:
+                        if let structured = response.structured {
+                            self.updateHealth(for: self.selectedRunner ?? .steam, from: structured)
+                        } else {
+                            self.updateHealth(for: self.selectedRunner ?? .steam, from: response.output)
+                        }
+                    default:
+                        break
+                    }
+                    self.appendLog(response.output)
+                    self.rightPanelMessage = response.job?.message ?? "\(operation.title) finished."
+                    self.isBusy = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.appendLog("Command failed:\n\(error.localizedDescription)")
+                    self.rightPanelMessage = "\(operation.title) failed."
+                    self.isBusy = false
+                }
+            }
+        }
+    }
+
+    func runWinetricks(verbsText: String, interactive: Bool) {
+        let verbs = verbsText
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        guard !verbs.isEmpty else {
+            rightPanelMessage = "Enter at least one winetricks verb."
+            return
+        }
+
+        executeDetached(
+            .runWinetricks(verbs: verbs, interactive: interactive),
+            successMessage: "Winetricks finished for \(verbs.joined(separator: ", ")).",
+            context: backendContext
+        )
+        closeWinetricks()
+    }
+
+    func applySettings(winePath: String, dxmtSource: String, bottleName: String, externalPrefix: String?, useExternalPrefix: Bool) {
+        applySettings(
+            winePath: winePath,
+            dxmtSource: dxmtSource,
+            dxvkSource: backendContext.dxvkSource,
+            bottleName: bottleName,
+            externalPrefix: externalPrefix,
+            useExternalPrefix: useExternalPrefix
+        )
+    }
+
+    func applySettings(winePath: String, dxmtSource: String, dxvkSource: String, bottleName: String, externalPrefix: String?, useExternalPrefix: Bool) {
+        let cleanedBottle = bottleName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanedPrefix = (externalPrefix ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanedWine = winePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanedDXMT = dxmtSource.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanedDXVK = dxvkSource.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        backendContext = BackendContext(
+            repoRoot: backendContext.repoRoot,
+            pythonCommand: backendContext.pythonCommand,
+            winePath: cleanedWine.isEmpty ? backendContext.winePath : cleanedWine,
+            dxmtSource: cleanedDXMT.isEmpty ? backendContext.dxmtSource : cleanedDXMT,
+            dxvkSource: cleanedDXVK.isEmpty ? backendContext.dxvkSource : cleanedDXVK,
+            bottleName: cleanedBottle.isEmpty ? "Default" : cleanedBottle,
+            externalPrefix: useExternalPrefix ? cleanedPrefix : nil
+        )
+        backendContext.persist()
+        hasAttemptedSteamDetection = false
+        discoveredSteamGames = []
+        selectedGame = nil
+
+        rightPanelMessage = "Backend settings updated. \(settingsSummary)"
+        appendLog("Settings updated.\nWine: \(backendContext.winePath)\nDXMT: \(backendContext.dxmtSource)\nDXVK: \(backendContext.dxvkSource)\nTarget: \(settingsSummary)")
+    }
+
+    func initialLoad() {
+        refreshWineRuntimes()
+        performInitialSetupIfNeeded()
+        guard selectedRunner == .steam, !hasAttemptedSteamDetection, !isBusy else { return }
+        refreshSteamGames(announce: false)
+    }
+
+    func testSettings(winePath: String, dxmtSource: String, bottleName: String, externalPrefix: String?, useExternalPrefix: Bool) -> String {
+        let fileManager = FileManager.default
+        let cleanedWine = winePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanedDXMT = dxmtSource.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanedBottle = bottleName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanedPrefix = (externalPrefix ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+
+        var results: [String] = []
+        let backendScript = backendContext.repoRoot.appendingPathComponent("mysteamwine.py").path
+        results.append(fileManager.fileExists(atPath: backendScript) ? "OK: mysteamwine.py found" : "FAIL: mysteamwine.py not found at repo root")
+        results.append(validateWinePath(cleanedWine))
+        results.append(detectedWinetricksStatus())
+        results.append(contentsOf: validateDXMTSource(cleanedDXMT))
+
+        if useExternalPrefix {
+            results.append(fileManager.fileExists(atPath: cleanedPrefix) ? "OK: External prefix exists" : "FAIL: External prefix does not exist")
+        } else {
+            results.append(cleanedBottle.isEmpty ? "FAIL: Bottle name is empty" : "OK: Managed bottle name is set")
+        }
+
+        return results.joined(separator: "\n")
+    }
+
+    private func validateWinePath(_ path: String) -> String {
+        guard !path.isEmpty else {
+            return "FAIL: Wine path is empty"
+        }
+
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: path) else {
+            return "FAIL: Wine path does not exist"
+        }
+        guard fileManager.isExecutableFile(atPath: path) else {
+            return "FAIL: Wine path exists but is not executable"
+        }
+        return "OK: Wine path exists and is executable"
+    }
+
+    private func performInitialSetupIfNeeded() {
+        guard !UserDefaults.standard.bool(forKey: LibraryStorageKey.didCompleteInitialSetup) else { return }
+
+        let prefixExists = currentPrefixURL(for: backendContext).map { FileManager.default.fileExists(atPath: $0.path) } ?? false
+        if prefixExists {
+            UserDefaults.standard.set(true, forKey: LibraryStorageKey.didCompleteInitialSetup)
+            return
+        }
+
+        let wineOkay = validateWinePath(backendContext.winePath).hasPrefix("OK:")
+        let winetricksOkay = detectedWinetricksPath() != nil
+        let dxmtOkay = validateDXMTSource(backendContext.dxmtSource).contains {
+            $0.hasPrefix("OK: DXMT payload folders look valid") || $0.hasPrefix("OK: DXMT source is a .tar.gz archive")
+        }
+
+        guard wineOkay, winetricksOkay, dxmtOkay else {
+            rightPanelMessage = "Finish your Wine runtime and DXMT setup in Settings, then the launcher can complete first launch automatically."
+            return
+        }
+
+        UserDefaults.standard.set(true, forKey: LibraryStorageKey.didCompleteInitialSetup)
+        selectedRunner = .steam
+        executeDetached(
+            .setupMetal,
+            successMessage: "First-launch setup finished.",
+            context: backendContext
+        )
+    }
+
+    private func validateDXMTSource(_ path: String) -> [String] {
+        guard !path.isEmpty else {
+            return ["FAIL: DXMT source path is empty"]
+        }
+
+        let sourceURL = URL(fileURLWithPath: path)
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: sourceURL.path) else {
+            return ["FAIL: DXMT source does not exist"]
+        }
+
+        var results = ["OK: DXMT source exists"]
+        if sourceURL.pathExtension == "gz" {
+            results.append("OK: DXMT source is a .tar.gz archive")
+            return results
+        }
+
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: sourceURL.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            results.append("FAIL: DXMT source is not a directory or .tar.gz archive")
+            return results
+        }
+
+        let requiredLayoutA = [
+            sourceURL.appendingPathComponent("x86_64-windows/d3d11.dll").path,
+            sourceURL.appendingPathComponent("i386-windows/d3d11.dll").path,
+        ]
+        let requiredLayoutB = [
+            sourceURL.appendingPathComponent("x64/d3d11.dll").path,
+            sourceURL.appendingPathComponent("x32/d3d11.dll").path,
+        ]
+        let hasLayoutA = requiredLayoutA.allSatisfy(fileManager.fileExists(atPath:))
+        let hasLayoutB = requiredLayoutB.allSatisfy(fileManager.fileExists(atPath:))
+
+        if hasLayoutA || hasLayoutB {
+            results.append("OK: DXMT payload folders look valid")
+        } else {
+            results.append("FAIL: DXMT source is missing expected x86_64-windows/i386-windows or x64/x32 payloads")
+        }
+
+        let unixCandidates = [
+            sourceURL.appendingPathComponent("x86_64-unix/winemetal.so").path,
+            sourceURL.appendingPathComponent("lib/wine/x86_64-unix/winemetal.so").path,
+        ]
+        if unixCandidates.contains(where: fileManager.fileExists(atPath:)) {
+            results.append("OK: DXMT Unix-side winemetal runtime found")
+        } else {
+            results.append("WARN: DXMT Unix-side winemetal runtime not found")
+        }
+
+        return results
+    }
+
+    private func validateDXVKSource(_ path: String) -> [String] {
+        guard !path.isEmpty else {
+            return ["FAIL: DXVK source path is empty"]
+        }
+
+        let sourceURL = URL(fileURLWithPath: path)
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: sourceURL.path) else {
+            return ["FAIL: DXVK source does not exist"]
+        }
+
+        var results = ["OK: DXVK source exists"]
+        if sourceURL.pathExtension == "gz" {
+            results.append("OK: DXVK source is a .tar.gz archive")
+            return results
+        }
+
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: sourceURL.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            results.append("FAIL: DXVK source is not a directory or .tar.gz archive")
+            return results
+        }
+
+        let hasScript = [
+            sourceURL.appendingPathComponent("setup_dxvk.sh").path,
+            sourceURL.appendingPathComponent("setup-dxvk.sh").path,
+        ].contains(where: fileManager.fileExists(atPath:))
+        let payloadCandidates = [
+            sourceURL.appendingPathComponent("x64/d3d11.dll").path,
+            sourceURL.appendingPathComponent("x86_64-windows/d3d11.dll").path,
+        ]
+
+        if hasScript || payloadCandidates.contains(where: fileManager.fileExists(atPath:)) {
+            results.append("OK: DXVK payload looks valid")
+        } else {
+            results.append("FAIL: DXVK source is missing setup script or DLL payload folders")
+        }
+
+        return results
+    }
+
+    private var sourceGames: [LibraryGame] {
+        switch selectedRunner ?? .home {
+        case .home:
+            pinnedGames
+        case .mac:
+            nativeApps
+        case .steam:
+            discoveredSteamGames
+        case .wine:
+            wineApps
+        case .epic, .gog:
+            []
+        }
+    }
+
+    private var pinnedGames: [LibraryGame] {
+        let all = nativeApps + discoveredSteamGames + wineApps
+        let byID = Dictionary(uniqueKeysWithValues: all.map { ($0.pinID, $0) })
+        return pinnedGameIDs.compactMap { byID[$0] }
+    }
+
+    private func appendLog(_ message: String) {
+        if activityLog.isEmpty {
+            activityLog = message
+        } else {
+            activityLog += "\n\n" + message.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+    }
+
+    private func refreshSteamGames(announce: Bool) {
+        guard !isBusy else { return }
+
+        let action: BackendAction = .listGames
+        let activeJobID = beginBackendJob(for: action, message: announce ? "Refreshing Steam library..." : "Detecting installed Steam games...")
+        isBusy = true
+        hasAttemptedSteamDetection = true
+        if announce {
+            rightPanelMessage = "Refreshing installed Steam games..."
+            appendLog("== Refresh Games ==\n\(BackendBridge.preview(action, context: backendContext))")
+        } else {
+            rightPanelMessage = "Detecting installed Steam games..."
+        }
+
+        Task {
+            do {
+                let response = try await BackendBridge.executeStreaming(action, context: backendContext) { update in
+                    await MainActor.run {
+                        self.applyStreamUpdate(update, fallbackActiveJobID: activeJobID, action: action)
+                    }
+                }
+                if response.job == nil {
+                    let fallbackJob = makeFallbackJob(for: action, status: .completed, message: jobSuccessMessage(for: action))
+                    completeBackendJob(activeJobID, finalJob: fallbackJob)
+                }
+                steamMetadataByAppID = loadSteamMetadata(for: response.games)
+                discoveredSteamGames = mappedSteamGames(from: response.games)
+                selectedGame = filteredGames.first
+                appendLog(response.output)
+                rightPanelMessage = discoveredSteamGames.isEmpty
+                    ? "No installed Steam games were detected."
+                    : "Detected \(discoveredSteamGames.count) installed Steam game(s)."
+            } catch {
+                if activeBackendJobs.contains(where: { $0.id == activeJobID }) {
+                    let failedJob = makeFallbackJob(for: action, status: .failed, message: "Refresh Games failed.")
+                    completeBackendJob(activeJobID, finalJob: failedJob)
+                }
+                appendLog("Command failed:\n\(error.localizedDescription)")
+                rightPanelMessage = "Steam game detection failed."
+            }
+            isBusy = false
+        }
+    }
+
+    private func mappedSteamGames(from games: [BackendGame]) -> [LibraryGame] {
+        let mapped = games
+            .filter { shouldDisplaySteamGame($0) }
+            .map { game in
+                let installURL = game.installDir.map(URL.init(fileURLWithPath:))
+                return LibraryGame(
+                    backendID: game.appid,
+                    title: game.name,
+                    runner: .steam,
+                    capsule: "Steam",
+                    status: "Installed",
+                    statsText: installURL.flatMap(directorySizeText),
+                    bannerURL: steamBannerURL(for: game.appid),
+                    installURL: installURL,
+                    launchURL: installURL,
+                    storeURL: steamStoreURL(for: game.appid)
+                )
+            }
+        return applySteamOrder(to: mapped)
+    }
+
+    private func shouldDisplaySteamGame(_ game: BackendGame) -> Bool {
+        let normalizedName = game.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if game.appid == "228980" {
+            return false
+        }
+        if hiddenSteamAppIDs.contains(game.appid) {
+            return false
+        }
+        return normalizedName != "steamworks common redistributables"
+    }
+
+    private func steamBannerURL(for appid: String) -> URL? {
+        URL(string: "https://cdn.cloudflare.steamstatic.com/steam/apps/\(appid)/header.jpg")
+    }
+
+    private func steamStoreURL(for appid: String) -> URL? {
+        URL(string: "https://store.steampowered.com/app/\(appid)")
+    }
+
+    private func importMacApps() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = [.applicationBundle]
+        panel.allowsMultipleSelection = true
+        guard panel.runModal() == .OK else { return }
+
+        let imported = panel.urls.map { url in
+            LibraryGame(
+                title: url.deletingPathExtension().lastPathComponent,
+                runner: .mac,
+                capsule: "macOS",
+                status: "App",
+                statsText: directorySizeText(url),
+                installURL: url,
+                launchURL: url
+            )
+        }
+        nativeApps = mergeLibraryGames(existing: nativeApps, incoming: imported)
+        persistStoredItems(nativeApps, forKey: LibraryStorageKey.nativeApps)
+        selectedGame = filteredGames.first
+    }
+
+    private func importWineTargets() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.allowedContentTypes = [
+            UTType(filenameExtension: "exe"),
+            UTType(filenameExtension: "msi"),
+            UTType(filenameExtension: "bat"),
+            UTType(filenameExtension: "cmd"),
+        ].compactMap { $0 }
+        panel.allowsMultipleSelection = true
+        guard panel.runModal() == .OK else { return }
+
+        let imported = panel.urls.map { url in
+            let isExe = url.pathExtension.lowercased() == "exe"
+            let launchURL = isExe ? url : promptForExecutable(in: url)
+            return LibraryGame(
+                title: url.deletingPathExtension().lastPathComponent,
+                runner: .wine,
+                capsule: "Wine",
+                status: launchURL != nil ? "Windows App" : "Choose Executable",
+                statsText: directorySizeText(url),
+                installURL: url,
+                launchURL: launchURL
+            )
+        }
+        wineApps = mergeLibraryGames(existing: wineApps, incoming: imported)
+        for game in imported {
+            var settings = gameSettingsByPinID[game.pinID] ?? StoredGameSettings()
+            if settings.workingDirectoryPath.isEmpty {
+                settings.workingDirectoryPath = game.launchURL?.deletingLastPathComponent().path ?? game.installURL?.path ?? ""
+            }
+            if settings.launchExecutablePath.isEmpty {
+                settings.launchExecutablePath = game.launchURL?.path ?? ""
+            }
+            if settings.assignedExternalPrefix.isEmpty, settings.assignedBottleName.isEmpty {
+                if let externalPrefix = backendContext.externalPrefix, !externalPrefix.isEmpty {
+                    settings.assignedExternalPrefix = externalPrefix
+                } else {
+                    settings.assignedBottleName = backendContext.bottleName
+                }
+            }
+            gameSettingsByPinID[game.pinID] = settings
+        }
+        persistGameSettings()
+        persistStoredItems(wineApps, forKey: LibraryStorageKey.wineApps)
+        selectedGame = imported.first ?? filteredGames.first
+        if let missingTarget = imported.first(where: { $0.launchURL == nil }) {
+            openGameSettings(for: missingTarget)
+        }
+    }
+
+    private func promptForExecutable(in directory: URL) -> URL? {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: directory.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            return nil
+        }
+
+        let panel = NSOpenPanel()
+        panel.directoryURL = directory
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = [UTType(filenameExtension: "exe")].compactMap { $0 }
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Choose Launch EXE"
+        panel.message = "Select the Windows executable this entry should launch."
+        return panel.runModal() == .OK ? panel.url : nil
+    }
+
+    private func mergeLibraryGames(existing: [LibraryGame], incoming: [LibraryGame]) -> [LibraryGame] {
+        var seen = Set(existing.map(\.pinID))
+        var merged = existing
+        for game in incoming where !seen.contains(game.pinID) {
+            merged.append(game)
+            seen.insert(game.pinID)
+        }
+        return merged
+    }
+
+    private func loadStoredItems(forKey key: String) -> [LibraryGame] {
+        guard
+            let data = UserDefaults.standard.data(forKey: key),
+            let stored = try? JSONDecoder().decode([StoredLibraryItem].self, from: data)
+        else {
+            return []
+        }
+
+        return stored.compactMap { item in
+            guard let runner = RunnerKind(rawValue: item.runner) else { return nil }
+            let installURL = URL(fileURLWithPath: item.installPath)
+            let launchURL = item.launchPath.map(URL.init(fileURLWithPath:))
+            let storedStatus = item.status?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let status: String
+            if let storedStatus, !storedStatus.isEmpty {
+                status = storedStatus
+            } else {
+                if runner == .wine {
+                    status = launchURL == nil ? "Choose Executable" : "Windows App"
+                } else {
+                    status = "App"
+                }
+            }
+            return LibraryGame(
+                title: item.title,
+                runner: runner,
+                capsule: runner == .mac ? "macOS" : "Wine",
+                status: status,
+                statsText: directorySizeText(installURL),
+                installURL: installURL,
+                launchURL: launchURL
+            )
+        }
+    }
+
+    private func persistStoredItems(_ games: [LibraryGame], forKey key: String) {
+        let stored = games.compactMap { game -> StoredLibraryItem? in
+            guard let installURL = game.installURL, game.runner == .mac || game.runner == .wine else {
+                return nil
+            }
+            return StoredLibraryItem(
+                title: game.title,
+                runner: game.runner.rawValue,
+                installPath: installURL.path,
+                launchPath: game.launchURL?.path,
+                status: game.status
+            )
+        }
+
+        if let data = try? JSONEncoder().encode(stored) {
+            UserDefaults.standard.set(data, forKey: key)
+        }
+    }
+
+    private func persistPinnedIDs() {
+        UserDefaults.standard.set(pinnedGameIDs, forKey: LibraryStorageKey.pinnedIDs)
+    }
+
+    private func persistSteamOrder() {
+        UserDefaults.standard.set(steamOrderIDs, forKey: LibraryStorageKey.steamOrder)
+    }
+
+    private func loadGameSettings() -> [String: StoredGameSettings] {
+        guard
+            let data = UserDefaults.standard.data(forKey: LibraryStorageKey.gameSettings),
+            let stored = try? JSONDecoder().decode([String: StoredGameSettings].self, from: data)
+        else {
+            return [:]
+        }
+        return stored
+    }
+
+    private func persistGameSettings() {
+        guard let data = try? JSONEncoder().encode(gameSettingsByPinID) else { return }
+        UserDefaults.standard.set(data, forKey: LibraryStorageKey.gameSettings)
+    }
+
+    private func loadSourceHealth() -> [RunnerKind: HealthStatus] {
+        guard
+            let data = UserDefaults.standard.data(forKey: LibraryStorageKey.sourceHealth),
+            let stored = try? JSONDecoder().decode([String: HealthStatus].self, from: data)
+        else {
+            return [.home: .healthy, .mac: .healthy, .steam: .unknown, .wine: .unknown]
+        }
+
+        var mapped: [RunnerKind: HealthStatus] = [.home: .healthy, .mac: .healthy, .steam: .unknown, .wine: .unknown]
+        for (key, value) in stored {
+            if let runner = RunnerKind(rawValue: key) {
+                mapped[runner] = value
+            }
+        }
+        return mapped
+    }
+
+    private func persistSourceHealth() {
+        let stored = Dictionary(uniqueKeysWithValues: sourceHealth.map { ($0.key.rawValue, $0.value) })
+        guard let data = try? JSONEncoder().encode(stored) else { return }
+        UserDefaults.standard.set(data, forKey: LibraryStorageKey.sourceHealth)
+    }
+
+    func settings(for game: LibraryGame) -> StoredGameSettings {
+        gameSettingsByPinID[game.pinID] ?? StoredGameSettings()
+    }
+
+    func saveSettings(
+        for game: LibraryGame,
+        launchArguments: String,
+        workingDirectoryPath: String,
+        environmentText: String,
+        graphicsBackend: GraphicsBackendOption,
+        launchExecutablePath: String,
+        customBannerPath: String,
+        collection: GameCollection,
+        assignedBottleName: String,
+        assignedExternalPrefix: String
+    ) {
+        gameSettingsByPinID[game.pinID] = StoredGameSettings(
+            launchArguments: launchArguments,
+            workingDirectoryPath: workingDirectoryPath,
+            environmentText: environmentText,
+            graphicsBackend: graphicsBackend,
+            launchExecutablePath: launchExecutablePath,
+            customBannerPath: customBannerPath,
+            collection: collection,
+            assignedBottleName: assignedBottleName,
+            assignedExternalPrefix: assignedExternalPrefix
+        )
+        persistGameSettings()
+        selectedGame = filteredGames.first(where: { $0.pinID == game.pinID }) ?? selectedGame
+    }
+
+    func health(for runner: RunnerKind) -> HealthStatus {
+        switch runner {
+        case .home:
+            let statuses = [sourceHealth[.steam] ?? .unknown, sourceHealth[.wine] ?? .unknown, sourceHealth[.mac] ?? .healthy]
+            if statuses.contains(.error) { return .error }
+            if statuses.contains(.warning) { return .warning }
+            if statuses.contains(.healthy) { return .healthy }
+            return .unknown
+        default:
+            return sourceHealth[runner] ?? .unknown
+        }
+    }
+
+    private func ensureBackgroundDoctor(for runner: RunnerKind) {
+        guard (runner == .steam || runner == .wine), !runningHealthChecks.contains(runner) else { return }
+
+        runningHealthChecks.insert(runner)
+        let activeJobID = beginBackendJob(for: .doctor, message: "Background doctor running for \(runner.rawValue)...")
+        Task {
+            defer { runningHealthChecks.remove(runner) }
+            do {
+                let response = try await BackendBridge.executeStreaming(.doctor, context: backendContext) { update in
+                    await MainActor.run {
+                        self.applyStreamUpdate(update, fallbackActiveJobID: activeJobID, action: .doctor)
+                    }
+                }
+                if response.job == nil {
+                    let fallbackJob = makeFallbackJob(for: .doctor, status: .completed, message: "Doctor finished.")
+                    completeBackendJob(activeJobID, finalJob: fallbackJob)
+                }
+                if let structured = response.structured {
+                    latestDoctorResult = structured
+                    updateHealth(for: runner, from: structured)
+                } else {
+                    updateHealth(for: runner, from: response.output)
+                }
+            } catch {
+                if activeBackendJobs.contains(where: { $0.id == activeJobID }) {
+                    let failedJob = makeFallbackJob(for: .doctor, status: .failed, message: "Doctor failed.")
+                    completeBackendJob(activeJobID, finalJob: failedJob)
+                }
+                sourceHealth[runner] = .warning
+                persistSourceHealth()
+            }
+        }
+    }
+
+    private func updateHealth(for runner: RunnerKind, from output: String) {
+        sourceHealth[runner] = healthStatus(from: output)
+        sourceHealth[.home] = health(for: .home)
+        persistSourceHealth()
+    }
+
+    private func updateHealth(for runner: RunnerKind, from structured: BackendStructuredResult) {
+        sourceHealth[runner] = healthStatus(from: structured)
+        sourceHealth[.home] = health(for: .home)
+        persistSourceHealth()
+    }
+
+    private func healthStatus(from output: String) -> HealthStatus {
+        if output.contains("FAIL:") || output.contains("[FAIL]") || output.localizedCaseInsensitiveContains("failed") {
+            return .error
+        }
+        if output.contains("WARN:") || output.contains("[WARN]") || output.localizedCaseInsensitiveContains("warning") {
+            return .warning
+        }
+        if output.contains("OK:") || output.contains("[OK]") {
+            return .healthy
+        }
+        return .unknown
+    }
+
+    private func healthStatus(from structured: BackendStructuredResult) -> HealthStatus {
+        switch structured.worstStatus {
+        case "fail":
+            return .error
+        case "warn":
+            return .warning
+        case "ok":
+            return .healthy
+        default:
+            break
+        }
+
+        if structured.errors.isEmpty == false {
+            return .error
+        }
+        if structured.warnings.isEmpty == false {
+            return .warning
+        }
+        if structured.checks.isEmpty == false || structured.steps.isEmpty == false {
+            return .healthy
+        }
+        return .unknown
+    }
+
+    private func beginBackendJob(for action: BackendAction, message: String? = nil) -> String {
+        let job = BackendJob(
+            id: UUID().uuidString,
+            action: actionDisplayName(action),
+            status: .started,
+            message: message ?? "\(actionDisplayName(action)) running...",
+            progress: nil,
+            completedSteps: nil,
+            totalSteps: nil
+        )
+        activeBackendJobs.removeAll { $0.action == job.action && $0.status == .started }
+        activeBackendJobs.insert(job, at: 0)
+        return job.id
+    }
+
+    private func completeBackendJob(_ activeJobID: String, finalJob: BackendJob) {
+        activeBackendJobs.removeAll { $0.id == activeJobID }
+        recordBackendJob(finalJob)
+    }
+
+    private func applyStreamUpdate(_ update: BackendStreamUpdate, fallbackActiveJobID: String, action: BackendAction) {
+        if let structured = update.structured {
+            mergeStructuredResult(structured, for: action)
+        }
+
+        guard let job = update.job else { return }
+
+        switch job.status {
+        case .started, .queued:
+            activeBackendJobs.removeAll { $0.id == fallbackActiveJobID || $0.id == job.id || $0.action == job.action }
+            activeBackendJobs.insert(job, at: 0)
+        case .completed, .failed:
+            activeBackendJobs.removeAll { $0.id == fallbackActiveJobID || $0.id == job.id || $0.action == job.action }
+            recordBackendJob(job)
+        }
+    }
+
+    private func makeFallbackJob(for action: BackendAction, status: BackendJobStatus, message: String) -> BackendJob {
+        BackendJob(
+            id: UUID().uuidString,
+            action: actionDisplayName(action),
+            status: status,
+            message: message,
+            progress: nil,
+            completedSteps: nil,
+            totalSteps: nil
+        )
+    }
+
+    private func recordBackendJob(_ job: BackendJob?) {
+        guard let job else { return }
+        recentBackendJobs.removeAll { $0.id == job.id }
+        recentBackendJobs.insert(job, at: 0)
+        if recentBackendJobs.count > 12 {
+            recentBackendJobs = Array(recentBackendJobs.prefix(12))
+        }
+    }
+
+    private func recordStructuredResult(_ structured: BackendStructuredResult?, for action: BackendAction) {
+        guard let structured else { return }
+
+        switch action {
+        case .doctor, .doctorFix:
+            latestDoctorResult = structured
+        case .setupMetal:
+            latestSetupResult = structured
+        case .listGames:
+            latestScanResult = structured
+        default:
+            break
+        }
+    }
+
+    private func mergeStructuredResult(_ incoming: BackendStructuredResult, for action: BackendAction) {
+        let current: BackendStructuredResult?
+        switch action {
+        case .doctor, .doctorFix:
+            current = latestDoctorResult
+        case .setupMetal:
+            current = latestSetupResult
+        default:
+            current = nil
+        }
+
+        guard let current else {
+            recordStructuredResult(incoming, for: action)
+            return
+        }
+
+        let merged = BackendStructuredResult(
+            action: incoming.action,
+            root: incoming.root ?? current.root,
+            target: incoming.target ?? current.target,
+            worstStatus: incoming.worstStatus ?? current.worstStatus,
+            fixes: incoming.fixes.isEmpty ? current.fixes : incoming.fixes,
+            checks: incoming.checks.isEmpty ? current.checks : incoming.checks,
+            steps: mergeSteps(current.steps, incoming.steps),
+            signals: incoming.signals.isEmpty ? current.signals : incoming.signals,
+            recommendations: incoming.recommendations.isEmpty ? current.recommendations : incoming.recommendations,
+            warnings: incoming.warnings.isEmpty ? current.warnings : incoming.warnings,
+            errors: incoming.errors.isEmpty ? current.errors : incoming.errors,
+            tail: incoming.tail ?? current.tail,
+            completedSteps: incoming.completedSteps ?? current.completedSteps,
+            totalSteps: incoming.totalSteps ?? current.totalSteps
+        )
+        recordStructuredResult(merged, for: action)
+    }
+
+    private func mergeSteps(_ existing: [BackendStepSummary], _ incoming: [BackendStepSummary]) -> [BackendStepSummary] {
+        guard incoming.isEmpty == false else { return existing }
+        var merged = existing
+        for step in incoming {
+            if let index = merged.firstIndex(where: { $0.name == step.name }) {
+                merged[index] = step
+            } else {
+                merged.append(step)
+            }
+        }
+        return merged
+    }
+
+    private func actionDisplayName(_ action: BackendAction) -> String {
+        switch action {
+        case .setupMetal:
+            return "Finish Setup"
+        case .doctor:
+            return "Inspect Environment"
+        case .doctorFix:
+            return "Repair Environment"
+        case .runWinetricks:
+            return "Winetricks"
+        case .installDXMT:
+            return "Install DXMT"
+        case .installDXVK:
+            return "Install DXVK"
+        case .openWinecfg:
+            return "Wine Configuration"
+        case .killWine:
+            return "Kill Wine"
+        case .openSteam:
+            return "Open Steam"
+        case .listGames:
+            return "Refresh Games"
+        case .launchGame:
+            return "Launch Game"
+        case .smartLaunchGame:
+            return "Smart Launch"
+        case .debugGame:
+            return "Debug Game"
+        case .debugExecutable:
+            return "Launch Executable"
+        }
+    }
+
+    private func jobSuccessMessage(for action: BackendAction) -> String {
+        switch action {
+        case .setupMetal:
+            return "Setup finished."
+        case .doctor:
+            return "Environment check finished."
+        case .doctorFix:
+            return "Environment repair finished."
+        case .runWinetricks:
+            return "Winetricks finished."
+        case .installDXMT:
+            return "Installed DXMT."
+        case .installDXVK:
+            return "Installed DXVK."
+        case .openWinecfg:
+            return "winecfg exited."
+        case .killWine:
+            return "Stopped Wine processes."
+        case .openSteam:
+            return "Steam launch sent."
+        case .listGames:
+            return "Refresh Games finished."
+        case .launchGame:
+            return "Launch request sent."
+        case .smartLaunchGame:
+            return "Launch request sent."
+        case .debugGame:
+            return "Debug launch started."
+        case .debugExecutable:
+            return "Executable launch started."
+        }
+    }
+
+    private func launchSteamGame(_ game: LibraryGame) {
+        guard let appid = game.backendID, !appid.isEmpty else { return }
+
+        let settings = settings(for: game)
+        let context = effectiveContext(for: game)
+        let args = parseLaunchArguments(settings.launchArguments)
+        let env = parseEnvironmentOverrides(settings.environmentText)
+        let cwd = normalizedOptionalPath(settings.workingDirectoryPath)
+        let manualExecutable = normalizedOptionalPath(settings.launchExecutablePath)
+
+        if shouldUseDirectSteamLaunch(for: settings) {
+            if let manualExecutable {
+                executeDetached(
+                    .debugExecutable(
+                        path: manualExecutable,
+                        gameArgs: args,
+                        graphicsBackend: settings.graphicsBackend,
+                        workingDirectory: cwd,
+                        environment: env,
+                        wineDebug: "-all"
+                    ),
+                    successMessage: "Launched \(game.title).",
+                    context: context
+                )
+            } else {
+                executeDetached(
+                    .debugGame(
+                        appid: appid,
+                        gameArgs: args,
+                        graphicsBackend: settings.graphicsBackend,
+                        workingDirectory: cwd,
+                        environment: env,
+                        wineDebug: "-all"
+                    ),
+                    successMessage: "Launched \(game.title).",
+                    context: context
+                )
+            }
+            return
+        }
+
+        executeDetached(
+            .smartLaunchGame(appid: appid, graphicsBackend: settings.graphicsBackend),
+            successMessage: "Launched \(game.title).",
+            context: context
+        )
+    }
+
+    private func shouldUseDirectSteamLaunch(for settings: StoredGameSettings) -> Bool {
+        !settings.launchArguments.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        || !settings.workingDirectoryPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        || !settings.environmentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        || !settings.launchExecutablePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        || !settings.assignedBottleName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        || !settings.assignedExternalPrefix.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func effectiveContext(for game: LibraryGame) -> BackendContext {
+        let settings = settings(for: game)
+        return backendContext.overridingTarget(
+            bottleName: settings.assignedBottleName,
+            externalPrefix: settings.assignedExternalPrefix
+        )
+    }
+
+    private func executeDetached(_ action: BackendAction, successMessage: String, context: BackendContext) {
+        let preview = BackendBridge.preview(action, context: context)
+        appendLog("== Action ==\n\(preview)")
+        rightPanelMessage = "Launching..."
+        let activeJobID = beginBackendJob(for: action)
+
+        Task.detached(priority: .userInitiated) {
+            do {
+                let response = try await BackendBridge.executeStreaming(action, context: context) { update in
+                    await MainActor.run {
+                        self.applyStreamUpdate(update, fallbackActiveJobID: activeJobID, action: action)
+                    }
+                }
+                await MainActor.run {
+                    if let responseJob = response.job {
+                        self.reconcileDetachedJob(responseJob, fallbackActiveJobID: activeJobID, action: action)
+                    } else {
+                        let fallbackJob = self.makeFallbackJob(for: action, status: .completed, message: self.jobSuccessMessage(for: action))
+                        self.completeBackendJob(activeJobID, finalJob: fallbackJob)
+                    }
+                    if response.structured != nil {
+                        self.recordStructuredResult(response.structured, for: action)
+                    }
+                    self.appendLog(response.output)
+                    self.rightPanelMessage = response.job?.message ?? successMessage
+                }
+            } catch {
+                await MainActor.run {
+                    if self.activeBackendJobs.contains(where: { $0.id == activeJobID }) {
+                        let failedJob = self.makeFallbackJob(for: action, status: .failed, message: "\(self.actionDisplayName(action)) failed.")
+                        self.completeBackendJob(activeJobID, finalJob: failedJob)
+                    }
+                    let fullError = error.localizedDescription
+                    self.appendLog("Command failed:\n\(fullError)")
+                    self.rightPanelMessage = "Action failed."
+                    if self.shouldPresentFailureAlert(for: action) {
+                        let alert = NSAlert()
+                        alert.messageText = "Action failed"
+                        alert.informativeText = self.launchFailureSummary(from: fullError)
+                        alert.addButton(withTitle: "Open Full Error")
+                        alert.addButton(withTitle: "OK")
+                        let response = alert.runModal()
+                        if response == .alertFirstButtonReturn {
+                            self.selectedLogTitle = "Action Error"
+                            self.selectedLogEntries = [
+                                DisplayedLogEntry(
+                                    id: "launch-error",
+                                    title: "Action Error",
+                                    text: fullError
+                                ),
+                            ]
+                            self.selectedLogEntryID = "launch-error"
+                            self.selectedLogText = fullError
+                            self.isShowingLogViewer = true
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func reconcileDetachedJob(_ job: BackendJob, fallbackActiveJobID: String, action: BackendAction) {
+        if shouldTreatStartedResponseAsFinished(for: action), job.status == .started {
+            activeBackendJobs.removeAll { $0.id == fallbackActiveJobID || $0.id == job.id || $0.action == job.action }
+            let completedJob = BackendJob(
+                id: job.id,
+                action: job.action,
+                status: .completed,
+                message: job.message,
+                progress: 1.0,
+                completedSteps: job.completedSteps,
+                totalSteps: job.totalSteps
+            )
+            recordBackendJob(completedJob)
+            return
+        }
+
+        if activeBackendJobs.contains(where: { $0.id == fallbackActiveJobID }) {
+            completeBackendJob(fallbackActiveJobID, finalJob: job)
+        }
+    }
+
+    private func shouldTreatStartedResponseAsFinished(for action: BackendAction) -> Bool {
+        switch action {
+        case .openSteam, .launchGame, .smartLaunchGame, .debugGame, .debugExecutable:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func launchWineGame(_ game: LibraryGame) {
+        guard let executable = resolvedLaunchURL(for: game) else {
+            rightPanelMessage = "Set a launch executable for \(game.title) first."
+            editingGamePinID = game.pinID
+            isShowingGameSettings = true
+            return
+        }
+
+        let settings = settings(for: game)
+        let args = parseLaunchArguments(settings.launchArguments)
+        let env = parseEnvironmentOverrides(settings.environmentText)
+        let cwd = normalizedOptionalPath(settings.workingDirectoryPath)
+        let context = effectiveContext(for: game)
+        let backend = game.status.localizedCaseInsensitiveContains("installer") ? GraphicsBackendOption.none : settings.graphicsBackend
+        executeDetached(
+            .debugExecutable(
+                path: executable.path,
+                gameArgs: args,
+                graphicsBackend: backend,
+                workingDirectory: cwd,
+                environment: env,
+                wineDebug: "-all"
+            ),
+            successMessage: game.status.localizedCaseInsensitiveContains("installer") ? "Opened installer \(game.title)." : "Launched \(game.title).",
+            context: context
+        )
+    }
+
+    private func resolvedLaunchURL(for game: LibraryGame) -> URL? {
+        let settings = settings(for: game)
+        let launchPath = settings.launchExecutablePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !launchPath.isEmpty {
+            return URL(fileURLWithPath: launchPath)
+        }
+        return game.launchURL
+    }
+
+    private func parseLaunchArguments(_ text: String) -> [String] {
+        text
+            .split(whereSeparator: \.isWhitespace)
+            .map(String.init)
+    }
+
+    private func parseEnvironmentOverrides(_ text: String) -> [String] {
+        text
+            .split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && $0.contains("=") }
+    }
+
+    private func normalizedOptionalPath(_ text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func logsDirectoryURL(for runner: RunnerKind, context: BackendContext) -> URL {
+        let appSupport = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/MySteamWine", isDirectory: true)
+
+        if let externalPrefix = context.externalPrefix, !externalPrefix.isEmpty {
+            let resolved = URL(fileURLWithPath: externalPrefix).standardizedFileURL.path
+            let digest = Insecure.SHA1.hash(data: Data(resolved.utf8))
+                .map { String(format: "%02x", $0) }
+                .joined()
+            return appSupport
+                .appendingPathComponent("external-prefixes", isDirectory: true)
+                .appendingPathComponent(String(digest.prefix(12)), isDirectory: true)
+                .appendingPathComponent("logs", isDirectory: true)
+        }
+
+        return appSupport
+            .appendingPathComponent("bottles", isDirectory: true)
+            .appendingPathComponent(context.bottleName, isDirectory: true)
+            .appendingPathComponent("logs", isDirectory: true)
+    }
+
+    private func currentPrefixURL(for context: BackendContext) -> URL? {
+        if let externalPrefix = context.externalPrefix, !externalPrefix.isEmpty {
+            return URL(fileURLWithPath: externalPrefix)
+        }
+
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/MySteamWine", isDirectory: true)
+            .appendingPathComponent("bottles", isDirectory: true)
+            .appendingPathComponent(context.bottleName, isDirectory: true)
+            .appendingPathComponent("prefix", isDirectory: true)
+    }
+
+    private func loadDllOverrides(from prefixURL: URL) -> [String] {
+        let userReg = prefixURL.appendingPathComponent("user.reg")
+        guard let content = try? String(contentsOf: userReg, encoding: .utf8) else { return [] }
+
+        let lines = content.split(whereSeparator: \.isNewline).map(String.init)
+        var inSection = false
+        var overrides: [String] = []
+        for rawLine in lines {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            if line.hasPrefix("[") {
+                let header = #"[Software\\Wine\\DllOverrides]"#
+                inSection = line == header || line.hasPrefix(header + " ")
+                continue
+            }
+            guard inSection, line.hasPrefix("\""), line.contains("\"=\"") else { continue }
+            let parts = line.components(separatedBy: "\"=\"")
+            guard parts.count == 2 else { continue }
+            let key = parts[0].replacingOccurrences(of: "\"", with: "")
+            let value = parts[1].replacingOccurrences(of: "\"", with: "")
+            overrides.append("\(key)=\(value)")
+        }
+        return overrides.sorted()
+    }
+
+    private func shouldPresentFailureAlert(for action: BackendAction) -> Bool {
+        switch action {
+        case .openSteam, .launchGame, .debugGame, .debugExecutable:
+            return false
+        default:
+            return true
+        }
+    }
+
+    private func managedWineRuntimesRoot() -> URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/MySteamWine", isDirectory: true)
+            .appendingPathComponent("runtimes", isDirectory: true)
+    }
+
+    private func uniqueManagedRuntimeDestination(for sourceURL: URL) -> URL {
+        let root = managedWineRuntimesRoot()
+        let baseName = sourceURL.deletingPathExtension().lastPathComponent
+        let ext = sourceURL.pathExtension
+        var candidate = root.appendingPathComponent(sourceURL.lastPathComponent)
+        var index = 2
+        while FileManager.default.fileExists(atPath: candidate.path) {
+            let suffix = "\(baseName) \(index)"
+            candidate = root.appendingPathComponent(ext.isEmpty ? suffix : "\(suffix).\(ext)")
+            index += 1
+        }
+        return candidate
+    }
+
+    private func detectWineExecutable(in appURL: URL) -> String? {
+        let candidates = [
+            appURL.appendingPathComponent("Contents/Resources/wine/bin/wine64"),
+            appURL.appendingPathComponent("Contents/Resources/wine/bin/wine"),
+            appURL.appendingPathComponent("Contents/MacOS/wine64"),
+            appURL.appendingPathComponent("Contents/MacOS/wine"),
+        ]
+
+        return candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0.path) })?.path
+    }
+
+    private func scanWineRuntimes() -> [WineRuntimeRecord] {
+        let fileManager = FileManager.default
+        var records: [WineRuntimeRecord] = []
+        var seenPaths = Set<String>()
+
+        func appendExecutable(_ path: String, name: String, kind: WineRuntimeRecord.SourceKind, containerPath: String?, isManaged: Bool) {
+            guard fileManager.isExecutableFile(atPath: path) else { return }
+            guard seenPaths.insert(path).inserted else { return }
+            records.append(
+                WineRuntimeRecord(
+                    id: "\(kind.rawValue):\(containerPath ?? path)",
+                    name: name,
+                    executablePath: path,
+                    sourceKind: kind,
+                    containerPath: containerPath,
+                    isManaged: isManaged
+                )
+            )
+        }
+
+        let appCandidates = [
+            "/Applications/Wine Stable.app",
+            "/Applications/Wine Devel.app",
+            "/Applications/Wine Staging.app",
+            "\(NSHomeDirectory())/Applications/Wine Stable.app",
+            "\(NSHomeDirectory())/Applications/Wine Devel.app",
+            "\(NSHomeDirectory())/Applications/Wine Staging.app",
+        ]
+
+        for appPath in appCandidates {
+            let appURL = URL(fileURLWithPath: appPath)
+            if let executable = detectWineExecutable(in: appURL) {
+                appendExecutable(executable, name: appURL.deletingPathExtension().lastPathComponent, kind: .detected, containerPath: appURL.path, isManaged: false)
+            }
+        }
+
+        let runtimesRoot = managedWineRuntimesRoot()
+        if let contents = try? fileManager.contentsOfDirectory(at: runtimesRoot, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) {
+            for item in contents where item.pathExtension == "app" {
+                if let executable = detectWineExecutable(in: item) {
+                    appendExecutable(executable, name: item.deletingPathExtension().lastPathComponent, kind: .importedApp, containerPath: item.path, isManaged: true)
+                }
+            }
+        }
+
+        for stored in wineRuntimes {
+            appendExecutable(stored.executablePath, name: stored.name, kind: stored.sourceKind, containerPath: stored.containerPath, isManaged: stored.isManaged)
+        }
+
+        return records
+    }
+
+    private func loadWineRuntimes() -> [WineRuntimeRecord] {
+        guard
+            let data = UserDefaults.standard.data(forKey: LibraryStorageKey.wineRuntimes),
+            let stored = try? JSONDecoder().decode([WineRuntimeRecord].self, from: data)
+        else {
+            return []
+        }
+        return stored
+    }
+
+    private func persistWineRuntimes() {
+        if let data = try? JSONEncoder().encode(wineRuntimes) {
+            UserDefaults.standard.set(data, forKey: LibraryStorageKey.wineRuntimes)
+        }
+    }
+
+    private func underlyingGame(for game: LibraryGame) -> LibraryGame? {
+        let all = nativeApps + discoveredSteamGames + wineApps
+        return all.first(where: { $0.pinID == game.pinID })
+    }
+
+    private func enrichedGame(_ game: LibraryGame) -> LibraryGame {
+        let settings = settings(for: game)
+        let bannerURL = customBannerURL(for: settings) ?? game.bannerURL
+        let statsText = composedStatsText(for: game)
+
+        return LibraryGame(
+            id: game.id,
+            pinID: game.pinID,
+            backendID: game.backendID,
+            title: game.title,
+            runner: game.runner,
+            capsule: game.capsule,
+            status: game.status,
+            statsText: statsText,
+            bannerURL: bannerURL,
+            installURL: game.installURL,
+            launchURL: game.launchURL,
+            storeURL: game.storeURL
+        )
+    }
+
+    private func customBannerURL(for settings: StoredGameSettings) -> URL? {
+        let path = settings.customBannerPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty else { return nil }
+        return URL(fileURLWithPath: path)
+    }
+
+    private func matchesSourceFilter(_ game: LibraryGame) -> Bool {
+        guard selectedRunner == .home else { return true }
+        switch sourceFilter {
+        case .all:
+            return true
+        case .mac:
+            return game.runner == .mac
+        case .steam:
+            return game.runner == .steam
+        case .wine:
+            return game.runner == .wine
+        }
+    }
+
+    private func matchesSearch(_ game: LibraryGame) -> Bool {
+        guard !searchText.isEmpty else { return true }
+
+        let settings = settings(for: game)
+        let tokens = [
+            game.title,
+            game.runner.rawValue,
+            game.status,
+            game.backendID ?? "",
+            game.statsText ?? "",
+            game.installURL?.path ?? "",
+            game.launchURL?.path ?? "",
+            settings.collection.rawValue,
+            settings.assignedBottleName,
+            settings.assignedExternalPrefix,
+            settings.launchExecutablePath,
+            settings.workingDirectoryPath,
+        ]
+
+        return tokens.contains { $0.localizedCaseInsensitiveContains(searchText) }
+    }
+
+    private func sortGames(_ games: [LibraryGame]) -> [LibraryGame] {
+        switch sortOption {
+        case .manual:
+            return games
+        case .title:
+            return games.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+        case .size:
+            return games.sorted { numericSizeValue(for: $0.statsText) > numericSizeValue(for: $1.statsText) }
+        case .recent:
+            return games.sorted { (steamMetadata(for: $0)?.lastPlayed ?? .distantPast) > (steamMetadata(for: $1)?.lastPlayed ?? .distantPast) }
+        }
+    }
+
+    private func numericSizeValue(for statsText: String?) -> Double {
+        guard let statsText else { return 0 }
+        let parts = statsText.split(separator: "•").map { $0.trimmingCharacters(in: .whitespaces) }
+        guard let sizePart = parts.first else { return 0 }
+        let scanner = Scanner(string: sizePart)
+        guard let value = scanner.scanDouble() else { return 0 }
+        let unit = sizePart.replacingOccurrences(of: "[0-9. ]", with: "", options: .regularExpression).lowercased()
+        switch unit {
+        case "kb":
+            return value * 1_000
+        case "mb":
+            return value * 1_000_000
+        case "gb":
+            return value * 1_000_000_000
+        case "tb":
+            return value * 1_000_000_000_000
+        default:
+            return value
+        }
+    }
+
+    private func composedStatsText(for game: LibraryGame) -> String? {
+        var parts: [String] = []
+        if let size = game.statsText, !size.isEmpty {
+            parts.append(size)
+        }
+
+        if let metadata = steamMetadata(for: game) {
+            if let playtimeMinutes = metadata.playtimeMinutes, playtimeMinutes > 0 {
+                let hours = Double(playtimeMinutes) / 60
+                parts.append(String(format: "%.1f h", hours))
+            }
+            if let lastPlayed = metadata.lastPlayed {
+                parts.append(relativeDateText(for: lastPlayed))
+            }
+        }
+
+        let collection = settings(for: game).collection
+        if collection != .none {
+            parts.append(collection.rawValue)
+        }
+
+        return parts.isEmpty ? nil : parts.joined(separator: " • ")
+    }
+
+    func installSizeText(for game: LibraryGame) -> String? {
+        let stats = game.statsText ?? composedStatsText(for: game)
+        let parts = stats?.split(separator: "•").map { $0.trimmingCharacters(in: .whitespaces) } ?? []
+        return parts.first
+    }
+
+    func effectiveGraphicsOverrides(
+        for game: LibraryGame,
+        graphicsBackend: GraphicsBackendOption,
+        assignedBottleName: String,
+        assignedExternalPrefix: String,
+        environmentText: String
+    ) -> EffectiveGraphicsOverrides {
+        let context = backendContext.overridingTarget(
+            bottleName: assignedBottleName,
+            externalPrefix: assignedExternalPrefix
+        )
+        let prefixURL = currentPrefixURL(for: context)
+        let registryOverrides = prefixURL.map(loadDllOverrides(from:)) ?? []
+
+        let launchOverrides: String? = switch graphicsBackend {
+        case .dxvk:
+            "d3d11=n;dxgi=n;d3d10core=n;d3d9=n"
+        case .dxmt:
+            "d3d9=b;dxgi=n,b;d3d11=n,b;d3d10core=n,b;winemetal=n,b"
+        case .none:
+            game.runner == .steam || game.runner == .wine
+                ? "d3d9=b;d3d10core=b;d3d11=b;dxgi=b;winemetal=b"
+                : nil
+        }
+
+        let warnings = parseEnvironmentOverrides(environmentText)
+            .filter { $0.uppercased().hasPrefix("WINEDLLOVERRIDES=") || $0.uppercased().hasPrefix("DXVK_") || $0.uppercased().hasPrefix("MESA_") }
+
+        let targetLabel: String
+        if let externalPrefix = context.externalPrefix, !externalPrefix.isEmpty {
+            targetLabel = "External prefix"
+        } else {
+            targetLabel = "Managed bottle \(context.bottleName)"
+        }
+
+        return EffectiveGraphicsOverrides(
+            targetLabel: targetLabel,
+            prefixPath: prefixURL?.path ?? "Prefix could not be resolved.",
+            graphicsBackend: graphicsBackend,
+            registryOverrides: registryOverrides,
+            launchOverrides: launchOverrides,
+            environmentWarnings: warnings
+        )
+    }
+
+    func explicitMetadataRows(for game: LibraryGame) -> [(label: String, value: String)] {
+        var rows: [(String, String)] = []
+        let settings = settings(for: game)
+
+        if let backendID = game.backendID, !backendID.isEmpty {
+            rows.append(("App ID", backendID))
+        }
+
+        if let installURL = game.installURL {
+            rows.append(("Install Location", installURL.path))
+        }
+
+        if let launchURL = game.launchURL {
+            rows.append(("Launch Target", launchURL.path))
+        }
+
+        let settingsExecutable = settings.launchExecutablePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !settingsExecutable.isEmpty {
+            rows.append(("Override Executable", settingsExecutable))
+        }
+
+        let workingDirectory = settings.workingDirectoryPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !workingDirectory.isEmpty {
+            rows.append(("Working Directory", workingDirectory))
+        }
+
+        let launchArguments = settings.launchArguments.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !launchArguments.isEmpty {
+            rows.append(("Launch Arguments", launchArguments))
+        }
+
+        let environment = settings.environmentText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !environment.isEmpty {
+            rows.append(("Environment", environment))
+        }
+
+        if game.runner == .steam || game.runner == .wine {
+            rows.append(("Graphics Backend", settings.graphicsBackend.rawValue))
+        }
+
+        return rows
+    }
+
+    var selectedLogEntry: DisplayedLogEntry? {
+        if let selectedLogEntryID {
+            return selectedLogEntries.first(where: { $0.id == selectedLogEntryID })
+        }
+        return selectedLogEntries.first
+    }
+
+    private func launchFailureSummary(from text: String) -> String {
+        let noisyPrefixes = [
+            "[mvk-info]",
+            "VK_",
+            "The following ",
+            "Launching ",
+            "[Note] ",
+        ]
+
+        let lines = text
+            .split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .filter { line in !noisyPrefixes.contains(where: { line.hasPrefix($0) }) }
+
+        let tail = lines.suffix(10)
+        if tail.isEmpty {
+            return "The launch failed. Use “Open Full Error” to inspect the complete output."
+        }
+        return tail.joined(separator: "\n")
+    }
+
+    func playtimeText(for game: LibraryGame) -> String? {
+        guard let minutes = steamMetadata(for: game)?.playtimeMinutes, minutes > 0 else { return nil }
+        let hours = Double(minutes) / 60
+        return String(format: "%.1f hours", hours)
+    }
+
+    func lastPlayedText(for game: LibraryGame) -> String? {
+        guard let date = steamMetadata(for: game)?.lastPlayed else { return nil }
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
+    }
+
+    private func steamMetadata(for game: LibraryGame) -> SteamLocalMetadata? {
+        guard let appid = game.backendID else { return nil }
+        return steamMetadataByAppID[appid]
+    }
+
+    private func relativeDateText(for date: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return "Played \(formatter.localizedString(for: date, relativeTo: Date()))"
+    }
+
+    private func applySteamOrder(to games: [LibraryGame]) -> [LibraryGame] {
+        let byID = Dictionary(uniqueKeysWithValues: games.map { ($0.pinID, $0) })
+        let ordered = steamOrderIDs.compactMap { byID[$0] }
+        let unordered = games.filter { !steamOrderIDs.contains($0.pinID) }
+        let merged = ordered + unordered
+        steamOrderIDs = merged.map(\.pinID)
+        persistSteamOrder()
+        return merged
+    }
+
+    private func reorderGames(_ games: inout [LibraryGame], draggedID: String, targetID: String) {
+        guard
+            let fromIndex = games.firstIndex(where: { $0.pinID == draggedID }),
+            let toIndex = games.firstIndex(where: { $0.pinID == targetID })
+        else {
+            return
+        }
+
+        let moved = games.remove(at: fromIndex)
+        games.insert(moved, at: toIndex)
+    }
+
+    private func reorderIDs(_ ids: inout [String], draggedID: String, targetID: String) {
+        guard
+            let fromIndex = ids.firstIndex(of: draggedID),
+            let toIndex = ids.firstIndex(of: targetID)
+        else {
+            return
+        }
+
+        let moved = ids.remove(at: fromIndex)
+        ids.insert(moved, at: toIndex)
+    }
+
+    private func directorySizeText(_ url: URL) -> String? {
+        let fileManager = FileManager.default
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory) else { return nil }
+
+        let totalBytes: Int64
+        if isDirectory.boolValue {
+            let keys: Set<URLResourceKey> = [.totalFileAllocatedSizeKey, .fileAllocatedSizeKey]
+            let enumerator = fileManager.enumerator(at: url, includingPropertiesForKeys: Array(keys))
+            totalBytes = (enumerator?.compactMap { element in
+                guard let fileURL = element as? URL else { return nil }
+                let values = try? fileURL.resourceValues(forKeys: keys)
+                return Int64(values?.totalFileAllocatedSize ?? values?.fileAllocatedSize ?? 0)
+            }.reduce(0, +)) ?? 0
+        } else {
+            let values = try? url.resourceValues(forKeys: [.fileSizeKey])
+            totalBytes = Int64(values?.fileSize ?? 0)
+        }
+
+        guard totalBytes > 0 else { return nil }
+        return ByteCountFormatter.string(fromByteCount: totalBytes, countStyle: .file)
+    }
+
+    private func loadSteamMetadata(for games: [BackendGame]) -> [String: SteamLocalMetadata] {
+        var metadata: [String: SteamLocalMetadata] = [:]
+        let groupedByRoot = Dictionary(grouping: games) { game in
+            steamRootURL(forInstallPath: game.installDir)
+        }
+
+        for (steamRoot, rootGames) in groupedByRoot {
+            guard let steamRoot else { continue }
+            let rootMetadata = parseSteamLocalMetadata(at: steamRoot, appids: rootGames.map(\.appid))
+            for (appid, value) in rootMetadata {
+                metadata[appid] = value
+            }
+        }
+        return metadata
+    }
+
+    private func steamRootURL(forInstallPath installPath: String?) -> URL? {
+        guard let installPath, !installPath.isEmpty else { return nil }
+        let installURL = URL(fileURLWithPath: installPath)
+        return installURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+    }
+
+    private func parseSteamLocalMetadata(at steamRoot: URL, appids: [String]) -> [String: SteamLocalMetadata] {
+        let userdataRoot = steamRoot.appendingPathComponent("userdata", isDirectory: true)
+        guard let contents = try? FileManager.default.contentsOfDirectory(at: userdataRoot, includingPropertiesForKeys: nil) else {
+            return [:]
+        }
+
+        var results: [String: SteamLocalMetadata] = [:]
+        for userDirectory in contents {
+            let configURL = userDirectory.appendingPathComponent("config/localconfig.vdf")
+            guard let text = try? String(contentsOf: configURL, encoding: .utf8) else { continue }
+            for appid in appids {
+                guard let block = firstRegexGroup(#"(?s)"\#(appid)"\s*\{(.*?)\}"#, in: text) else { continue }
+                var metadata = results[appid] ?? SteamLocalMetadata()
+                if let playtime = regexInt(#""Playtime"\s*"(\d+)""#, in: block) ?? regexInt(#""PlaytimeForever"\s*"(\d+)""#, in: block) {
+                    metadata.playtimeMinutes = max(metadata.playtimeMinutes ?? 0, playtime)
+                }
+                if let lastPlayedValue = regexInt(#""LastPlayed"\s*"(\d+)""#, in: block) {
+                    let date = Date(timeIntervalSince1970: TimeInterval(lastPlayedValue))
+                    if (metadata.lastPlayed ?? .distantPast) < date {
+                        metadata.lastPlayed = date
+                    }
+                }
+                results[appid] = metadata
+            }
+        }
+
+        return results
+    }
+
+    private func firstRegexGroup(_ pattern: String, in text: String) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let range = NSRange(text.startIndex..., in: text)
+        guard let match = regex.firstMatch(in: text, range: range), match.numberOfRanges > 1,
+              let valueRange = Range(match.range(at: 1), in: text) else {
+            return nil
+        }
+        return String(text[valueRange])
+    }
+
+    private func regexInt(_ pattern: String, in text: String) -> Int? {
+        guard let string = firstRegexGroup(pattern, in: text) else { return nil }
+        return Int(string)
+    }
+}
+
+private extension Array where Element: Hashable {
+    func uniquedPreservingOrder() -> [Element] {
+        var seen = Set<Element>()
+        return filter { seen.insert($0).inserted }
+    }
+}
