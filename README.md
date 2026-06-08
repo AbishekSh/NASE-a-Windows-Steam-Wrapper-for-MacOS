@@ -1,132 +1,22 @@
-# Windows-Steam-Wrapper-for-macOS
+# SteamWineWrapper
 
-`mysteamwine.py` is a Python CLI for managing a Wine bottle dedicated to Steam on macOS.
+SteamWineWrapper is a native macOS game launcher for Steam, Wine-managed Windows apps, and native macOS apps. The goal is a library-first experience closer to Lutris than a thin Wine wrapper: games stay front and center, while Wine setup, logs, dependencies, and per-game overrides live in focused tools.
 
-The repo now also contains an initial native macOS frontend scaffold in SwiftUI under `Sources/SteamWineApp/`.
+The SwiftUI app is the product. The Python backend remains the implementation engine for Wine, Steam, graphics stack setup, diagnostics, and launch workflows.
 
-Current module layout:
+## Current Focus
 
-- `mysteamwine/runtime.py`: shared process execution, downloads, executable resolution
-- `mysteamwine/bottle.py`: bottle paths under `~/Library/Application Support/MySteamWine/`
-- `mysteamwine/winetricks.py`: winetricks integration
-- `mysteamwine/dxmt.py`: DXMT install from a local directory or `.tar.gz`
-- `mysteamwine/dxvk.py`: DXVK install from a local directory or `.tar.gz`, including `DXVK-macOS`
-- `mysteamwine/steam.py`: Steam installer/runner and manifest parsing
-- `mysteamwine/scanner.py`: game folder scanner
-- `mysteamwine/advisor.py`: rule-based dependency recommendations
+- Native SwiftUI macOS launcher
+- Steam library detection and launch through managed Wine bottles
+- Wine-managed Windows apps and installers
+- Native macOS app imports
+- Per-game settings, logs, health checks, and compatibility notes
 
-Basic usage:
+Planned sources include Epic Games and GOG.
 
-```bash
-# open the local browser frontend
-python3 mysteamwine.py gui
-python3 mysteamwine.py gui --no-browser
+## Open The App
 
-# show environment and bottle paths
-python3 mysteamwine.py info
-
-# initialize a managed bottle
-python3 mysteamwine.py --wine64 /opt/homebrew/bin/wine init
-
-# download and install Steam
-python3 mysteamwine.py --wine64 /opt/homebrew/bin/wine install-steam
-
-# launch Steam
-python3 mysteamwine.py --wine64 /opt/homebrew/bin/wine run-steam
-
-# open winecfg for the current bottle or prefix
-python3 mysteamwine.py --wine64 /opt/homebrew/bin/wine winecfg
-
-# check runtime/prefix/DXMT/Steam health
-python3 mysteamwine.py --wine /opt/homebrew/bin/wine doctor
-
-# apply safe fixes like DXMT overrides, then rerun checks
-python3 mysteamwine.py --wine /opt/homebrew/bin/wine doctor --fix
-python3 mysteamwine.py --wine /opt/homebrew/bin/wine doctor --fix --dxmt-source ~/Downloads/dxmt
-
-# list installed Steam games from manifests
-python3 mysteamwine.py list-games
-
-# use an existing Wine prefix directly instead of a managed bottle
-python3 mysteamwine.py --prefix ~/.wine-bluearchive info
-python3 mysteamwine.py --prefix ~/.wine-bluearchive list-games
-
-# launch a game by Steam AppID
-python3 mysteamwine.py --wine64 /opt/homebrew/bin/wine launch-game --appid 620
-```
-
-Dependency tools:
-
-```bash
-# install winetricks verbs into the bottle
-python3 mysteamwine.py winetricks --verbs vcrun2019,d3dx9
-
-# install DXVK from a local release archive or extracted folder
-python3 mysteamwine.py install-dxvk --dxvk-source ~/Downloads/dxvk-2.3.tar.gz
-
-# install Gcenx/DXVK-macOS from a local checkout or extracted folder
-python3 mysteamwine.py install-dxvk --dxvk-source ~/Downloads/DXVK-macOS --dxvk-flavor macos
-
-# install DXMT from a local checkout or extracted folder
-python3 mysteamwine.py --wine /opt/homebrew/bin/wine install-dxmt --dxmt-source ~/Downloads/dxmt
-
-# one-shot Metal setup for a managed bottle: wineboot + winetricks steam + DXMT + open Steam
-python3 mysteamwine.py --wine /opt/homebrew/bin/wine setup-metal --dxmt-source ~/Downloads/dxmt
-
-# advanced path: reuse an existing external Wine prefix instead of a managed bottle
-python3 mysteamwine.py --prefix ~/.wine-bluearchive --wine /opt/homebrew/bin/wine setup-metal --dxmt-source ~/Downloads/dxmt
-
-# wipe every bottle under MySteamWine app support
-python3 mysteamwine.py wipe-bottles --yes
-
-# inspect whether Wine, winetricks, DXMT, Steam, and manifests are in the expected state
-python3 mysteamwine.py --wine /opt/homebrew/bin/wine doctor
-python3 mysteamwine.py --prefix ~/.wine-bluearchive --wine /opt/homebrew/bin/wine doctor
-python3 mysteamwine.py --prefix ~/.wine-bluearchive --wine /opt/homebrew/bin/wine doctor --fix
-
-# scan a game folder and get rule-based recommendations
-python3 mysteamwine.py advise-game --appid 2056220
-python3 mysteamwine.py scan-game --path "/path/to/game"
-```
-
-Host dependencies still need to exist on the Mac side, for example Wine, winetricks, and Vulkan loader/tools where required by the chosen Wine build.
-
-`setup-metal` now treats a managed bottle under `~/Library/Application Support/MySteamWine/bottles/` as the default product path. `--prefix` remains available as an advanced override for importing or reusing an external prefix.
-
-`setup-metal` is tuned for `Wine Stable 11.0`. The CLI will detect the Wine app/version you pass and warn if it does not look like that stack.
-
-Graphics backend defaults are now split intentionally:
-- `run-steam` defaults to plain Wine (`--graphics-backend auto` resolves to `none`)
-- `launch-game` and `debug-game` default to DXMT (`--graphics-backend auto` resolves to `dxmt`)
-
-The `gui` command opens a simple local browser frontend for:
-- choosing a managed bottle or external prefix
-- running `setup-metal`
-- running `doctor` / `doctor --fix`
-- opening Steam
-- refreshing the Steam game list
-- launching a selected game
-
-## SwiftUI frontend
-
-There is now a native SwiftUI app scaffold focused on:
-- `macOS`
-- `Steam`
-- `Wine`
-
-with sidebar placeholders for:
-- `Epic Games`
-- `GOG`
-
-Files:
-- `Package.swift`
-- `Sources/SteamWineApp/SteamWineApp.swift`
-- `Sources/SteamWineApp/ContentView.swift`
-- `Sources/SteamWineApp/AppViewModel.swift`
-- `Sources/SteamWineApp/Models.swift`
-- `Sources/SteamWineApp/BackendBridge.swift`
-
-Open it in Xcode from the repo root with either:
+From the repo root:
 
 ```bash
 open Package.swift
@@ -138,22 +28,207 @@ or:
 xed .
 ```
 
-The current SwiftUI app now starts that backend bridge work. The native frontend is wired to the Python CLI for:
-- `setup-metal`
-- `doctor`
-- `doctor --fix`
-- `run-steam --no-wait`
-- `list-games`
-- `launch-game --no-wait`
+Then run the `SteamWineApp` target from Xcode.
 
-The Steam library view no longer depends on sample Steam cards. It now uses `list-games` to detect installed Steam titles from manifests and shows an empty state when nothing is detected yet.
+For a command-line build check:
 
-It now also includes a SwiftUI settings sheet for:
-- Wine path
-- DXMT source path
-- managed bottle vs external prefix
-- native file pickers for Wine, DXMT, and external prefix selection
-- a lightweight "Test Settings" pass before saving
-- persistence through `UserDefaults`
+```bash
+swift build
+```
 
-The next step is polishing that settings flow with richer validation and then exposing more of the Python backend state directly in the SwiftUI app.
+## Host Requirements
+
+Install these on the Mac side before first setup:
+
+- `wine-stable 11.0` recommended
+- `winetricks`
+- Rosetta 2 on Apple Silicon
+- DXMT/DXVK/D3DMetal payloads as needed by the graphics mode you choose
+
+The default managed Wine prefix location is:
+
+```text
+~/Library/Application Support/MySteamWine
+```
+
+Managed bottles live under:
+
+```text
+~/Library/Application Support/MySteamWine/bottles/<BottleName>
+```
+
+External Wine prefixes are also supported. The prefix itself stays external, while SteamWineWrapper stores logs, downloads, and cache metadata under `MySteamWine/external-prefixes/`.
+
+## What The App Does Today
+
+The native SwiftUI app can:
+
+- Manage Steam, Wine, macOS, and pinned library views
+- Configure Wine path, DXMT source, DXVK source, D3DMetal source, managed bottle, and external prefix
+- Run first-time Metal setup
+- Run doctor checks and safe repair actions
+- Open Windows Steam without waiting for it to exit
+- Detect installed Steam games from Steam manifests
+- Launch Steam games through Steam or direct debug/smart launch paths
+- Import native macOS apps
+- Import Wine installers and app folders
+- Edit per-game launch arguments, working directory, environment variables, graphics backend, collection, bottle, and external prefix
+- View bounded log tails in-app
+- Run Winetricks from the UI
+
+The current Steam experience still uses Windows Steam as the reliable baseline. Direct launch and hidden-Steam style work should build on the existing backend boundaries described in the architecture docs.
+
+## Architecture
+
+High-level split:
+
+- `Sources/SteamWineApp/`: SwiftUI product, app state, views, settings, game library, and backend bridge.
+- `mysteamwine/`: Python backend for Wine, Steam, bottles, graphics installers, diagnostics, scanning, and launch commands.
+- `mysteamwine.py`: thin backend CLI entrypoint.
+
+Key Swift files:
+
+- `SteamWineApp.swift`: app entrypoint
+- `ContentView.swift`: main app shell
+- `AppViewModel.swift`: primary observable app state and orchestration
+- `Models.swift`: shared UI/backend value types
+- `BackendBridge.swift`: Swift-to-Python JSONL bridge
+- `SettingsSheet.swift`, `SetupWizardSheet.swift`, `WinetricksSheet.swift`, `GameSheets.swift`: focused tools and sheets
+- `LibraryComponents.swift`, `SharedViews.swift`: reusable UI pieces
+
+Key Python modules:
+
+- `mysteamwine/runtime.py`: process execution, downloads, executable resolution, Wine runtime detection
+- `mysteamwine/bottle.py`: managed bottle and external-prefix paths
+- `mysteamwine/steam.py`: Steam installer/runner, VDF parsing, manifest discovery, Steam/direct game launch helpers
+- `mysteamwine/cli.py`: backend command contract, JSON/JSONL output, job events
+- `mysteamwine/doctor.py`: health checks and safe repairs
+- `mysteamwine/winetricks.py`: Winetricks integration
+- `mysteamwine/dxmt.py`: DXMT install and overrides
+- `mysteamwine/dxvk.py`: DXVK install and overrides
+- `mysteamwine/d3dmetal.py`: D3DMetal install and overrides
+- `mysteamwine/scanner.py`: game folder signal scanner
+- `mysteamwine/advisor.py`: dependency recommendations
+- `mysteamwine/webui.py`: older local browser frontend for backend debugging
+
+More detail lives in:
+
+- [`docs/CODEBASE_STRUCTURE.md`](docs/CODEBASE_STRUCTURE.md): current SwiftUI/Python module map, data flow, organization notes, and where hidden-Steam launch work should fit.
+
+## Backend Contract
+
+The app talks to Python through `BackendBridge.swift`. The backend commands support structured output:
+
+- `--json`: one machine-readable result
+- `--jsonl`: streaming job events plus final result
+
+Representative response shape:
+
+```json
+{
+  "ok": true,
+  "action": "doctor",
+  "message": "Doctor finished.",
+  "data": {},
+  "warnings": [],
+  "errors": [],
+  "logs": []
+}
+```
+
+The SwiftUI app should continue to prefer JSON/JSONL over parsing human terminal output.
+
+## Backend CLI
+
+The CLI is secondary now. It exists for debugging, scripting, and keeping backend workflows easy to test outside the app.
+
+Common backend commands:
+
+```bash
+# show environment and bottle paths
+python3 mysteamwine.py info
+
+# create or initialize the default managed bottle
+python3 mysteamwine.py --wine /opt/homebrew/bin/wine init
+
+# run the managed setup flow
+python3 mysteamwine.py --wine /opt/homebrew/bin/wine setup-metal --dxmt-source ~/Downloads/dxmt
+
+# inspect the current Wine/Steam/graphics setup
+python3 mysteamwine.py --wine /opt/homebrew/bin/wine doctor
+
+# apply safe repairs, then rerun checks
+python3 mysteamwine.py --wine /opt/homebrew/bin/wine doctor --fix --dxmt-source ~/Downloads/dxmt
+
+# open Windows Steam
+python3 mysteamwine.py --wine /opt/homebrew/bin/wine run-steam --no-wait
+
+# list installed Steam games from manifests
+python3 mysteamwine.py list-games
+
+# launch a Steam game by AppID through Steam
+python3 mysteamwine.py --wine /opt/homebrew/bin/wine launch-game --appid 620 --no-wait
+
+# try direct executable launch first, then fall back to Steam
+python3 mysteamwine.py --wine /opt/homebrew/bin/wine smart-launch-game --appid 620 --no-wait
+
+# launch a chosen executable directly with debug logging
+python3 mysteamwine.py --wine /opt/homebrew/bin/wine debug-game --exe "/path/to/Game.exe" --no-wait
+```
+
+Dependency and graphics helpers:
+
+```bash
+# install Winetricks verbs
+python3 mysteamwine.py winetricks --verbs vcrun2019,d3dx9
+
+# install DXMT
+python3 mysteamwine.py --wine /opt/homebrew/bin/wine install-dxmt --dxmt-source ~/Downloads/dxmt
+
+# install DXVK
+python3 mysteamwine.py install-dxvk --dxvk-source ~/Downloads/dxvk-2.3.tar.gz
+
+# install DXVK-macOS
+python3 mysteamwine.py install-dxvk --dxvk-source ~/Downloads/DXVK-macOS --dxvk-flavor macos
+
+# install D3DMetal
+python3 mysteamwine.py --wine /opt/homebrew/bin/wine install-d3dmetal --d3dmetal-source ~/Downloads/d3dmetal
+
+# scan a game folder and get rule-based recommendations
+python3 mysteamwine.py scan-game --path "/path/to/game"
+python3 mysteamwine.py advise-game --appid 2056220
+```
+
+External prefix examples:
+
+```bash
+python3 mysteamwine.py --prefix ~/.wine-bluearchive info
+python3 mysteamwine.py --prefix ~/.wine-bluearchive list-games
+python3 mysteamwine.py --prefix ~/.wine-bluearchive --wine /opt/homebrew/bin/wine doctor --fix
+```
+
+The older local browser UI is still available for quick backend testing:
+
+```bash
+python3 mysteamwine.py gui
+python3 mysteamwine.py gui --no-browser
+```
+
+## Graphics Defaults
+
+Graphics backend defaults are intentionally split:
+
+- `run-steam`: plain Wine by default. `--graphics-backend auto` resolves to `none`.
+- `launch-game`, `smart-launch-game`, and `debug-game`: DXMT by default. `--graphics-backend auto` resolves to `dxmt`.
+
+Games may use DXMT, DXVK, D3DMetal, or no override depending on compatibility.
+
+## Development Direction
+
+Near-term priorities:
+
+- Keep the SwiftUI app as the primary user experience.
+- Keep Python backend commands stable and terminal-friendly.
+- Continue strengthening JSON/JSONL responses.
+- Add hidden/cleaner Steam launch work as explicit backend launch modes, not UI hacks.
+- Keep direct launch, through-Steam launch, and any future Steam API shim mode distinct and reversible.

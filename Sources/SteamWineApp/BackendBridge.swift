@@ -5,6 +5,8 @@ private enum BackendSettingsKey {
     static let winePath = "backend.winePath"
     static let dxmtSource = "backend.dxmtSource"
     static let dxvkSource = "backend.dxvkSource"
+    static let d3dMetalSource = "backend.d3dMetalSource"
+    static let gptkWinePath = "backend.gptkWinePath"
     static let bottleName = "backend.bottleName"
     static let externalPrefix = "backend.externalPrefix"
 }
@@ -139,6 +141,8 @@ struct BackendContext {
     let winePath: String
     let dxmtSource: String
     let dxvkSource: String
+    let d3dMetalSource: String
+    let gptkWinePath: String
     let bottleName: String
     let externalPrefix: String?
 
@@ -156,9 +160,27 @@ struct BackendContext {
             winePath: defaults.string(forKey: BackendSettingsKey.winePath) ?? "/opt/homebrew/bin/wine",
             dxmtSource: defaults.string(forKey: BackendSettingsKey.dxmtSource) ?? "\(NSHomeDirectory())/Downloads/dxmt",
             dxvkSource: defaults.string(forKey: BackendSettingsKey.dxvkSource) ?? "\(NSHomeDirectory())/Downloads/dxvk",
+            d3dMetalSource: defaults.string(forKey: BackendSettingsKey.d3dMetalSource) ?? Self.detectedD3DMetalSource(),
+            gptkWinePath: defaults.string(forKey: BackendSettingsKey.gptkWinePath) ?? Self.detectedGPTKWinePath(),
             bottleName: defaults.string(forKey: BackendSettingsKey.bottleName) ?? "Default",
             externalPrefix: defaults.string(forKey: BackendSettingsKey.externalPrefix)
         )
+    }
+
+    private static func detectedGPTKWinePath() -> String {
+        let candidates = [
+            "/opt/local/libexec/game-porting-toolkit/bin/wine",
+            "/Applications/Game Porting Toolkit.app/Contents/Resources/wine/bin/wine",
+        ]
+        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) } ?? candidates[0]
+    }
+
+    private static func detectedD3DMetalSource() -> String {
+        let candidates = [
+            "/opt/local/libexec/d3dmetal",
+            "\(NSHomeDirectory())/Downloads/d3dmetal",
+        ]
+        return candidates.first { FileManager.default.fileExists(atPath: $0) } ?? candidates[0]
     }
 
     var targetArguments: [String] {
@@ -174,6 +196,8 @@ struct BackendContext {
         defaults.set(winePath, forKey: BackendSettingsKey.winePath)
         defaults.set(dxmtSource, forKey: BackendSettingsKey.dxmtSource)
         defaults.set(dxvkSource, forKey: BackendSettingsKey.dxvkSource)
+        defaults.set(d3dMetalSource, forKey: BackendSettingsKey.d3dMetalSource)
+        defaults.set(gptkWinePath, forKey: BackendSettingsKey.gptkWinePath)
         defaults.set(bottleName, forKey: BackendSettingsKey.bottleName)
         if let externalPrefix, !externalPrefix.isEmpty {
             defaults.set(externalPrefix, forKey: BackendSettingsKey.externalPrefix)
@@ -191,8 +215,25 @@ struct BackendContext {
             winePath: winePath,
             dxmtSource: dxmtSource,
             dxvkSource: dxvkSource,
+            d3dMetalSource: d3dMetalSource,
+            gptkWinePath: gptkWinePath,
             bottleName: cleanedBottle.isEmpty ? self.bottleName : cleanedBottle,
             externalPrefix: cleanedPrefix.isEmpty ? nil : cleanedPrefix
+        )
+    }
+
+    func compatibilityContext(for graphicsBackend: GraphicsBackendOption) -> BackendContext {
+        guard graphicsBackend == .d3dmetal else { return self }
+        return BackendContext(
+            repoRoot: repoRoot,
+            pythonCommand: pythonCommand,
+            winePath: gptkWinePath,
+            dxmtSource: dxmtSource,
+            dxvkSource: dxvkSource,
+            d3dMetalSource: d3dMetalSource,
+            gptkWinePath: gptkWinePath,
+            bottleName: "\(bottleName)-D3DMetal",
+            externalPrefix: nil
         )
     }
 }
@@ -204,6 +245,7 @@ enum BackendAction {
     case runWinetricks(verbs: [String], interactive: Bool = false)
     case installDXMT
     case installDXVK
+    case installD3DMetal
     case openWinecfg
     case killWine
     case openSteam
@@ -336,6 +378,8 @@ enum BackendBridge {
             return base + ["install-dxmt", "--dxmt-source", context.dxmtSource]
         case .installDXVK:
             return base + ["install-dxvk", "--dxvk-source", context.dxvkSource]
+        case .installD3DMetal:
+            return base + ["install-d3dmetal", "--d3dmetal-source", context.d3dMetalSource]
         case .openWinecfg:
             return base + ["winecfg"]
         case .killWine:
@@ -353,6 +397,8 @@ enum BackendBridge {
                 args += ["--dxmt-source", context.dxmtSource]
             } else if graphicsBackend == .dxvk {
                 args += ["--dxvk-source", context.dxvkSource]
+            } else if graphicsBackend == .d3dmetal {
+                args += ["--d3dmetal-source", context.d3dMetalSource]
             }
             args += ["--probe-seconds", "8", "--no-wait"]
             return args
@@ -361,6 +407,10 @@ enum BackendBridge {
             args += ["--graphics-backend", graphicsBackend.cliValue, "debug-game", "--appid", appid]
             if graphicsBackend == .dxmt {
                 args += ["--dxmt-source", context.dxmtSource]
+            } else if graphicsBackend == .dxvk {
+                args += ["--dxvk-source", context.dxvkSource]
+            } else if graphicsBackend == .d3dmetal {
+                args += ["--d3dmetal-source", context.d3dMetalSource]
             }
             args += ["--no-wait", "--wine-debug=\(wineDebug)"]
             args += workingDirectoryArguments(workingDirectory)
@@ -372,6 +422,10 @@ enum BackendBridge {
             args += ["--graphics-backend", graphicsBackend.cliValue, "debug-game", "--exe", path]
             if graphicsBackend == .dxmt {
                 args += ["--dxmt-source", context.dxmtSource]
+            } else if graphicsBackend == .dxvk {
+                args += ["--dxvk-source", context.dxvkSource]
+            } else if graphicsBackend == .d3dmetal {
+                args += ["--d3dmetal-source", context.d3dMetalSource]
             }
             args += ["--no-wait", "--wine-debug=\(wineDebug)"]
             args += workingDirectoryArguments(workingDirectory)

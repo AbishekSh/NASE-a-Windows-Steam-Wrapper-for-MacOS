@@ -1,0 +1,284 @@
+from __future__ import annotations
+
+import shutil
+import tarfile
+from pathlib import Path
+
+from .bottle import Bottle, ensure_bottle_dirs
+from .runtime import find_wine_module_root, run_logged
+
+
+D3DMETAL_DLL_OVERRIDES = {
+    "dxgi": "native,builtin",
+    "d3d11": "native,builtin",
+    "d3d12": "native,builtin",
+    "atidxx64": "native,builtin",
+    "nvapi64": "native,builtin",
+    "nvngx": "native,builtin",
+}
+OLD_GRAPHICS_OVERRIDES = (
+    "d3d9",
+    "d3d10core",
+    "d3d11",
+    "d3d12",
+    "dxgi",
+    "winemetal",
+    "d3dmetal",
+    "atidxx64",
+    "nvapi64",
+    "nvngx",
+    "*d3d9",
+    "*d3d10core",
+    "*d3d11",
+    "*d3d12",
+    "*dxgi",
+    "*winemetal",
+    "*d3dmetal",
+    "*atidxx64",
+    "*nvapi64",
+    "*nvngx",
+)
+D3DMETAL_DLL_NAMES = (
+    "atidxx64.dll",
+    "dxgi.dll",
+    "d3d11.dll",
+    "d3d12.dll",
+    "nvapi64.dll",
+    "nvngx.dll",
+)
+
+
+def _extract_archive(archive: Path, target_dir: Path) -> Path:
+    target_dir.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(archive) as handle:
+        members = handle.getmembers()
+        top_levels = {member.name.split("/", 1)[0] for member in members if member.name}
+        handle.extractall(target_dir)
+    if len(top_levels) == 1:
+        return target_dir / next(iter(top_levels))
+    return target_dir
+
+
+def resolve_d3dmetal_root(source: Path, cache_dir: Path) -> Path:
+    candidate = source.expanduser().resolve()
+    if candidate.is_dir():
+        return candidate
+    if candidate.is_file() and candidate.suffixes[-2:] == [".tar", ".gz"]:
+        return _extract_archive(candidate, cache_dir / candidate.stem.replace(".tar", ""))
+    raise FileNotFoundError(f"D3DMetal source must be a directory or .tar.gz archive: {candidate}")
+
+
+def _upsert_user_reg_section(user_reg: Path, section: str, entries: dict[str, str]) -> None:
+    if user_reg.exists():
+        lines = user_reg.read_text(encoding="utf-8", errors="replace").splitlines()
+    else:
+        user_reg.parent.mkdir(parents=True, exist_ok=True)
+        lines = []
+    header = f"[{section}]"
+    start = None
+    end = None
+
+    for index, line in enumerate(lines):
+        if line == header or line.startswith(header + " "):
+            start = index
+            end = len(lines)
+            for cursor in range(index + 1, len(lines)):
+                if lines[cursor].startswith("["):
+                    end = cursor
+                    break
+            break
+
+    section_header = lines[start] if start is not None else header
+    section_lines = [section_header]
+    for key, value in entries.items():
+        section_lines.append(f'"{key}"="{value}"')
+
+    if start is None:
+        if lines and lines[-1] != "":
+            lines.append("")
+        lines.extend(section_lines)
+    else:
+        existing: list[str] = []
+        for line in lines[start + 1 : end]:
+            if not (line.startswith('"') and '"="' in line and line.endswith('"')):
+                existing.append(line)
+        lines[start:end] = [header, *existing, *section_lines[1:]]
+
+    user_reg.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _remove_user_reg_entries(user_reg: Path, section: str, keys: tuple[str, ...]) -> None:
+    if not user_reg.exists():
+        return
+
+    lines = user_reg.read_text(encoding="utf-8", errors="replace").splitlines()
+    header = f"[{section}]"
+    start = None
+    end = None
+
+    for index, line in enumerate(lines):
+        if line == header or line.startswith(header + " "):
+            start = index
+            end = len(lines)
+            for cursor in range(index + 1, len(lines)):
+                if lines[cursor].startswith("["):
+                    end = cursor
+                    break
+            break
+
+    if start is None or end is None:
+        return
+
+    section_header = lines[start]
+    filtered: list[str] = [section_header]
+    for line in lines[start + 1 : end]:
+        if line.startswith('"') and '"="' in line and line.endswith('"'):
+            key = line.split('"', 2)[1]
+            if key in keys:
+                continue
+        filtered.append(line)
+
+    while len(filtered) > 1 and filtered[-1] == "":
+        filtered.pop()
+
+    lines[start:end] = [] if len(filtered) == 1 else filtered
+    user_reg.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _locate_payload_dir(root: Path) -> Path:
+    direct_candidates = (
+        root / "wine" / "x86_64-windows",
+        root / "x86_64-windows",
+        root / "x64",
+        root / "redist" / "lib" / "wine" / "x86_64-windows",
+        root / "redist" / "lib64" / "wine" / "x86_64-windows",
+        root / "lib64" / "wine" / "x86_64-windows",
+        root / "lib" / "wine" / "x86_64-windows",
+    )
+    for candidate in direct_candidates:
+        if (candidate / "d3d11.dll").is_file() and (candidate / "dxgi.dll").is_file():
+            return candidate
+
+    matches = sorted(root.rglob("d3d11.dll"))
+    if matches:
+        for match in matches:
+            if (match.parent / "dxgi.dll").is_file():
+                return match.parent
+    raise FileNotFoundError(f"Could not find D3DMetal d3d11.dll/dxgi.dll payload under: {root}")
+
+
+def _locate_optional_32bit_dir(root: Path) -> Path | None:
+    for candidate in (root / "i386-windows", root / "x32", root / "lib" / "wine" / "i386-windows"):
+        if candidate.is_dir() and any(candidate.glob("*.dll")):
+            return candidate
+    return None
+
+
+def _locate_unix_payload_dir(root: Path) -> Path | None:
+    for candidate in (
+        root / "wine" / "x86_64-unix",
+        root / "x86_64-unix",
+        root / "redist" / "lib" / "wine" / "x86_64-unix",
+        root / "lib64" / "wine" / "x86_64-unix",
+        root / "lib" / "wine" / "x86_64-unix",
+    ):
+        if candidate.is_dir() and any(candidate.glob("*.so")):
+            return candidate
+    return None
+
+
+def _locate_external_payload_dir(root: Path) -> Path | None:
+    for candidate in (
+        root / "external",
+        root / "redist" / "lib" / "external",
+        root / "lib64" / "external",
+        root / "lib" / "external",
+    ):
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def _wineserver_path(wine_path: Path) -> Path:
+    candidate = wine_path.with_name("wineserver")
+    if candidate.exists():
+        return candidate
+    raise FileNotFoundError(f"wineserver not found next to Wine binary: {candidate}")
+
+
+def clear_graphics_overrides(bottle: Bottle) -> None:
+    _remove_user_reg_entries(
+        bottle.prefix / "user.reg",
+        r"Software\\Wine\\DllOverrides",
+        OLD_GRAPHICS_OVERRIDES,
+    )
+
+
+def enable_d3dmetal_overrides(bottle: Bottle) -> None:
+    clear_graphics_overrides(bottle)
+    _upsert_user_reg_section(
+        bottle.prefix / "user.reg",
+        r"Software\\Wine\\DllOverrides",
+        D3DMETAL_DLL_OVERRIDES,
+    )
+
+
+def install_d3dmetal(*, bottle: Bottle, d3dmetal_source: Path, wine64_path: Path | None = None) -> tuple[int, str]:
+    ensure_bottle_dirs(bottle)
+    d3dmetal_root = resolve_d3dmetal_root(d3dmetal_source, bottle.cache / "d3dmetal")
+    x64_dir = _locate_payload_dir(d3dmetal_root)
+    x32_dir = _locate_optional_32bit_dir(d3dmetal_root)
+    unix_dir = _locate_unix_payload_dir(d3dmetal_root)
+    external_dir = _locate_external_payload_dir(d3dmetal_root)
+
+    system32 = bottle.drive_c / "windows" / "system32"
+    syswow64 = bottle.drive_c / "windows" / "syswow64"
+    system32.mkdir(parents=True, exist_ok=True)
+    syswow64.mkdir(parents=True, exist_ok=True)
+
+    copied: list[str] = []
+    for dll_name in D3DMETAL_DLL_NAMES:
+        source = x64_dir / dll_name
+        if source.exists():
+            destination = system32 / dll_name
+            shutil.copy2(source, destination)
+            copied.append(str(destination))
+
+    if x32_dir:
+        for dll in sorted(x32_dir.glob("*.dll")):
+            destination = syswow64 / dll.name
+            shutil.copy2(dll, destination)
+            copied.append(str(destination))
+
+    if external_dir:
+        prefix_external = bottle.root / "d3dmetal_external"
+        if prefix_external.exists():
+            shutil.rmtree(prefix_external)
+        shutil.copytree(external_dir, prefix_external, symlinks=True)
+        copied.append(str(prefix_external))
+
+    if unix_dir:
+        prefix_unix = bottle.root / "d3dmetal_unix"
+        if prefix_unix.exists():
+            shutil.rmtree(prefix_unix)
+        shutil.copytree(unix_dir, prefix_unix, symlinks=True)
+        copied.append(str(prefix_unix))
+
+    if not copied:
+        raise FileNotFoundError(f"No D3DMetal DLLs found under: {d3dmetal_root}")
+
+    clear_graphics_overrides(bottle)
+    tail_parts = ["\n".join(copied)]
+    if wine64_path is not None:
+        wineserver = _wineserver_path(wine64_path)
+        code, tail = run_logged(
+            cmd=[str(wineserver), "-k"],
+            env={"WINEPREFIX": str(bottle.prefix), "WINEDEBUG": "-all"},
+            log_file=bottle.logs / "d3dmetal_install.log",
+            timeout=20,
+        )
+        if tail:
+            tail_parts.append(tail)
+        if code not in (0, 1, 124):
+            return code, "\n".join(part for part in tail_parts if part)
+    return 0, "\n".join(part for part in tail_parts if part)

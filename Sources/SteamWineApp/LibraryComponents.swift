@@ -36,6 +36,7 @@ struct GameCard: View {
     let isBusy: Bool
     let isDragging: Bool
     let collection: GameCollection
+    let launchStatus: GameLaunchStatus?
     let steamCacheURL: URL?
     let onLaunch: () -> Void
     let isPinned: Bool
@@ -83,6 +84,13 @@ struct GameCard: View {
                                 foreground: collection.color
                             )
                         }
+                        if let launchStatus {
+                            Pill(
+                                text: launchStatus.phase.rawValue,
+                                tint: launchTint(for: launchStatus.phase),
+                                foreground: launchForeground(for: launchStatus.phase)
+                            )
+                        }
                     }
                     Spacer()
                     cardActionMenu
@@ -127,6 +135,32 @@ struct GameCard: View {
     private var themeMutedForeground: Color { colorScheme == .dark ? Color(hex: "#AEB7AF") : Color(hex: "#55635A") }
     private var themePrimary: Color { Color(hex: "#6DBB7A") }
     private var themeBorder: Color { colorScheme == .dark ? Color(hex: "#384139") : Color(hex: "#CCD8CC") }
+
+    private func launchTint(for phase: GameLaunchPhase) -> Color {
+        switch phase {
+        case .launching:
+            return Color(hex: "#D9B650").opacity(0.18)
+        case .running:
+            return Color(hex: "#6DBB7A").opacity(0.18)
+        case .exited:
+            return Color.secondary.opacity(0.14)
+        case .failed:
+            return Color(hex: "#D96C6C").opacity(0.18)
+        }
+    }
+
+    private func launchForeground(for phase: GameLaunchPhase) -> Color {
+        switch phase {
+        case .launching:
+            return Color(hex: "#D9B650")
+        case .running:
+            return Color(hex: "#6DBB7A")
+        case .exited:
+            return themeMutedForeground
+        case .failed:
+            return Color(hex: "#D96C6C")
+        }
+    }
 
     private var cardActionMenu: some View {
         Menu {

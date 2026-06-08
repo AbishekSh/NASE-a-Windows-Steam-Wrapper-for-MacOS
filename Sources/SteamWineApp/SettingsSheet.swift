@@ -10,6 +10,8 @@ struct SettingsSheet: View {
     @State private var winePath: String = ""
     @State private var dxmtSource: String = ""
     @State private var dxvkSource: String = ""
+    @State private var d3dMetalSource: String = ""
+    @State private var gptkWinePath: String = ""
     @State private var bottleName: String = ""
     @State private var externalPrefix: String = ""
     @State private var useExternalPrefix: Bool = false
@@ -25,7 +27,7 @@ struct SettingsSheet: View {
                         Spacer()
                     }
 
-                    Text("Choose the Wine runtime you want, point the launcher at DXMT and DXVK, and keep the bottle details tucked here instead of in the main library.")
+                    Text("Choose the Wine runtime you want, point the launcher at DXMT, DXVK, and D3DMetal, and keep the bottle details tucked here instead of in the main library.")
                         .foregroundStyle(.secondary)
 
                     VStack(alignment: .leading, spacing: 12) {
@@ -90,6 +92,16 @@ struct SettingsSheet: View {
                         labeledField("DXVK Source", text: $dxvkSource, browseAction: {
                             if let path = pickPath(canChooseFiles: true, canChooseDirectories: true) {
                                 dxvkSource = path
+                            }
+                        })
+                        labeledField("D3DMetal Source", text: $d3dMetalSource, browseAction: {
+                            if let path = pickPath(canChooseFiles: true, canChooseDirectories: true) {
+                                d3dMetalSource = path
+                            }
+                        })
+                        labeledField("GPTK Wine Path", text: $gptkWinePath, browseAction: {
+                            if let path = pickPath(canChooseFiles: true, canChooseDirectories: false) {
+                                gptkWinePath = path
                             }
                         })
                         VStack(alignment: .leading, spacing: 8) {
@@ -157,12 +169,16 @@ struct SettingsSheet: View {
                     )
                     + "\n"
                     + model.validateDXVKSourceForWizard(dxvkSource).joined(separator: "\n")
+                    + "\n"
+                    + model.validateD3DMetalSourceForWizard(d3dMetalSource).joined(separator: "\n")
                 }
                 Button("Save Settings") {
                     model.applySettings(
                         winePath: winePath,
                         dxmtSource: dxmtSource,
                         dxvkSource: dxvkSource,
+                        d3dMetalSource: d3dMetalSource,
+                        gptkWinePath: gptkWinePath,
                         bottleName: bottleName,
                         externalPrefix: externalPrefix,
                         useExternalPrefix: useExternalPrefix
@@ -180,6 +196,8 @@ struct SettingsSheet: View {
             winePath = model.backendContext.winePath
             dxmtSource = model.backendContext.dxmtSource
             dxvkSource = model.backendContext.dxvkSource
+            d3dMetalSource = model.backendContext.d3dMetalSource
+            gptkWinePath = model.backendContext.gptkWinePath
             bottleName = model.backendContext.bottleName
             externalPrefix = model.backendContext.externalPrefix ?? ""
             useExternalPrefix = !(model.backendContext.externalPrefix ?? "").isEmpty
@@ -269,7 +287,19 @@ struct SettingsSheet: View {
                 .font(.system(.footnote, design: .monospaced))
                 .foregroundStyle(themeMutedForeground)
                 .textSelection(.enabled)
+            Text("GPTK Wine: \(model.backendContext.gptkWinePath)")
+                .font(.system(.footnote, design: .monospaced))
+                .foregroundStyle(themeMutedForeground)
+                .textSelection(.enabled)
             Text("DXMT: \(model.backendContext.dxmtSource)")
+                .font(.system(.footnote, design: .monospaced))
+                .foregroundStyle(themeMutedForeground)
+                .textSelection(.enabled)
+            Text("DXVK: \(model.backendContext.dxvkSource)")
+                .font(.system(.footnote, design: .monospaced))
+                .foregroundStyle(themeMutedForeground)
+                .textSelection(.enabled)
+            Text("D3DMetal: \(model.backendContext.d3dMetalSource)")
                 .font(.system(.footnote, design: .monospaced))
                 .foregroundStyle(themeMutedForeground)
                 .textSelection(.enabled)

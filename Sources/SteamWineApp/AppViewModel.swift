@@ -16,6 +16,11 @@ private enum LibraryStorageKey {
     static let didCompleteInitialSetup = "library.didCompleteInitialSetup"
 }
 
+private enum MemoryLimit {
+    static let activityLogCharacters = 120_000
+    static let displayedLogBytes = 256 * 1024
+}
+
 private struct StoredLibraryItem: Codable {
     let title: String
     let runner: String
@@ -85,6 +90,7 @@ final class AppViewModel {
             || isActionRunning(.doctorFix)
             || isActionRunning(.installDXMT)
             || isActionRunning(.installDXVK)
+            || isActionRunning(.installD3DMetal)
     }
     var isShowingSettings: Bool = false
     var isShowingGameSettings: Bool = false
@@ -118,6 +124,7 @@ final class AppViewModel {
     private(set) var hiddenSteamAppIDs: [String] = []
     private(set) var sourceHealth: [RunnerKind: HealthStatus] = [.home: .healthy, .mac: .healthy, .steam: .unknown, .wine: .unknown]
     private(set) var gameSettingsByPinID: [String: StoredGameSettings] = [:]
+    private(set) var launchStatusByPinID: [String: GameLaunchStatus] = [:]
     fileprivate var steamMetadataByAppID: [String: SteamLocalMetadata] = [:]
     private var runningHealthChecks = Set<RunnerKind>()
 
@@ -135,6 +142,7 @@ final class AppViewModel {
         let names = contents.compactMap { url -> String? in
             let values = try? url.resourceValues(forKeys: [.isDirectoryKey])
             guard values?.isDirectory == true else { return nil }
+            guard !url.lastPathComponent.hasSuffix("-D3DMetal") else { return nil }
             return url.lastPathComponent
         }
 
@@ -172,6 +180,7 @@ final class AppViewModel {
                 OperationCard(kind: .setupMetal, title: "Finish Setup", detail: "Create the default bottle, install Steam, add DXMT, and open Steam.", symbolName: "hammer"),
                 OperationCard(kind: .doctor, title: "Inspect Environment", detail: "Check Wine, DXMT, Steam, and the current bottle when something feels off.", symbolName: "stethoscope"),
                 OperationCard(kind: .installDXMT, title: "Install DXMT", detail: "Reinstall DXMT into the current bottle or prefix from the configured DXMT source.", symbolName: "shippingbox.circle"),
+                OperationCard(kind: .installD3DMetal, title: "Install D3DMetal", detail: "Install a configured D3DMetal payload into the current bottle or prefix.", symbolName: "sparkle.magnifyingglass"),
                 OperationCard(kind: .winecfg, title: "Wine Configuration", detail: "Open winecfg for the current managed bottle or external prefix.", symbolName: "slider.horizontal.3"),
                 OperationCard(kind: .winetricks, title: "Winetricks", detail: "Install runtime components like corefonts, vcrun, or dotnet into the current target.", symbolName: "shippingbox"),
                 OperationCard(kind: .killWine, title: "Kill All Wine Processes", detail: "Force-stop Wine processes for the current bottle or prefix when something gets stuck.", symbolName: "xmark.circle"),
@@ -187,6 +196,7 @@ final class AppViewModel {
                 OperationCard(kind: .doctor, title: "Inspect Environment", detail: "Check the current Wine setup and collect a clean summary.", symbolName: "stethoscope"),
                 OperationCard(kind: .doctorFix, title: "Repair Environment", detail: "Apply safe DXMT and prefix repairs, then rerun checks.", symbolName: "cross.case"),
                 OperationCard(kind: .installDXMT, title: "Install DXMT", detail: "Reinstall DXMT into the current bottle or prefix from the configured DXMT source.", symbolName: "shippingbox.circle"),
+                OperationCard(kind: .installD3DMetal, title: "Install D3DMetal", detail: "Install a configured D3DMetal payload into the current bottle or prefix.", symbolName: "sparkle.magnifyingglass"),
                 OperationCard(kind: .winecfg, title: "Wine Configuration", detail: "Open winecfg for the current managed bottle or external prefix.", symbolName: "slider.horizontal.3"),
                 OperationCard(kind: .winetricks, title: "Winetricks", detail: "Install runtime components like corefonts, vcrun, or dotnet into the current target.", symbolName: "shippingbox"),
                 OperationCard(kind: .killWine, title: "Kill All Wine Processes", detail: "Force-stop Wine processes for the current bottle or prefix when something gets stuck.", symbolName: "xmark.circle"),
@@ -304,6 +314,14 @@ final class AppViewModel {
         }
     }
 
+    func launchStatus(for game: LibraryGame) -> GameLaunchStatus? {
+        launchStatusByPinID[game.pinID]
+    }
+
+    func clearLaunchStatus(for game: LibraryGame) {
+        launchStatusByPinID.removeValue(forKey: game.pinID)
+    }
+
     func selectRunner(_ runner: RunnerKind) {
         selectedRunner = runner
         selectedGame = filteredGames.first
@@ -369,6 +387,8 @@ final class AppViewModel {
             winePath: runtime.executablePath,
             dxmtSource: backendContext.dxmtSource,
             dxvkSource: backendContext.dxvkSource,
+            d3dMetalSource: backendContext.d3dMetalSource,
+            gptkWinePath: backendContext.gptkWinePath,
             bottleName: backendContext.bottleName,
             externalPrefix: backendContext.externalPrefix
         )
@@ -535,6 +555,10 @@ final class AppViewModel {
         validateDXVKSource(path.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
+    func validateD3DMetalSourceForWizard(_ path: String) -> [String] {
+        validateD3DMetalSource(path.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
     func runSetupWizard(winePath: String, dxmtSource: String, dxvkSource: String, bottleName: String) {
         applySettings(
             winePath: winePath,
@@ -682,7 +706,8 @@ final class AppViewModel {
                 wineDebug: "-all"
             ),
             successMessage: "Opened installer \(url.lastPathComponent).",
-            context: backendContext
+            context: backendContext,
+            game: installerGame
         )
 
         let alert = NSAlert()
@@ -860,10 +885,18 @@ final class AppViewModel {
         case .mac:
             guard let url = game.launchURL else {
                 rightPanelMessage = "No launch target is set for \(game.title)."
+                setLaunchStatus(.failed, for: game, message: "No launch target is set.")
                 return
             }
+            setLaunchStatus(.launching, for: game, message: "Opening macOS app...")
             let opened = NSWorkspace.shared.open(url)
-            rightPanelMessage = opened ? "Opened \(game.title)." : "Could not open \(game.title)."
+            if opened {
+                setLaunchStatus(.running, for: game, message: "Opened by macOS.")
+                rightPanelMessage = "Opened \(game.title)."
+            } else {
+                setLaunchStatus(.failed, for: game, message: "macOS could not open this app.")
+                rightPanelMessage = "Could not open \(game.title)."
+            }
             appendLog("== Launch ==\nmacOS app\n\(url.path)")
         case .wine:
             launchWineGame(game)
@@ -896,11 +929,13 @@ final class AppViewModel {
                     environment: env
                 ),
                 successMessage: "Debug launch started for \(game.title).",
-                context: context
+                context: context,
+                game: game
             )
         case .wine:
             guard let executable = resolvedLaunchURL(for: game) else {
                 rightPanelMessage = "Set a launch executable for \(game.title) first."
+                setLaunchStatus(.failed, for: game, message: "No launch executable is set.")
                 editingGamePinID = game.pinID
                 isShowingGameSettings = true
                 return
@@ -914,7 +949,8 @@ final class AppViewModel {
                     environment: env
                 ),
                 successMessage: "Debug launch started for \(game.title).",
-                context: context
+                context: context,
+                game: game
             )
         case .mac, .home, .epic, .gog:
             break
@@ -936,7 +972,7 @@ final class AppViewModel {
             .filter { FileManager.default.fileExists(atPath: $0.path) }
 
         let entries = logFiles.compactMap { url -> DisplayedLogEntry? in
-            guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+            guard let text = Self.readTailText(from: url, maxBytes: MemoryLimit.displayedLogBytes) else { return nil }
             return DisplayedLogEntry(id: url.lastPathComponent, title: url.lastPathComponent, text: text)
         }
 
@@ -966,6 +1002,8 @@ final class AppViewModel {
             action = .doctorFix
         case .installDXMT:
             action = .installDXMT
+        case .installD3DMetal:
+            action = .installD3DMetal
         case .winetricks:
             openWinetricks()
             return
@@ -994,24 +1032,25 @@ final class AppViewModel {
             refreshSteamGames(announce: true)
             return
         case .launchSelectedGame:
-            guard let appid = selectedGame?.backendID, !appid.isEmpty else {
+            guard let selectedGame, selectedGame.backendID?.isEmpty == false else {
                 rightPanelMessage = "Select a Steam game first."
                 return
             }
-            executeDetached(
-                .launchGame(appid: appid),
-                successMessage: "Launched selected Steam title.",
-                context: backendContext
-            )
+            launchSteamGame(selectedGame)
             return
         }
 
         guard !isActionRunning(action) else { return }
 
-        rightPanelMessage = "Running \(operation.title)..."
-        appendLog("== \(operation.title) ==\n\(BackendBridge.preview(action, context: backendContext))")
+        let context: BackendContext = switch action {
+        case .installD3DMetal:
+            backendContext.compatibilityContext(for: .d3dmetal)
+        default:
+            backendContext
+        }
 
-        let context = backendContext
+        rightPanelMessage = "Running \(operation.title)..."
+        appendLog("== \(operation.title) ==\n\(BackendBridge.preview(action, context: context))")
         let activeJobID = beginBackendJob(for: action, message: "Running \(operation.title)...")
         Task.detached(priority: .userInitiated) {
             do {
@@ -1090,11 +1129,25 @@ final class AppViewModel {
     }
 
     func applySettings(winePath: String, dxmtSource: String, dxvkSource: String, bottleName: String, externalPrefix: String?, useExternalPrefix: Bool) {
+        applySettings(
+            winePath: winePath,
+            dxmtSource: dxmtSource,
+            dxvkSource: dxvkSource,
+            d3dMetalSource: backendContext.d3dMetalSource,
+            bottleName: bottleName,
+            externalPrefix: externalPrefix,
+            useExternalPrefix: useExternalPrefix
+        )
+    }
+
+    func applySettings(winePath: String, dxmtSource: String, dxvkSource: String, d3dMetalSource: String, gptkWinePath: String? = nil, bottleName: String, externalPrefix: String?, useExternalPrefix: Bool) {
         let cleanedBottle = bottleName.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanedPrefix = (externalPrefix ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanedWine = winePath.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanedDXMT = dxmtSource.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanedDXVK = dxvkSource.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanedD3DMetal = d3dMetalSource.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanedGPTKWine = (gptkWinePath ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
 
         backendContext = BackendContext(
             repoRoot: backendContext.repoRoot,
@@ -1102,6 +1155,8 @@ final class AppViewModel {
             winePath: cleanedWine.isEmpty ? backendContext.winePath : cleanedWine,
             dxmtSource: cleanedDXMT.isEmpty ? backendContext.dxmtSource : cleanedDXMT,
             dxvkSource: cleanedDXVK.isEmpty ? backendContext.dxvkSource : cleanedDXVK,
+            d3dMetalSource: cleanedD3DMetal.isEmpty ? backendContext.d3dMetalSource : cleanedD3DMetal,
+            gptkWinePath: cleanedGPTKWine.isEmpty ? backendContext.gptkWinePath : cleanedGPTKWine,
             bottleName: cleanedBottle.isEmpty ? "Default" : cleanedBottle,
             externalPrefix: useExternalPrefix ? cleanedPrefix : nil
         )
@@ -1111,7 +1166,7 @@ final class AppViewModel {
         selectedGame = nil
 
         rightPanelMessage = "Backend settings updated. \(settingsSummary)"
-        appendLog("Settings updated.\nWine: \(backendContext.winePath)\nDXMT: \(backendContext.dxmtSource)\nDXVK: \(backendContext.dxvkSource)\nTarget: \(settingsSummary)")
+        appendLog("Settings updated.\nWine: \(backendContext.winePath)\nGPTK Wine: \(backendContext.gptkWinePath)\nDXMT: \(backendContext.dxmtSource)\nDXVK: \(backendContext.dxvkSource)\nD3DMetal: \(backendContext.d3dMetalSource)\nTarget: \(settingsSummary)")
     }
 
     func initialLoad() {
@@ -1282,6 +1337,57 @@ final class AppViewModel {
         return results
     }
 
+    private func validateD3DMetalSource(_ path: String) -> [String] {
+        guard !path.isEmpty else {
+            return ["FAIL: D3DMetal source path is empty"]
+        }
+
+        let sourceURL = URL(fileURLWithPath: path)
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: sourceURL.path) else {
+            return ["FAIL: D3DMetal source does not exist"]
+        }
+
+        var results = ["OK: D3DMetal source exists"]
+        if sourceURL.pathExtension == "gz" {
+            results.append("OK: D3DMetal source is a .tar.gz archive")
+            return results
+        }
+
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: sourceURL.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            results.append("FAIL: D3DMetal source is not a directory or .tar.gz archive")
+            return results
+        }
+
+        let directCandidates = [
+            sourceURL.appendingPathComponent("wine/x86_64-windows/d3d11.dll").path,
+            sourceURL.appendingPathComponent("x86_64-windows/d3d11.dll").path,
+            sourceURL.appendingPathComponent("x64/d3d11.dll").path,
+            sourceURL.appendingPathComponent("redist/lib/wine/x86_64-windows/d3d11.dll").path,
+            sourceURL.appendingPathComponent("lib64/wine/x86_64-windows/d3d11.dll").path,
+            sourceURL.appendingPathComponent("lib/wine/x86_64-windows/d3d11.dll").path,
+        ]
+
+        var foundRecursivePayload = false
+        if let enumerator = fileManager.enumerator(at: sourceURL, includingPropertiesForKeys: nil) {
+            while let item = enumerator.nextObject() as? URL {
+                if item.lastPathComponent.lowercased() == "d3d11.dll" {
+                    foundRecursivePayload = true
+                    break
+                }
+            }
+        }
+
+        if directCandidates.contains(where: fileManager.fileExists(atPath:)) || foundRecursivePayload {
+            results.append("OK: D3DMetal payload looks valid")
+        } else {
+            results.append("FAIL: D3DMetal source is missing the Wine d3d11.dll payload")
+        }
+
+        return results
+    }
+
     private var sourceGames: [LibraryGame] {
         switch selectedRunner ?? .home {
         case .home:
@@ -1304,10 +1410,34 @@ final class AppViewModel {
     }
 
     private func appendLog(_ message: String) {
+        let trimmedMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
         if activityLog.isEmpty {
-            activityLog = message
+            activityLog = trimmedMessage
         } else {
-            activityLog += "\n\n" + message.trimmingCharacters(in: .whitespacesAndNewlines)
+            activityLog += "\n\n" + trimmedMessage
+        }
+
+        if activityLog.count > MemoryLimit.activityLogCharacters {
+            let suffix = activityLog.suffix(MemoryLimit.activityLogCharacters)
+            activityLog = "[Older activity output trimmed]\n\n" + suffix
+        }
+    }
+
+    private static func readTailText(from url: URL, maxBytes: Int) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer {
+            try? handle.close()
+        }
+
+        let fileSize = (try? handle.seekToEnd()) ?? 0
+        let bytesToRead = min(UInt64(maxBytes), fileSize)
+        do {
+            try handle.seek(toOffset: fileSize - bytesToRead)
+            let data = try handle.readToEnd() ?? Data()
+            let prefix = fileSize > bytesToRead ? "[Showing last \(maxBytes / 1024) KB]\n\n" : ""
+            return prefix + (String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self))
+        } catch {
+            return nil
         }
     }
 
@@ -1865,6 +1995,8 @@ final class AppViewModel {
             return "Install DXMT"
         case .installDXVK:
             return "Install DXVK"
+        case .installD3DMetal:
+            return "Install D3DMetal"
         case .openWinecfg:
             return "Wine Configuration"
         case .killWine:
@@ -1898,6 +2030,8 @@ final class AppViewModel {
             return "Installed DXMT."
         case .installDXVK:
             return "Installed DXVK."
+        case .installD3DMetal:
+            return "Installed D3DMetal."
         case .openWinecfg:
             return "winecfg exited."
         case .killWine:
@@ -1939,7 +2073,8 @@ final class AppViewModel {
                         wineDebug: "-all"
                     ),
                     successMessage: "Launched \(game.title).",
-                    context: context
+                    context: context,
+                    game: game
                 )
             } else {
                 executeDetached(
@@ -1952,7 +2087,8 @@ final class AppViewModel {
                         wineDebug: "-all"
                     ),
                     successMessage: "Launched \(game.title).",
-                    context: context
+                    context: context,
+                    game: game
                 )
             }
             return
@@ -1961,7 +2097,8 @@ final class AppViewModel {
         executeDetached(
             .smartLaunchGame(appid: appid, graphicsBackend: settings.graphicsBackend),
             successMessage: "Launched \(game.title).",
-            context: context
+            context: context,
+            game: game
         )
     }
 
@@ -1979,13 +2116,24 @@ final class AppViewModel {
         return backendContext.overridingTarget(
             bottleName: settings.assignedBottleName,
             externalPrefix: settings.assignedExternalPrefix
+        ).compatibilityContext(for: settings.graphicsBackend)
+    }
+
+    private func setLaunchStatus(_ phase: GameLaunchPhase, for game: LibraryGame, message: String) {
+        launchStatusByPinID[game.pinID] = GameLaunchStatus(
+            phase: phase,
+            message: message,
+            updatedAt: Date()
         )
     }
 
-    private func executeDetached(_ action: BackendAction, successMessage: String, context: BackendContext) {
+    private func executeDetached(_ action: BackendAction, successMessage: String, context: BackendContext, game: LibraryGame? = nil) {
         let preview = BackendBridge.preview(action, context: context)
         appendLog("== Action ==\n\(preview)")
         rightPanelMessage = "Launching..."
+        if let game {
+            setLaunchStatus(.launching, for: game, message: "Sending launch request...")
+        }
         let activeJobID = beginBackendJob(for: action)
 
         Task.detached(priority: .userInitiated) {
@@ -2007,6 +2155,9 @@ final class AppViewModel {
                     }
                     self.appendLog(response.output)
                     self.rightPanelMessage = response.job?.message ?? successMessage
+                    if let game {
+                        self.setLaunchStatus(.running, for: game, message: successMessage)
+                    }
                 }
             } catch {
                 await MainActor.run {
@@ -2017,6 +2168,9 @@ final class AppViewModel {
                     let fullError = error.localizedDescription
                     self.appendLog("Command failed:\n\(fullError)")
                     self.rightPanelMessage = "Action failed."
+                    if let game {
+                        self.setLaunchStatus(.failed, for: game, message: self.launchFailureSummary(from: fullError))
+                    }
                     if self.shouldPresentFailureAlert(for: action) {
                         let alert = NSAlert()
                         alert.messageText = "Action failed"
@@ -2097,7 +2251,8 @@ final class AppViewModel {
                 wineDebug: "-all"
             ),
             successMessage: game.status.localizedCaseInsensitiveContains("installer") ? "Opened installer \(game.title)." : "Launched \(game.title).",
-            context: context
+            context: context,
+            game: game
         )
     }
 
@@ -2444,12 +2599,14 @@ final class AppViewModel {
             "d3d11=n;dxgi=n;d3d10core=n;d3d9=n"
         case .dxmt:
             "dxgi=n,b;d3d11=n,b;d3d10core=n,b;winemetal=n,b"
+        case .d3dmetal:
+            "dxgi=n,b;d3d11=n,b;d3d12=n,b;atidxx64=n,b;nvapi64=n,b;nvngx=n,b"
         case .none:
             nil
         }
 
         let warnings = parseEnvironmentOverrides(environmentText)
-            .filter { $0.uppercased().hasPrefix("WINEDLLOVERRIDES=") || $0.uppercased().hasPrefix("DXVK_") || $0.uppercased().hasPrefix("MESA_") }
+            .filter { $0.uppercased().hasPrefix("WINEDLLOVERRIDES=") || $0.uppercased().hasPrefix("DXVK_") || $0.uppercased().hasPrefix("D3DMETAL_") || $0.uppercased().hasPrefix("MESA_") }
 
         let targetLabel: String
         if let externalPrefix = context.externalPrefix, !externalPrefix.isEmpty {

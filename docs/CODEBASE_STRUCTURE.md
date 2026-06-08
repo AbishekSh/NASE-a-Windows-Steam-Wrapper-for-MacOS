@@ -1,0 +1,202 @@
+# SteamWineWrapper Codebase Structure
+
+This document describes the current repository organization and the boundaries that should stay clear as the app evolves.
+
+## Product Shape
+
+SteamWineWrapper is currently split into two layers:
+
+- `Sources/SteamWineApp/`: the native SwiftUI macOS product.
+- `mysteamwine/` plus `mysteamwine.py`: the Python backend that manages Wine, bottles, Steam, graphics layers, scanning, and diagnostics.
+
+The SwiftUI app is the user-facing product. The Python backend is the implementation engine. The app/backend contract is moving toward structured JSON/JSONL so the UI can react to real state instead of parsing human terminal output.
+
+## Top-Level Files
+
+- `Package.swift`: Swift Package manifest for the macOS app target.
+- `README.md`: user-facing setup and command overview.
+- `AGENTS.md`: project intent, architecture direction, and operating constraints for AI-assisted development.
+- `assets/`: source app icons and logo assets.
+- `Sources/SteamWineApp/Resources/`: app-bundled image resources.
+- `mysteamwine.py`: thin Python entrypoint that calls `mysteamwine.cli.main()`.
+
+## SwiftUI App
+
+The SwiftUI layer owns library UX, app state, settings, sheets, and backend command orchestration. It should not grow Wine-specific process logic directly; that belongs in Python unless there is a clear reason to move it.
+
+### Entry And Shell
+
+- `SteamWineApp.swift`: app entrypoint.
+- `ContentView.swift`: main window layout, sidebar, toolbar, library surface, and high-level sheet presentation.
+- `SharedViews.swift`: small reusable SwiftUI pieces.
+- `LibraryComponents.swift`: reusable library grid/list/detail components.
+
+### State And Domain Models
+
+- `Models.swift`: shared Swift enums and value types:
+  - runners and sources: `RunnerKind`, `LibrarySourceFilter`
+  - graphics selection: `GraphicsBackendOption`
+  - library metadata: `LibraryGame`, `GameCollection`
+  - backend result summaries: `BackendJob`, `BackendStructuredResult`, `BackendStreamUpdate`
+  - launch status and health state
+- `AppViewModel.swift`: primary observable state container. It owns:
+  - selected source/game/search/filter/sort state
+  - native, Steam, Wine, and pinned library arrays
+  - per-game settings and launch status
+  - backend job tracking and structured result history
+  - settings validation and persistence
+  - library import, refresh, launch, debug launch, log viewing, and health refresh orchestration
+
+`AppViewModel.swift` is currently the largest file and is the main pressure point. Future work should move cohesive domains out only when the new file has a clear boundary, for example:
+
+- `LibraryStore`: load/persist/import library items and pin/order state.
+- `LaunchCoordinator`: Steam/Wine/macOS launch decisions and launch status.
+- `HealthCoordinator`: background doctor checks and source health.
+- `RuntimeStore`: Wine runtime detection/import/persistence.
+
+Do not split it just for file size; split when it lowers coupling.
+
+### Backend Bridge
+
+- `BackendBridge.swift`: the Swift/Python boundary.
+  - `BackendContext` stores paths and target selection.
+  - `BackendAction` enumerates commands the UI can ask Python to run.
+  - `BackendBridge.arguments(...)` maps Swift actions to `mysteamwine.py` CLI arguments.
+  - `executeStreaming(...)` runs Python via `/usr/bin/env`, consumes JSONL, and emits `BackendStreamUpdate` values.
+
+The bridge should remain the only place that knows the exact CLI argument shape. UI files should ask for actions, not assemble command arrays.
+
+### Sheets
+
+- `SettingsSheet.swift`: backend paths, bottle/prefix selection, runtime status, job history, doctor/setup summaries.
+- `SetupWizardSheet.swift`: guided first-run setup.
+- `WinetricksSheet.swift`: Winetricks UI.
+- `GameSheets.swift`: game details, settings, logs, metadata, and per-game controls.
+
+## Python Backend
+
+The backend is a CLI-first engine. It should remain usable from Terminal while also supporting structured output for the SwiftUI app.
+
+### CLI And Contract
+
+- `mysteamwine/cli.py`: command parser and command handlers.
+  - Global target selection: `--bottle` or `--prefix`.
+  - Global runtime selection: `--wine` / related Wine path flags.
+  - Structured modes: `--json` and `--jsonl`.
+  - Job events: start, step, progress, result.
+  - Commands include setup, doctor, Steam launch, game launch, direct debug launch, Winetricks, graphics installers, scanning, and advice.
+
+The CLI is the compatibility contract. Existing commands should keep working even when the app gains richer structured behavior.
+
+### Runtime And Bottles
+
+- `runtime.py`: executable resolution, Wine runtime detection, process execution, detached process spawning, downloads, and sanitized Metal-related environment handling.
+- `bottle.py`: managed and external-prefix path model.
+  - Managed bottles live under `~/Library/Application Support/MySteamWine/bottles/<name>/`.
+  - External prefixes get app-managed logs/download/cache folders under `external-prefixes/<hash>/` while preserving the external prefix path itself.
+
+### Steam And Launching
+
+- `steam.py`: Steam installer/runner, Wine launch environment, game launch helpers, direct executable launch, VDF parsing, `libraryfolders.vdf` discovery, and `appmanifest_*.acf` game listing.
+  - `run_steam(...)` launches Windows Steam in the bottle.
+  - `launch_app(...)` launches through Steam with `-applaunch`.
+  - `run_game_executable(...)` launches a chosen `.exe` directly with Wine.
+  - `list_installed_apps(...)` detects installed Steam games from manifests.
+
+Current Steam launch modes are:
+
+- `run-steam`: open Windows Steam with plain Wine by default.
+- `launch-game`: launch a Steam AppID through Windows Steam.
+- `smart-launch-game`: try direct executable launch first, then fall back to Steam.
+- `debug-game`: direct executable launch with richer debug logging and overrides.
+
+### Graphics Installers
+
+- `dxmt.py`: DXMT install and registry override management.
+- `dxvk.py`: DXVK install from upstream or DXVK-macOS layouts.
+- `d3dmetal.py`: D3DMetal payload install and overrides.
+
+Graphics-specific modules should own file layout detection, copying, and registry override edits. Launch modules should only choose the graphics backend and pass launch environment values.
+
+### Health, Dependencies, And Advice
+
+- `doctor.py`: environment and prefix checks plus safe repairs.
+- `winetricks.py`: Winetricks invocation.
+- `scanner.py`: local game folder signal detection.
+- `advisor.py`: rule-based dependency recommendations from scanner signals.
+
+### Secondary UI
+
+- `webui.py`: simple local browser frontend. This predates the richer SwiftUI product but remains useful for quick manual operation and backend debugging.
+- `gui.py`: thin GUI/browser launcher glue.
+
+## Current Data Flow
+
+### Setup Flow
+
+1. SwiftUI calls `BackendBridge.executeStreaming(.setupMetal, context: ...)`.
+2. The bridge runs `python3 mysteamwine.py ... --jsonl setup-metal --dxmt-source ... --no-wait`.
+3. `cli.py` emits JSONL job/step/result events.
+4. Python creates or reuses the bottle, runs Wine setup, installs Steam via Winetricks, installs DXMT, and opens Steam.
+5. SwiftUI merges structured steps into the setup result and updates active/recent jobs.
+
+### Steam Library Refresh
+
+1. SwiftUI calls `.listGames`.
+2. Python reads Steam `libraryfolders.vdf` and `appmanifest_*.acf` files under the selected prefix.
+3. Python returns `data.games`.
+4. Swift maps those games into `LibraryGame` values and enriches them with local Steam metadata when available.
+
+### Launch Flow
+
+1. SwiftUI chooses macOS, Wine, or Steam launch behavior based on `LibraryGame.runner`.
+2. Steam games use per-game settings to choose either:
+   - `smart-launch-game` for direct executable launch attempts, or
+   - `launch-game` through Windows Steam.
+3. Wine games use `debug-game --exe`.
+4. Python writes logs to the selected bottle/external-prefix log folder.
+5. SwiftUI shows bounded log tails in the log viewer.
+
+## Organization Assessment
+
+The current structure is healthy enough for the next feature phase:
+
+- Python backend responsibilities are separated by domain.
+- Swift/Python communication is centralized in `BackendBridge`.
+- Managed bottle and external-prefix paths have a single source of truth in Python and a matching path model in Swift.
+- Structured JSON/JSONL already exists and should be extended instead of replaced.
+
+The largest organization risk is `AppViewModel.swift`; it currently mixes library persistence, backend orchestration, runtime detection, launch policy, health checks, and log viewing. That is acceptable for early iteration, but any hidden-Steam work should avoid adding large protocol/auth/shim state there.
+
+## Where Hidden Windows Steam Fits
+
+The cleaner Steam experience should be introduced as backend capabilities with small Swift controls:
+
+1. Add a `SteamLaunchMode` setting in Swift:
+   - `throughSteam`
+   - `directIfSafe`
+   - later: `steamShimExperimental`
+2. Keep direct executable detection and launch in Python.
+3. Add any Steam protocol/depot/cloud helper as a separate backend module or helper process, not inside SwiftUI.
+4. Keep the first version conservative:
+   - direct launch installed games
+   - fallback to Windows Steam
+   - clear UI status when a game appears to require Steam
+5. Treat Steam API shim work as a later experimental backend subsystem with explicit docs, restore paths, and per-game opt-in.
+
+Recommended future Python modules if this grows:
+
+- `steam_metadata.py`: appinfo, launch config, manifest/depot metadata.
+- `steam_direct.py`: direct launch eligibility and executable selection.
+- `steam_protocol.py`: Steam login/session/depot helper integration.
+- `steam_cloud.py`: cloud save pull/push lifecycle.
+- `steam_shim.py`: Steam API shim preparation, config generation, backup/restore.
+
+## Development Rules Of Thumb
+
+- Keep `mysteamwine.py` terminal workflows working.
+- Prefer adding structured JSON fields over parsing new human text in Swift.
+- Keep Wine process execution in `runtime.py`.
+- Keep per-graphics file and override logic in the graphics modules.
+- Keep launch policy explicit: direct launch, Steam launch, and future shim launch should be distinct modes.
+- Add safety rails before mutating installed game folders, especially for any future Steam API DLL replacement or shim experiment.

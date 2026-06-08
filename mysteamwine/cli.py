@@ -9,6 +9,7 @@ from pathlib import Path
 from . import APP_NAME, DEFAULT_BOTTLE_NAME
 from .advisor import recommend_dependencies
 from .bottle import app_support_root, bottle_paths, ensure_bottle_dirs, external_prefix_paths, wipe_all_bottles
+from .d3dmetal import install_d3dmetal
 from .doctor import apply_doctor_fixes, run_doctor, set_prefix_windows_version
 from .dxmt import install_dxmt
 from .dxvk import install_dxvk
@@ -478,6 +479,18 @@ def cmd_install_dxmt(args: argparse.Namespace) -> None:
         raise SystemExit(f"DXMT install failed (exit {code}). Tail:\n{tail}")
 
 
+def cmd_install_d3dmetal(args: argparse.Namespace) -> None:
+    bottle = _resolve_bottle(args)
+    wine64 = _require_wine64(args)
+    code, tail = install_d3dmetal(
+        bottle=bottle,
+        d3dmetal_source=Path(args.d3dmetal_source),
+        wine64_path=wine64,
+    )
+    if code != 0:
+        raise SystemExit(f"D3DMetal install failed (exit {code}). Tail:\n{tail}")
+
+
 def cmd_setup_metal(args: argparse.Namespace) -> None:
     wine64 = _require_wine64(args)
     bottle = _resolve_bottle(args)
@@ -916,6 +929,25 @@ def cmd_launch_game(args: argparse.Namespace) -> None:
                 )
                 raise SystemExit(code)
             _json_error(args, action="launch-game", message=f"DXMT restore failed (exit {code}). Tail:\n{tail}", code=code)
+    elif graphics_backend == "d3dmetal" and args.d3dmetal_source:
+        code, tail = install_d3dmetal(
+            bottle=bottle,
+            d3dmetal_source=Path(args.d3dmetal_source),
+            wine64_path=wine64,
+        )
+        if code != 0:
+            if _stream_enabled(args):
+                _stream_result(
+                    action="launch-game",
+                    job_id=job_id or uuid.uuid4().hex,
+                    ok=False,
+                    status="failed",
+                    message=f"D3DMetal restore failed (exit {code}). Tail:\n{tail}",
+                    data={"appid": app.appid, "name": app.name, "tail": tail},
+                    errors=[f"D3DMetal restore failed (exit {code})."],
+                )
+                raise SystemExit(code)
+            _json_error(args, action="launch-game", message=f"D3DMetal restore failed (exit {code}). Tail:\n{tail}", code=code)
     code, tail = launch_app(
         bottle=bottle,
         wine64_path=wine64,
@@ -962,9 +994,67 @@ def cmd_launch_game(args: argparse.Namespace) -> None:
 def cmd_smart_launch_game(args: argparse.Namespace) -> None:
     wine64 = _require_wine64(args)
     bottle = _resolve_bottle(args)
-    app = find_app(bottle, args.appid)
     graphics_backend = _resolved_graphics_backend(args, for_steam=False)
-    job_id = _stream_start(action="smart-launch-game", message=f"Launching {app.name} ({app.appid})...") if _stream_enabled(args) else None
+    try:
+        app = find_app(bottle, args.appid)
+    except FileNotFoundError:
+        if graphics_backend != "d3dmetal":
+            raise
+        app = None
+    app_name = app.name if app else f"Steam App {args.appid}"
+    job_id = _stream_start(action="smart-launch-game", message=f"Launching {app_name} ({args.appid})...") if _stream_enabled(args) else None
+
+    if graphics_backend == "d3dmetal":
+        steam_exe = bottle.drive_c / "Program Files (x86)" / "Steam" / "Steam.exe"
+        if not steam_exe.exists():
+            if _stream_enabled(args):
+                _stream_step(
+                    action="smart-launch-game",
+                    job_id=job_id or uuid.uuid4().hex,
+                    name="setup-d3dmetal-steam",
+                    status="started",
+                    message="Preparing hidden D3DMetal Steam environment...",
+                )
+            setup_steps = (
+                ("wineboot", lambda: run_logged(
+                    cmd=[str(wine64), "wineboot", "-u"],
+                    env={"WINEPREFIX": str(bottle.prefix), "WINEDEBUG": "-all"},
+                    log_file=bottle.logs / "01_wineboot_d3dmetal.log",
+                    timeout=60,
+                )),
+                ("set-win10", lambda: set_prefix_windows_version(bottle, wine64, "win10")),
+                ("winetricks-steam", lambda: run_winetricks(
+                    bottle=bottle,
+                    winetricks_path=resolve_executable(getattr(args, "winetricks", "winetricks"), "winetricks"),
+                    verbs=["steam"],
+                    log_name="02_winetricks_steam_d3dmetal.log",
+                    unattended=True,
+                )),
+            )
+            for step_name, step in setup_steps:
+                code, tail = step()
+                if code != 0:
+                    message = f"D3DMetal environment setup failed at {step_name} (exit {code}). Tail:\n{tail}"
+                    if _stream_enabled(args):
+                        _stream_result(
+                            action="smart-launch-game",
+                            job_id=job_id or uuid.uuid4().hex,
+                            ok=False,
+                            status="failed",
+                            message=message,
+                            data={"appid": args.appid, "name": app_name, "tail": tail},
+                            errors=[message],
+                        )
+                        raise SystemExit(code)
+                    _json_error(args, action="smart-launch-game", message=message, code=code)
+            if _stream_enabled(args):
+                _stream_step(
+                    action="smart-launch-game",
+                    job_id=job_id or uuid.uuid4().hex,
+                    name="setup-d3dmetal-steam",
+                    status="ok",
+                    message="Prepared hidden D3DMetal Steam environment.",
+                )
 
     if graphics_backend == "dxmt" and args.dxmt_source:
         code, tail = install_dxmt(
@@ -980,7 +1070,7 @@ def cmd_smart_launch_game(args: argparse.Namespace) -> None:
                     ok=False,
                     status="failed",
                     message=f"DXMT restore failed (exit {code}). Tail:\n{tail}",
-                    data={"appid": app.appid, "name": app.name, "tail": tail},
+                    data={"appid": args.appid, "name": app_name, "tail": tail},
                     errors=[f"DXMT restore failed (exit {code})."],
                 )
                 raise SystemExit(code)
@@ -989,7 +1079,6 @@ def cmd_smart_launch_game(args: argparse.Namespace) -> None:
         code, tail = install_dxvk(
             bottle=bottle,
             dxvk_source=Path(args.dxvk_source),
-            wine64_path=wine64,
         )
         if code != 0:
             if _stream_enabled(args):
@@ -999,18 +1088,40 @@ def cmd_smart_launch_game(args: argparse.Namespace) -> None:
                     ok=False,
                     status="failed",
                     message=f"DXVK restore failed (exit {code}). Tail:\n{tail}",
-                    data={"appid": app.appid, "name": app.name, "tail": tail},
+                    data={"appid": args.appid, "name": app_name, "tail": tail},
                     errors=[f"DXVK restore failed (exit {code})."],
                 )
                 raise SystemExit(code)
             _json_error(args, action="smart-launch-game", message=f"DXVK restore failed (exit {code}). Tail:\n{tail}", code=code)
+    elif graphics_backend == "d3dmetal" and args.d3dmetal_source:
+        code, tail = install_d3dmetal(
+            bottle=bottle,
+            d3dmetal_source=Path(args.d3dmetal_source),
+            wine64_path=wine64,
+        )
+        if code != 0:
+            if _stream_enabled(args):
+                _stream_result(
+                    action="smart-launch-game",
+                    job_id=job_id or uuid.uuid4().hex,
+                    ok=False,
+                    status="failed",
+                    message=f"D3DMetal restore failed (exit {code}). Tail:\n{tail}",
+                    data={"appid": args.appid, "name": app_name, "tail": tail},
+                    errors=[f"D3DMetal restore failed (exit {code})."],
+                )
+                raise SystemExit(code)
+            _json_error(args, action="smart-launch-game", message=f"D3DMetal restore failed (exit {code}). Tail:\n{tail}", code=code)
 
     direct_error: str | None = None
     skip_direct_reason: str | None = None
     try:
-        scan = scan_game_dir(app.install_dir, max_files=1200)
-        if any(signal.key == "unity" for signal in scan.signals):
-            skip_direct_reason = "Skipped direct launch for Unity title; using Steam launch for better renderer compatibility."
+        if app is None:
+            skip_direct_reason = "No manifest found in the hidden D3DMetal environment yet; using Steam protocol launch."
+        else:
+            scan = scan_game_dir(app.install_dir, max_files=1200)
+            if any(signal.key == "unity" for signal in scan.signals):
+                skip_direct_reason = "Skipped direct launch for Unity title; using Steam launch for better renderer compatibility."
     except Exception:
         scan = None
 
@@ -1032,8 +1143,8 @@ def cmd_smart_launch_game(args: argparse.Namespace) -> None:
             if code == 0:
                 message = "Direct launch started."
                 data = {
-                    "appid": app.appid,
-                    "name": app.name,
+                    "appid": args.appid,
+                    "name": app_name,
                     "executable": str(executable),
                     "strategy": "direct",
                     "tail": tail,
@@ -1082,7 +1193,7 @@ def cmd_smart_launch_game(args: argparse.Namespace) -> None:
                 ok=False,
                 status="failed",
                 message=combined,
-                data={"appid": app.appid, "name": app.name, "tail": tail, "strategy": "steam-fallback"},
+                data={"appid": args.appid, "name": app_name, "tail": tail, "strategy": "steam-fallback"},
                 errors=[failure],
             )
             raise SystemExit(code)
@@ -1090,8 +1201,8 @@ def cmd_smart_launch_game(args: argparse.Namespace) -> None:
 
     message = "Opened with Steam after direct launch failed."
     data = {
-        "appid": app.appid,
-        "name": app.name,
+        "appid": args.appid,
+        "name": app_name,
         "strategy": "steam-fallback",
         "tail": tail,
         "warnings": [direct_error] if direct_error else [],
@@ -1173,6 +1284,43 @@ def cmd_debug_game(args: argparse.Namespace) -> None:
                 )
                 raise SystemExit(code)
             _json_error(args, action="debug-game", message=f"DXMT restore failed (exit {code}). Tail:\n{tail}", code=code)
+    elif graphics_backend == "dxvk" and args.dxvk_source:
+        code, tail = install_dxvk(
+            bottle=bottle,
+            dxvk_source=Path(args.dxvk_source),
+        )
+        if code != 0:
+            if _stream_enabled(args):
+                _stream_result(
+                    action="debug-game",
+                    job_id=job_id or uuid.uuid4().hex,
+                    ok=False,
+                    status="failed",
+                    message=f"DXVK restore failed (exit {code}). Tail:\n{tail}",
+                    data={"executable": str(executable), "tail": tail},
+                    errors=[f"DXVK restore failed (exit {code})."],
+                )
+                raise SystemExit(code)
+            _json_error(args, action="debug-game", message=f"DXVK restore failed (exit {code}). Tail:\n{tail}", code=code)
+    elif graphics_backend == "d3dmetal" and args.d3dmetal_source:
+        code, tail = install_d3dmetal(
+            bottle=bottle,
+            d3dmetal_source=Path(args.d3dmetal_source),
+            wine64_path=wine64,
+        )
+        if code != 0:
+            if _stream_enabled(args):
+                _stream_result(
+                    action="debug-game",
+                    job_id=job_id or uuid.uuid4().hex,
+                    ok=False,
+                    status="failed",
+                    message=f"D3DMetal restore failed (exit {code}). Tail:\n{tail}",
+                    data={"executable": str(executable), "tail": tail},
+                    errors=[f"D3DMetal restore failed (exit {code})."],
+                )
+                raise SystemExit(code)
+            _json_error(args, action="debug-game", message=f"D3DMetal restore failed (exit {code}). Tail:\n{tail}", code=code)
     code, tail = run_game_executable(
         bottle=bottle,
         wine64_path=wine64,
@@ -1308,7 +1456,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--jsonl", action="store_true", help="Emit streaming machine-readable JSON lines for app integrations")
     parser.add_argument(
         "--graphics-backend",
-        choices=("auto", "dxvk", "dxmt", "none"),
+        choices=("auto", "dxvk", "dxmt", "d3dmetal", "none"),
         default="auto",
         help="Graphics backend override to apply at launch time (default: auto: plain Steam, DXMT for games)",
     )
@@ -1350,6 +1498,10 @@ def build_parser() -> argparse.ArgumentParser:
     dxmt_cmd.add_argument("--dxmt-source", required=True, help="Path to a DXMT directory or tar.gz archive")
     dxmt_cmd.set_defaults(func=cmd_install_dxmt)
 
+    d3dmetal_cmd = sub.add_parser("install-d3dmetal", help="Install D3DMetal into the bottle from a local folder or tar.gz")
+    d3dmetal_cmd.add_argument("--d3dmetal-source", required=True, help="Path to a D3DMetal directory or tar.gz archive")
+    d3dmetal_cmd.set_defaults(func=cmd_install_d3dmetal)
+
     setup_cmd = sub.add_parser(
         "setup-metal",
         help="Create or reuse a prefix, install Steam via winetricks, install DXMT, and open Steam",
@@ -1383,6 +1535,7 @@ def build_parser() -> argparse.ArgumentParser:
     launch_cmd = sub.add_parser("launch-game", help="Launch a Steam game by AppID")
     launch_cmd.add_argument("--appid", required=True, help="Steam AppID")
     launch_cmd.add_argument("--dxmt-source", help="Optional DXMT directory or tar.gz archive to restore DXMT before launch")
+    launch_cmd.add_argument("--d3dmetal-source", help="Optional D3DMetal directory or tar.gz archive to restore D3DMetal before launch")
     launch_cmd.add_argument("--no-wait", action="store_true", help="Return immediately after sending the launch request")
     launch_cmd.set_defaults(func=cmd_launch_game)
 
@@ -1390,6 +1543,8 @@ def build_parser() -> argparse.ArgumentParser:
     smart_launch_cmd.add_argument("--appid", required=True, help="Steam AppID")
     smart_launch_cmd.add_argument("--dxmt-source", help="Optional DXMT directory or tar.gz archive to restore DXMT before launch")
     smart_launch_cmd.add_argument("--dxvk-source", help="Optional DXVK directory or tar.gz archive to restore DXVK before launch")
+    smart_launch_cmd.add_argument("--d3dmetal-source", help="Optional D3DMetal directory or tar.gz archive to restore D3DMetal before launch")
+    smart_launch_cmd.add_argument("--winetricks", default="winetricks", help="Path to winetricks for first-time hidden D3DMetal setup")
     smart_launch_cmd.add_argument("--probe-seconds", type=int, default=8, help="Seconds to watch the direct launch before considering it healthy")
     smart_launch_cmd.add_argument("--no-wait", action="store_true", help="Return immediately after a healthy launch path is found")
     smart_launch_cmd.set_defaults(func=cmd_smart_launch_game)
@@ -1400,6 +1555,8 @@ def build_parser() -> argparse.ArgumentParser:
     debug_cmd.add_argument("--cwd", help="Optional working directory override")
     debug_cmd.add_argument("--env", action="append", default=[], help="Extra environment override in KEY=VALUE form")
     debug_cmd.add_argument("--dxmt-source", help="Optional DXMT directory or tar.gz archive to restore DXMT before launch")
+    debug_cmd.add_argument("--dxvk-source", help="Optional DXVK directory or tar.gz archive to restore DXVK before launch")
+    debug_cmd.add_argument("--d3dmetal-source", help="Optional D3DMetal directory or tar.gz archive to restore D3DMetal before launch")
     debug_cmd.add_argument("--wine-debug", default="+timestamp,+seh,+loaddll", help="WINEDEBUG value for the direct launch")
     debug_cmd.add_argument("--no-wait", action="store_true", help="Return immediately after launching the executable")
     debug_cmd.add_argument("game_args", nargs=argparse.REMAINDER, help="Arguments passed through to the game after --")

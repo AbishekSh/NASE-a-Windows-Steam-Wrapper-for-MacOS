@@ -80,6 +80,7 @@ struct SidebarSection: Identifiable {
 enum GraphicsBackendOption: String, CaseIterable, Identifiable, Codable {
     case dxmt = "DXMT"
     case dxvk = "DXVK"
+    case d3dmetal = "D3DMetal"
     case none = "None"
 
     var id: String { rawValue }
@@ -90,6 +91,8 @@ enum GraphicsBackendOption: String, CaseIterable, Identifiable, Codable {
             return "dxmt"
         case .dxvk:
             return "dxvk"
+        case .d3dmetal:
+            return "d3dmetal"
         case .none:
             return "none"
         }
@@ -191,6 +194,19 @@ struct BackendJob: Identifiable, Hashable {
     let progress: Double?
     let completedSteps: Int?
     let totalSteps: Int?
+}
+
+enum GameLaunchPhase: String, Codable, Hashable {
+    case launching = "Launching..."
+    case running = "Running"
+    case exited = "Exited"
+    case failed = "Failed"
+}
+
+struct GameLaunchStatus: Hashable, Codable {
+    let phase: GameLaunchPhase
+    let message: String
+    let updatedAt: Date
 }
 
 struct BackendCheckSummary: Identifiable, Hashable {
@@ -345,6 +361,7 @@ enum OperationKind {
     case doctorFix
     case winetricks
     case installDXMT
+    case installD3DMetal
     case winecfg
     case killWine
     case openSteam

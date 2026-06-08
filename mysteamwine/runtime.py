@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import platform
 import re
+import signal
 import shutil
 import subprocess
 import sys
@@ -170,22 +171,50 @@ def run_logged(
             text=True,
             bufsize=1,
             universal_newlines=True,
+            start_new_session=timeout is not None,
         )
 
         try:
             assert proc.stdout is not None
-            for line in proc.stdout:
-                sys.stdout.write(line)
-                handle.write(line)
+            if timeout is not None:
+                output, _ = proc.communicate(timeout=timeout)
+                for line in (output or "").splitlines():
+                    sys.stdout.write(line + "\n")
+                    handle.write(line + "\n")
+                    tail_lines.append(line)
+                    if len(tail_lines) > tail_max:
+                        tail_lines.pop(0)
                 handle.flush()
+                exit_code = proc.returncode if proc.returncode is not None else 0
+            else:
+                for line in proc.stdout:
+                    sys.stdout.write(line)
+                    handle.write(line)
+                    handle.flush()
 
-                tail_lines.append(line.rstrip("\n"))
+                    tail_lines.append(line.rstrip("\n"))
+                    if len(tail_lines) > tail_max:
+                        tail_lines.pop(0)
+
+                exit_code = proc.wait()
+        except subprocess.TimeoutExpired:
+            if timeout is not None:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    proc.kill()
+            else:
+                proc.kill()
+            try:
+                output, _ = proc.communicate(timeout=1)
+            except subprocess.TimeoutExpired:
+                output = ""
+            for line in (output or "").splitlines():
+                sys.stdout.write(line + "\n")
+                handle.write(line + "\n")
+                tail_lines.append(line)
                 if len(tail_lines) > tail_max:
                     tail_lines.pop(0)
-
-            exit_code = proc.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            proc.kill()
             exit_code = 124
             message = f"\n[Timeout] Process exceeded {timeout}s and was killed.\n"
             sys.stdout.write(message)

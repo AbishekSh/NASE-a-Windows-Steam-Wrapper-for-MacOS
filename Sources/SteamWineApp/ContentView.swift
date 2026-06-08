@@ -221,6 +221,7 @@ struct ContentView: View {
                                     isBusy: model.isBusy,
                                     isDragging: draggedGame?.pinID == game.pinID,
                                     collection: model.settings(for: game).collection,
+                                    launchStatus: model.launchStatus(for: game),
                                     steamCacheURL: model.steamLibraryCacheURL,
                                     onLaunch: {
                                         model.launch(game)

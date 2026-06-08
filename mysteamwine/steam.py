@@ -43,6 +43,8 @@ def _graphics_launch_env(bottle: Bottle, wine_debug: str, graphics_backend: str)
         env["WINEDLLOVERRIDES"] = "d3d11=n;dxgi=n;d3d10core=n;d3d9=n"
     elif graphics_backend == "dxmt":
         env["WINEDLLOVERRIDES"] = "dxgi=n,b;d3d11=n,b;d3d10core=n,b;winemetal=n,b"
+    elif graphics_backend == "d3dmetal":
+        env["WINEDLLOVERRIDES"] = "dxgi=n,b;d3d11=n,b;d3d12=n,b;atidxx64=n,b;nvapi64=n,b;nvngx=n,b"
     return env
 
 

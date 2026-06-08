@@ -349,6 +349,7 @@ struct GameDetailsSheet: View {
 
     var body: some View {
         let settings = model.settings(for: game)
+        let launchStatus = model.launchStatus(for: game)
 
         VStack(spacing: 0) {
             HStack {
@@ -384,6 +385,28 @@ struct GameDetailsSheet: View {
                     )
 
                     sectionHeader("Actions")
+                    if let launchStatus {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(spacing: 8) {
+                                Circle()
+                                    .fill(launchColor(for: launchStatus.phase))
+                                    .frame(width: 9, height: 9)
+                                Text(launchStatus.phase.rawValue)
+                                    .font(.subheadline.weight(.semibold))
+                                Spacer()
+                                Text(launchStatus.updatedAt, style: .relative)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Text(launchStatus.message)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(12)
+                        .background(Color.secondary.opacity(0.08))
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+
                     HStack(spacing: 10) {
                         Button(game.status.localizedCaseInsensitiveContains("installer") ? "Run Installer" : "Play") {
                             model.launch(game)
@@ -400,6 +423,12 @@ struct GameDetailsSheet: View {
 
                         Button("Settings") {
                             model.openGameSettingsFromDetails(for: game)
+                        }
+
+                        if launchStatus != nil {
+                            Button("Clear Status") {
+                                model.clearLaunchStatus(for: game)
+                            }
                         }
                     }
 
@@ -459,6 +488,19 @@ struct GameDetailsSheet: View {
                 .foregroundStyle(.secondary)
             Text(value)
                 .font(.subheadline)
+        }
+    }
+
+    private func launchColor(for phase: GameLaunchPhase) -> Color {
+        switch phase {
+        case .launching:
+            return Color(hex: "#D9B650")
+        case .running:
+            return Color(hex: "#6DBB7A")
+        case .exited:
+            return .secondary
+        case .failed:
+            return Color(hex: "#D96C6C")
         }
     }
 
