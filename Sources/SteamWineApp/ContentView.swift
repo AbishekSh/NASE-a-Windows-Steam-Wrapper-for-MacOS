@@ -86,15 +86,33 @@ struct ContentView: View {
 
             Divider()
 
-            Button {
-                model.openSettings()
-            } label: {
-                Label("Settings", systemImage: "slider.horizontal.3")
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 12)
+            VStack(spacing: 8) {
+                if model.selectedRunner == .steam {
+                    Button {
+                        model.perform(
+                            OperationCard(
+                                kind: .openSteam,
+                                title: "Open Steam",
+                                detail: "Launch Windows Steam without waiting for it to exit.",
+                                symbolName: "play.circle"
+                            )
+                        )
+                    } label: {
+                        sidebarFooterLabel("Open Steam", systemImage: "play.circle")
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        model.refreshGames()
+                    } label: {
+                        sidebarFooterLabel("Refresh", systemImage: "arrow.clockwise")
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                addGameControl
             }
-            .buttonStyle(.plain)
+            .padding(10)
             .background(themePanel)
         }
         .background(themeSidebar)
@@ -118,21 +136,21 @@ struct ContentView: View {
                 }
 
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
+                    HStack(spacing: 8) {
                         HStack(spacing: 8) {
                             Image(systemName: "magnifyingglass")
                                 .foregroundStyle(.secondary)
                             TextField("Search library", text: $model.searchText)
                                 .textFieldStyle(.plain)
                         }
-                        .padding(.horizontal, 11)
+                        .padding(.horizontal, 12)
                         .frame(minWidth: 180, idealWidth: 260, maxWidth: 320)
-                        .frame(height: 32)
-                        .background(themePanel)
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .frame(height: 34)
+                        .background(themeControlBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                         .overlay(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .stroke(colorScheme == .dark ? Color.white.opacity(0.07) : Color.black.opacity(0.08), lineWidth: 1)
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .stroke(themeControlBorder, lineWidth: 1)
                         )
 
                         Menu {
@@ -289,18 +307,15 @@ struct ContentView: View {
     private var themeToolbar: Color { colorScheme == .dark ? Color(hex: "#181B18") : Color(hex: "#E8EEE7") }
     private var themePanel: Color { colorScheme == .dark ? Color(hex: "#2A302C") : Color(hex: "#F7FBF5") }
     private var themePanelRaised: Color { colorScheme == .dark ? Color(hex: "#353D38") : Color(hex: "#DEE8DE") }
+    private var themeControlBackground: Color { colorScheme == .dark ? Color(hex: "#20251F") : Color(hex: "#F4F8F2") }
+    private var themeControlBorder: Color { colorScheme == .dark ? Color.white.opacity(0.07) : Color.black.opacity(0.08) }
 
     private func gridColumns(for availableWidth: CGFloat) -> [GridItem] {
-        let horizontalPadding: CGFloat = 48
-        let spacing: CGFloat = 24
-        let minimumCardWidth: CGFloat = 320
-        let usableWidth = max(availableWidth - horizontalPadding, minimumCardWidth)
-        let count = max(1, Int((usableWidth + spacing) / (minimumCardWidth + spacing)))
-
-        return Array(
-            repeating: GridItem(.flexible(minimum: minimumCardWidth), spacing: spacing),
-            count: count
-        )
+        let spacing: CGFloat = 28
+        let minimumCardWidth: CGFloat = availableWidth < 760 ? 320 : 420
+        return [
+            GridItem(.adaptive(minimum: minimumCardWidth, maximum: 620), spacing: spacing)
+        ]
     }
 
     private var libraryTitleBlock: some View {
@@ -316,30 +331,12 @@ struct ContentView: View {
 
     private var primaryActionControls: some View {
         HStack(spacing: 10) {
-            if model.selectedRunner == .steam {
-                Button {
-                    model.perform(
-                        OperationCard(
-                            kind: .openSteam,
-                            title: "Open Steam",
-                            detail: "Launch Windows Steam without waiting for it to exit.",
-                            symbolName: "play.circle"
-                        )
-                    )
-                } label: {
-                    toolbarButtonLabel("Open Steam", systemImage: "play.circle")
-                }
-                .buttonStyle(.plain)
-
-                Button {
-                    model.refreshGames()
-                } label: {
-                    toolbarButtonLabel("Refresh", systemImage: "arrow.clockwise")
-                }
-                .buttonStyle(.plain)
+            Button {
+                model.openSettings()
+            } label: {
+                toolbarButtonLabel("Settings", systemImage: "slider.horizontal.3")
             }
-
-            addGameControl
+            .buttonStyle(.plain)
         }
     }
 
@@ -370,6 +367,24 @@ struct ContentView: View {
     }
 
     @ViewBuilder
+    private func sidebarFooterLabel(_ title: String, systemImage: String) -> some View {
+        Label(title, systemImage: systemImage)
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(colorScheme == .dark ? Color(hex: "#E6ECE6") : Color(hex: "#162019"))
+            .lineLimit(1)
+            .minimumScaleFactor(0.9)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .frame(height: 34)
+            .background(themeControlBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .stroke(themeControlBorder, lineWidth: 1)
+            )
+    }
+
+    @ViewBuilder
     private func toolbarButtonLabel(_ title: String, systemImage: String) -> some View {
         Label(title, systemImage: systemImage)
             .font(.system(size: 14, weight: .semibold))
@@ -378,11 +393,11 @@ struct ContentView: View {
             .minimumScaleFactor(0.9)
             .padding(.horizontal, 12)
             .frame(height: 34)
-            .background(themePanelRaised)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(themeControlBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.08), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .stroke(themeControlBorder, lineWidth: 1)
             )
     }
 
@@ -409,11 +424,11 @@ struct ContentView: View {
         }
         .padding(.horizontal, 12)
         .frame(height: 34)
-        .background(themePanelRaised)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(themeControlBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.08), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .stroke(themeControlBorder, lineWidth: 1)
         )
     }
 }

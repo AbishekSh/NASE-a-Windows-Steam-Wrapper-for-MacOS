@@ -58,7 +58,7 @@ struct GameCard: View {
                 BannerArtwork(
                     url: game.bannerURL,
                     title: game.title,
-                    height: 160,
+                    height: 128,
                     installURL: game.installURL,
                     runner: game.runner,
                     appid: game.backendID,
@@ -66,14 +66,31 @@ struct GameCard: View {
                 )
             }
 
-            VStack(alignment: .leading, spacing: 7) {
-                Text(game.title)
-                    .font(.headline.weight(.semibold))
-                    .foregroundStyle(themeForeground)
-                    .lineLimit(1)
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text(game.title)
+                        .font(.headline.weight(.semibold))
+                        .foregroundStyle(themeForeground)
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    cardActionMenu
+                    Button {
+                        onLaunch()
+                    } label: {
+                        Image(systemName: "play.fill")
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(Color.black)
+                            .frame(width: 34, height: 34)
+                            .background(themePrimary)
+                            .clipShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .opacity(isBusy ? 0.55 : 1)
+                }
+                .frame(height: 36)
 
-                HStack {
-                    HStack(spacing: 8) {
+                HStack(spacing: 8) {
+                    HStack(spacing: 7) {
                         Text(game.runner.rawValue)
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(themeMutedForeground)
@@ -93,32 +110,21 @@ struct GameCard: View {
                         }
                     }
                     Spacer()
-                    cardActionMenu
-                    Button {
-                        onLaunch()
-                    } label: {
-                        Image(systemName: "play.fill")
-                            .font(.subheadline.weight(.bold))
-                            .foregroundStyle(Color.black)
-                            .frame(width: 36, height: 36)
-                            .background(themePrimary)
-                            .clipShape(Circle())
+                    if let statsText = game.statsText, !statsText.isEmpty {
+                        Text(statsText)
+                            .font(.caption)
+                            .foregroundStyle(themeMutedForeground)
+                            .lineLimit(1)
                     }
-                    .buttonStyle(.plain)
-                    .opacity(isBusy ? 0.55 : 1)
                 }
-                .frame(height: 32)
-                if let statsText = game.statsText, !statsText.isEmpty {
-                    Text(statsText)
-                        .font(.caption)
-                        .foregroundStyle(themeMutedForeground)
-                        .lineLimit(1)
-                }
+                .frame(height: 26)
             }
             .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, minHeight: 96, alignment: .leading)
             .background(themePanel)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(themePanel)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -281,8 +287,8 @@ struct BannerArtwork: View {
         ZStack(alignment: .bottomLeading) {
             if let customImage {
                 artworkLayer(Image(nsImage: customImage))
-            } else if let localSteamHeaderImage {
-                artworkLayer(Image(nsImage: localSteamHeaderImage))
+            } else if let localSteamBannerImage {
+                artworkLayer(Image(nsImage: localSteamBannerImage))
             } else if let url {
                 AsyncImage(url: url) { phase in
                     switch phase {
@@ -303,14 +309,55 @@ struct BannerArtwork: View {
             Rectangle()
                 .fill(.black.opacity(0.18))
 
+            LinearGradient(
+                colors: [
+                    .black.opacity(0.55),
+                    .black.opacity(0.26),
+                    .clear,
+                ],
+                startPoint: .bottomLeading,
+                endPoint: .topTrailing
+            )
+
+            if let steamLogoImage {
+                Image(nsImage: steamLogoImage)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .frame(maxWidth: min(320, height * 2.7), maxHeight: height * 0.58, alignment: .leading)
+                    .shadow(color: .black.opacity(0.48), radius: 7, y: 3)
+                    .padding(.leading, steamIconImage == nil ? 16 : 80)
+                    .padding(.trailing, 16)
+                    .padding(.bottom, 14)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+            } else {
+                Text(title)
+                    .font(.system(size: 22, weight: .heavy, design: .rounded))
+                    .foregroundStyle(.white)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.72)
+                    .shadow(color: .black.opacity(0.55), radius: 7, y: 3)
+                    .padding(.leading, steamIconImage == nil ? 16 : 80)
+                    .padding(.trailing, 16)
+                    .padding(.bottom, 14)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+            }
+
             if let steamIcon = steamIconImage {
                 Image(nsImage: steamIcon)
                     .resizable()
                     .interpolation(.high)
                     .scaledToFit()
-                    .frame(width: 40, height: 40)
+                    .frame(width: 42, height: 42)
+                    .padding(8)
+                    .background(.black.opacity(0.28))
+                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .stroke(.white.opacity(0.16), lineWidth: 1)
+                    )
                     .padding(14)
-                    .shadow(color: .black.opacity(0.3), radius: 10, y: 4)
+                    .shadow(color: .black.opacity(0.28), radius: 8, y: 3)
             }
         }
         .frame(maxWidth: .infinity)
@@ -331,22 +378,10 @@ struct BannerArtwork: View {
                 .resizable()
                 .interpolation(.high)
                 .scaledToFill()
-                .blur(radius: 10)
-                .saturation(0.9)
-                .opacity(0.68)
-                .clipped()
-
-            Rectangle()
-                .fill(.black.opacity(colorScheme == .dark ? 0.16 : 0.08))
-
-            image
-                .resizable()
-                .interpolation(.high)
-                .scaledToFit()
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
-                .shadow(color: .black.opacity(0.22), radius: 8, y: 3)
+                .frame(maxWidth: .infinity, maxHeight: height)
         }
+        .frame(maxWidth: .infinity, maxHeight: height)
+        .clipped()
     }
 
     private var localFallbackArtwork: some View {
@@ -384,19 +419,45 @@ struct BannerArtwork: View {
         return image
     }
 
+    private var localSteamBannerImage: NSImage? {
+        guard runner == .steam, let appid else { return nil }
+        return localSteamBanner(appid: appid)
+    }
+
     private var steamIconImage: NSImage? {
         guard runner == .steam, let appid else { return nil }
         return localSteamIcon(appid: appid)
     }
 
-    private var localSteamHeaderImage: NSImage? {
+    private var steamLogoImage: NSImage? {
         guard runner == .steam, let appid else { return nil }
-        return localSteamHeader(appid: appid)
+        return localSteamLogo(appid: appid)
     }
 
     private var customImage: NSImage? {
         guard let url, url.isFileURL else { return nil }
         return NSImage(contentsOf: url)
+    }
+
+    private func localSteamBanner(appid: String) -> NSImage? {
+        guard let cacheRoot = steamCacheURL else { return nil }
+        let candidates = [
+            cacheRoot.appendingPathComponent("\(appid)_library_hero.jpg"),
+            cacheRoot.appendingPathComponent("\(appid)_library_hero.png"),
+            cacheRoot.appendingPathComponent("\(appid)/library_hero.jpg"),
+            cacheRoot.appendingPathComponent("\(appid)/library_hero.png"),
+            cacheRoot.appendingPathComponent("\(appid)_header.jpg"),
+            cacheRoot.appendingPathComponent("\(appid)_header.png"),
+            cacheRoot.appendingPathComponent("\(appid)/header.jpg"),
+            cacheRoot.appendingPathComponent("\(appid)/header.png"),
+        ]
+
+        for candidate in candidates where FileManager.default.fileExists(atPath: candidate.path) {
+            if let image = NSImage(contentsOf: candidate) {
+                return image
+            }
+        }
+        return nil
     }
 
     private func localSteamIcon(appid: String) -> NSImage? {
@@ -416,28 +477,35 @@ struct BannerArtwork: View {
         return nil
     }
 
-    private func localSteamHeader(appid: String) -> NSImage? {
+    private func localSteamLogo(appid: String) -> NSImage? {
         guard let cacheRoot = steamCacheURL else { return nil }
-        let candidates = [
-            cacheRoot.appendingPathComponent("\(appid)_header.jpg"),
-            cacheRoot.appendingPathComponent("\(appid)_header.png"),
-            cacheRoot.appendingPathComponent("\(appid)_library_600x900.jpg"),
-            cacheRoot.appendingPathComponent("\(appid)_library_600x900.png"),
-            cacheRoot.appendingPathComponent("\(appid)_library_hero.jpg"),
-            cacheRoot.appendingPathComponent("\(appid)_library_hero.png"),
-            cacheRoot.appendingPathComponent("\(appid)/header.jpg"),
-            cacheRoot.appendingPathComponent("\(appid)/header.png"),
-            cacheRoot.appendingPathComponent("\(appid)/library_hero.jpg"),
-            cacheRoot.appendingPathComponent("\(appid)/library_hero.png"),
-            cacheRoot.appendingPathComponent("\(appid)/library_600x900.jpg"),
-            cacheRoot.appendingPathComponent("\(appid)/library_600x900.png"),
+        let directCandidates = [
+            cacheRoot.appendingPathComponent("\(appid)_logo.png"),
+            cacheRoot.appendingPathComponent("\(appid)/logo.png"),
         ]
 
-        for candidate in candidates where FileManager.default.fileExists(atPath: candidate.path) {
+        for candidate in directCandidates where FileManager.default.fileExists(atPath: candidate.path) {
             if let image = NSImage(contentsOf: candidate) {
                 return image
             }
         }
+
+        let appFolder = cacheRoot.appendingPathComponent(appid, isDirectory: true)
+        guard let nestedCandidates = try? FileManager.default.contentsOfDirectory(
+            at: appFolder,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else {
+            return nil
+        }
+
+        for folder in nestedCandidates where folder.hasDirectoryPath {
+            let candidate = folder.appendingPathComponent("logo.png")
+            if FileManager.default.fileExists(atPath: candidate.path), let image = NSImage(contentsOf: candidate) {
+                return image
+            }
+        }
+
         return nil
     }
 

@@ -1605,7 +1605,7 @@ final class AppViewModel {
     }
 
     private func steamBannerURL(for appid: String) -> URL? {
-        URL(string: "https://cdn.cloudflare.steamstatic.com/steam/apps/\(appid)/header.jpg")
+        URL(string: "https://cdn.cloudflare.steamstatic.com/steam/apps/\(appid)/library_hero.jpg")
     }
 
     private func steamStoreURL(for appid: String) -> URL? {
