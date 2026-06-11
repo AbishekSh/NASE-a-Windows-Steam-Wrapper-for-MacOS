@@ -213,7 +213,7 @@ def launch_app(
         extra_args=["-applaunch", appid],
         wait=wait,
         graphics_backend=graphics_backend,
-        restart_existing=False,
+        restart_existing=graphics_backend != "none",
     )
 
 

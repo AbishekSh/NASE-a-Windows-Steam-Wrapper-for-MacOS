@@ -474,6 +474,7 @@ def cmd_install_dxmt(args: argparse.Namespace) -> None:
         bottle=bottle,
         dxmt_source=Path(args.dxmt_source),
         wine64_path=wine64,
+        allow_unrecommended=getattr(args, "allow_unrecommended_dxmt", False),
     )
     if code != 0:
         raise SystemExit(f"DXMT install failed (exit {code}). Tail:\n{tail}")
@@ -627,6 +628,7 @@ def cmd_setup_metal(args: argparse.Namespace) -> None:
         bottle=bottle,
         dxmt_source=Path(args.dxmt_source),
         wine64_path=wine64,
+        allow_unrecommended=getattr(args, "allow_unrecommended_dxmt", False),
     )
     if code != 0:
         if _stream_enabled(args):
@@ -827,6 +829,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
                 bottle=bottle,
                 wine_value=wine_value,
                 dxmt_source=args.dxmt_source,
+                allow_unrecommended_dxmt=getattr(args, "allow_unrecommended_dxmt", False),
             )
         except Exception as exc:
             if _stream_enabled(args):
@@ -915,6 +918,7 @@ def cmd_launch_game(args: argparse.Namespace) -> None:
             bottle=bottle,
             dxmt_source=Path(args.dxmt_source),
             wine64_path=wine64,
+            allow_unrecommended=getattr(args, "allow_unrecommended_dxmt", False),
         )
         if code != 0:
             if _stream_enabled(args):
@@ -1061,6 +1065,7 @@ def cmd_smart_launch_game(args: argparse.Namespace) -> None:
             bottle=bottle,
             dxmt_source=Path(args.dxmt_source),
             wine64_path=wine64,
+            allow_unrecommended=getattr(args, "allow_unrecommended_dxmt", False),
         )
         if code != 0:
             if _stream_enabled(args):
@@ -1270,6 +1275,7 @@ def cmd_debug_game(args: argparse.Namespace) -> None:
             bottle=bottle,
             dxmt_source=Path(args.dxmt_source),
             wine64_path=wine64,
+            allow_unrecommended=getattr(args, "allow_unrecommended_dxmt", False),
         )
         if code != 0:
             if _stream_enabled(args):
@@ -1496,6 +1502,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     dxmt_cmd = sub.add_parser("install-dxmt", help="Install DXMT into the bottle from a local folder or tar.gz")
     dxmt_cmd.add_argument("--dxmt-source", required=True, help="Path to a DXMT directory or tar.gz archive")
+    dxmt_cmd.add_argument(
+        "--allow-unrecommended-dxmt",
+        action="store_true",
+        help="Allow DXMT versions outside the validated 0.70/0.71 path, including known-problem versions",
+    )
     dxmt_cmd.set_defaults(func=cmd_install_dxmt)
 
     d3dmetal_cmd = sub.add_parser("install-d3dmetal", help="Install D3DMetal into the bottle from a local folder or tar.gz")
@@ -1507,6 +1518,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Create or reuse a prefix, install Steam via winetricks, install DXMT, and open Steam",
     )
     setup_cmd.add_argument("--dxmt-source", required=True, help="Path to a DXMT directory or tar.gz archive")
+    setup_cmd.add_argument(
+        "--allow-unrecommended-dxmt",
+        action="store_true",
+        help="Allow DXMT versions outside the validated 0.70/0.71 path, including known-problem versions",
+    )
     setup_cmd.add_argument("--winetricks", default="winetricks", help="Path to the winetricks executable")
     setup_cmd.add_argument("--interactive", action="store_true", help="Run winetricks steam without -q")
     setup_cmd.add_argument("--no-launch", action="store_true", help="Finish setup without opening Steam")
@@ -1524,6 +1540,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--dxmt-source",
         help="Optional DXMT directory or tar.gz archive to reinstall DXMT during --fix",
     )
+    doctor_cmd.add_argument(
+        "--allow-unrecommended-dxmt",
+        action="store_true",
+        help="Allow DXMT versions outside the validated 0.70/0.71 path during --fix",
+    )
     doctor_cmd.set_defaults(func=cmd_doctor)
 
     gui_cmd = sub.add_parser("gui", help="Open the simple desktop frontend")
@@ -1535,6 +1556,11 @@ def build_parser() -> argparse.ArgumentParser:
     launch_cmd = sub.add_parser("launch-game", help="Launch a Steam game by AppID")
     launch_cmd.add_argument("--appid", required=True, help="Steam AppID")
     launch_cmd.add_argument("--dxmt-source", help="Optional DXMT directory or tar.gz archive to restore DXMT before launch")
+    launch_cmd.add_argument(
+        "--allow-unrecommended-dxmt",
+        action="store_true",
+        help="Allow DXMT versions outside the validated 0.70/0.71 path before launch",
+    )
     launch_cmd.add_argument("--d3dmetal-source", help="Optional D3DMetal directory or tar.gz archive to restore D3DMetal before launch")
     launch_cmd.add_argument("--no-wait", action="store_true", help="Return immediately after sending the launch request")
     launch_cmd.set_defaults(func=cmd_launch_game)
@@ -1542,6 +1568,11 @@ def build_parser() -> argparse.ArgumentParser:
     smart_launch_cmd = sub.add_parser("smart-launch-game", help="Try a direct launch first, then fall back to Steam")
     smart_launch_cmd.add_argument("--appid", required=True, help="Steam AppID")
     smart_launch_cmd.add_argument("--dxmt-source", help="Optional DXMT directory or tar.gz archive to restore DXMT before launch")
+    smart_launch_cmd.add_argument(
+        "--allow-unrecommended-dxmt",
+        action="store_true",
+        help="Allow DXMT versions outside the validated 0.70/0.71 path before launch",
+    )
     smart_launch_cmd.add_argument("--dxvk-source", help="Optional DXVK directory or tar.gz archive to restore DXVK before launch")
     smart_launch_cmd.add_argument("--d3dmetal-source", help="Optional D3DMetal directory or tar.gz archive to restore D3DMetal before launch")
     smart_launch_cmd.add_argument("--winetricks", default="winetricks", help="Path to winetricks for first-time hidden D3DMetal setup")
@@ -1555,6 +1586,11 @@ def build_parser() -> argparse.ArgumentParser:
     debug_cmd.add_argument("--cwd", help="Optional working directory override")
     debug_cmd.add_argument("--env", action="append", default=[], help="Extra environment override in KEY=VALUE form")
     debug_cmd.add_argument("--dxmt-source", help="Optional DXMT directory or tar.gz archive to restore DXMT before launch")
+    debug_cmd.add_argument(
+        "--allow-unrecommended-dxmt",
+        action="store_true",
+        help="Allow DXMT versions outside the validated 0.70/0.71 path before launch",
+    )
     debug_cmd.add_argument("--dxvk-source", help="Optional DXVK directory or tar.gz archive to restore DXVK before launch")
     debug_cmd.add_argument("--d3dmetal-source", help="Optional D3DMetal directory or tar.gz archive to restore D3DMetal before launch")
     debug_cmd.add_argument("--wine-debug", default="+timestamp,+seh,+loaddll", help="WINEDEBUG value for the direct launch")

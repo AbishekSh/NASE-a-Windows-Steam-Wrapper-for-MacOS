@@ -4,7 +4,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .bottle import Bottle, ensure_bottle_dirs
-from .dxmt import DXMT_DLL_OVERRIDES, enable_dxmt_overrides, install_dxmt
+from .dxmt import (
+    DXMT_AVOID_VERSION_MARKERS,
+    DXMT_DLL_OVERRIDES,
+    DXMT_RECOMMENDED_VERSION_MARKERS,
+    enable_dxmt_overrides,
+    install_dxmt,
+)
 from .runtime import detect_wine_runtime, find_wine_module_root, resolve_executable, run_logged
 from .steam import list_installed_apps, steam_prefix_root
 
@@ -24,6 +30,28 @@ def _check_file(path: Path) -> bool:
     return path.exists() and path.is_file()
 
 
+def _detect_dxmt_file_version(path: Path) -> str | None:
+    if not _check_file(path):
+        return None
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    for marker in DXMT_RECOMMENDED_VERSION_MARKERS + DXMT_AVOID_VERSION_MARKERS:
+        if marker.encode("ascii") in data:
+            return marker
+    return None
+
+
+def _check_dxmt_version(label: str, path: Path) -> CheckResult:
+    version = _detect_dxmt_file_version(path)
+    if version in DXMT_RECOMMENDED_VERSION_MARKERS:
+        return _result("ok", label, f"DXMT {version}: {path}")
+    if version in DXMT_AVOID_VERSION_MARKERS:
+        return _result("fail", label, f"DXMT {version} is not validated for this setup; use 0.70 or 0.71: {path}")
+    return _result("warn", label, f"Could not detect DXMT version; use 0.70 or 0.71: {path}")
+
+
 def _check_dxmt_runtime(module_root: Path) -> list[CheckResult]:
     checks: list[CheckResult] = []
     runtime_files = (
@@ -39,6 +67,7 @@ def _check_dxmt_runtime(module_root: Path) -> list[CheckResult]:
     )
     for name, path in runtime_files:
         checks.append(_result("ok" if _check_file(path) else "fail", name, str(path)))
+    checks.append(_check_dxmt_version("DXMT runtime version", module_root / "x86_64-windows" / "d3d11.dll"))
     return checks
 
 
@@ -56,6 +85,7 @@ def _check_dxmt_prefix(bottle: Bottle) -> list[CheckResult]:
     )
     for name, path in prefix_files:
         checks.append(_result("ok" if _check_file(path) else "fail", name, str(path)))
+    checks.append(_check_dxmt_version("DXMT prefix version", bottle.drive_c / "windows" / "system32" / "d3d11.dll"))
     return checks
 
 
@@ -212,6 +242,7 @@ def apply_doctor_fixes(
     bottle: Bottle,
     wine_value: str | None,
     dxmt_source: str | None,
+    allow_unrecommended_dxmt: bool = False,
 ) -> list[str]:
     actions: list[str] = []
 
@@ -236,6 +267,7 @@ def apply_doctor_fixes(
             bottle=bottle,
             dxmt_source=Path(dxmt_source),
             wine64_path=wine_path,
+            allow_unrecommended=allow_unrecommended_dxmt,
         )
         actions.append("Reinstalled DXMT files into the Wine runtime and prefix")
 
