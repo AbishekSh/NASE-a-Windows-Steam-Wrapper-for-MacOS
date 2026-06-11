@@ -1315,6 +1315,35 @@ final class AppViewModel {
         }
 
         var results = ["OK: DXMT source exists"]
+        let lowercasedName = sourceURL.lastPathComponent.lowercased()
+        var detectedVersion: String?
+        for version in ["0.70", "0.71", "0.72", "0.73"] where lowercasedName.contains(version) || lowercasedName.contains("v\(version)") {
+            detectedVersion = version
+            break
+        }
+        if detectedVersion == nil, sourceURL.pathExtension != "gz" {
+            let dllCandidates = [
+                sourceURL.appendingPathComponent("x86_64-windows/d3d11.dll"),
+                sourceURL.appendingPathComponent("x64/d3d11.dll"),
+            ]
+            for candidate in dllCandidates {
+                guard let data = try? Data(contentsOf: candidate) else { continue }
+                for version in ["0.70", "0.71", "0.72", "0.73"] where data.range(of: Data(version.utf8)) != nil {
+                    detectedVersion = version
+                    break
+                }
+                if detectedVersion != nil { break }
+            }
+        }
+
+        if detectedVersion == "0.72" || detectedVersion == "0.73" {
+            results.append("FAIL: DXMT \(detectedVersion ?? "") is known to regress this setup; use DXMT 0.70 or 0.71")
+        } else if detectedVersion == "0.70" || detectedVersion == "0.71" {
+            results.append("OK: DXMT version matches the validated 0.70/0.71 path")
+        } else {
+            results.append("WARN: DXMT 0.70 or 0.71 is recommended for the validated Wine Stable 11.0 setup")
+        }
+
         if sourceURL.pathExtension == "gz" {
             results.append("OK: DXMT source is a .tar.gz archive")
             return results

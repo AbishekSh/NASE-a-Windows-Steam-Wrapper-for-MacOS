@@ -14,16 +14,32 @@ DXMT_DLL_OVERRIDES = {
     "d3d10core": "native,builtin",
     "winemetal": "native,builtin",
 }
+DXMT_RECOMMENDED_VERSION_MARKERS = ("0.70", "0.71")
+DXMT_AVOID_VERSION_MARKERS = ("0.72", "0.73")
 OLD_GRAPHICS_OVERRIDES = (
+    "d3d8",
     "d3d9",
+    "d3d10",
     "d3d10core",
     "d3d11",
+    "d3d12",
     "dxgi",
+    "dxvk_config",
+    "nvapi",
+    "nvapi64",
+    "nvngx",
     "winemetal",
+    "*d3d8",
     "*d3d9",
+    "*d3d10",
     "*d3d10core",
     "*d3d11",
+    "*d3d12",
     "*dxgi",
+    "*dxvk_config",
+    "*nvapi",
+    "*nvapi64",
+    "*nvngx",
     "*winemetal",
 )
 
@@ -46,6 +62,48 @@ def resolve_dxmt_root(source: Path, cache_dir: Path) -> Path:
     if candidate.is_file() and candidate.suffixes[-2:] == [".tar", ".gz"]:
         return _extract_archive(candidate, cache_dir / candidate.stem.replace(".tar", ""))
     raise FileNotFoundError(f"DXMT source must be a directory or .tar.gz archive: {candidate}")
+
+
+def _detect_dxmt_version_from_payload(dxmt_root: Path) -> str | None:
+    candidates = (
+        dxmt_root / "x86_64-windows" / "d3d11.dll",
+        dxmt_root / "x64" / "d3d11.dll",
+    )
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
+        try:
+            data = candidate.read_bytes()
+        except OSError:
+            continue
+        for marker in DXMT_RECOMMENDED_VERSION_MARKERS + DXMT_AVOID_VERSION_MARKERS:
+            if marker.encode("ascii") in data:
+                return marker
+    return None
+
+
+def detect_dxmt_version_hint(source: Path, dxmt_root: Path | None = None) -> str | None:
+    names = [source.name.lower()]
+    if dxmt_root is not None:
+        names.append(dxmt_root.name.lower())
+    for name in names:
+        for marker in DXMT_RECOMMENDED_VERSION_MARKERS + DXMT_AVOID_VERSION_MARKERS:
+            if marker in name:
+                return marker
+    if dxmt_root is not None:
+        return _detect_dxmt_version_from_payload(dxmt_root)
+    return None
+
+
+def dxmt_version_warning(source: Path, dxmt_root: Path | None = None) -> str | None:
+    version = detect_dxmt_version_hint(source, dxmt_root)
+    if version in DXMT_AVOID_VERSION_MARKERS:
+        return f"DXMT {version} is known to regress video/cutscene playback; use DXMT 0.70 or 0.71."
+    if version is None:
+        return "Could not infer DXMT version from the source path; DXMT 0.70 or 0.71 is recommended."
+    if version not in DXMT_RECOMMENDED_VERSION_MARKERS:
+        return f"DXMT {version} is not the validated version for this setup; DXMT 0.70 or 0.71 is recommended."
+    return None
 
 
 def _upsert_user_reg_section(user_reg: Path, section: str, entries: dict[str, str]) -> None:
@@ -166,9 +224,19 @@ def enable_dxmt_overrides(bottle: Bottle) -> None:
     )
 
 
-def install_dxmt(*, bottle: Bottle, dxmt_source: Path, wine64_path: Path | None = None) -> tuple[int, str]:
+def install_dxmt(
+    *,
+    bottle: Bottle,
+    dxmt_source: Path,
+    wine64_path: Path | None = None,
+    allow_unrecommended: bool = False,
+) -> tuple[int, str]:
     ensure_bottle_dirs(bottle)
     dxmt_root = resolve_dxmt_root(dxmt_source, bottle.cache / "dxmt")
+    warning = dxmt_version_warning(dxmt_source, dxmt_root)
+    version = detect_dxmt_version_hint(dxmt_source, dxmt_root)
+    if version in DXMT_AVOID_VERSION_MARKERS and not allow_unrecommended:
+        return 1, warning or f"DXMT {version} is not validated for this setup."
     x64_dir, x32_dir = _locate_payload_dirs(dxmt_root)
     unix_dir = _locate_unix_payload_dir(dxmt_root)
 
@@ -230,6 +298,8 @@ def install_dxmt(*, bottle: Bottle, dxmt_source: Path, wine64_path: Path | None 
 
     enable_dxmt_overrides(bottle)
     tail_parts = ["\n".join(copied)]
+    if warning:
+        tail_parts.append(f"Warning: {warning}")
     if wine64_path is not None:
         wineserver = _wineserver_path(wine64_path)
         code, tail = run_logged(

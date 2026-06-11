@@ -158,8 +158,10 @@ def run_logged(
     with log_file.open("a", encoding="utf-8") as handle:
         handle.write("\n" + "=" * 80 + "\n")
         handle.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] RUN: {' '.join(command)}\n")
-        if env and env.get("WINEPREFIX"):
-            handle.write(f"ENV WINEPREFIX={env['WINEPREFIX']}\n")
+        if env:
+            for key in ("WINEPREFIX", "WINEDEBUG", "WINEDLLOVERRIDES"):
+                if env.get(key):
+                    handle.write(f"ENV {key}={env[key]}\n")
         handle.flush()
 
         proc = subprocess.Popen(
@@ -246,8 +248,10 @@ def run_logged_detached(
     with log_file.open("a", encoding="utf-8") as handle:
         handle.write("\n" + "=" * 80 + "\n")
         handle.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] SPAWN: {' '.join(command)}\n")
-        if env and env.get("WINEPREFIX"):
-            handle.write(f"ENV WINEPREFIX={env['WINEPREFIX']}\n")
+        if env:
+            for key in ("WINEPREFIX", "WINEDEBUG", "WINEDLLOVERRIDES"):
+                if env.get(key):
+                    handle.write(f"ENV {key}={env[key]}\n")
         handle.flush()
 
         proc = subprocess.Popen(
