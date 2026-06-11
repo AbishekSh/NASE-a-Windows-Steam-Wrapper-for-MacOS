@@ -16,142 +16,25 @@ struct SettingsSheet: View {
     @State private var externalPrefix: String = ""
     @State private var useExternalPrefix: Bool = false
     @State private var validationMessage: String = ""
+    @State private var showAdvancedSettings: Bool = false
 
     var body: some View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    HStack {
-                        Text("Backend Settings")
-                            .font(.system(size: 26, weight: .bold, design: .rounded))
-                        Spacer()
-                    }
+                    settingsHeader
 
-                    Text("Choose the Wine runtime you want, point the launcher at DXMT, DXVK, and D3DMetal, and keep the bottle details tucked here instead of in the main library.")
-                        .foregroundStyle(.secondary)
-
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Wine Runtime")
-                            .font(.headline)
-                            .foregroundStyle(themeForeground)
-
-                        Picker("Wine Runtime", selection: Binding(
-                            get: { model.selectedWineRuntimeID ?? "custom" },
-                            set: { newValue in
-                                guard newValue != "custom" else { return }
-                                model.selectWineRuntime(id: newValue)
-                                winePath = model.backendContext.winePath
-                            }
-                        )) {
-                            ForEach(model.wineRuntimes) { runtime in
-                                Text("\(runtime.name) • \(runtime.displaySubtitle)").tag(runtime.id)
-                            }
-                            Text("Custom Path").tag("custom")
-                        }
-                        .pickerStyle(.menu)
-
-                        HStack(spacing: 10) {
-                            Button("Import Wine App") {
-                                model.importWineAppRuntime()
-                                winePath = model.backendContext.winePath
-                            }
-                            Button("Register Binary") {
-                                model.importWineBinaryRuntime()
-                                winePath = model.backendContext.winePath
-                            }
-                            Button("Reveal Runtime Folder") {
-                                model.revealManagedWineRuntimes()
-                            }
-                        }
-
-                        Text("The launcher can keep multiple Wine builds around and switch the active one per app or bottle.")
-                            .font(.footnote)
-                            .foregroundStyle(themeMutedForeground)
-                    }
-                    .padding(16)
-                    .background(themePanel)
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    settingsTargetPanel
 
                     settingsRuntimeCenterPanel
 
-                    Picker("Target Mode", selection: $useExternalPrefix) {
-                        Text("Managed Bottle").tag(false)
-                        Text("External Prefix").tag(true)
-                    }
-                    .pickerStyle(.segmented)
-
-                    Group {
-                        labeledField("Wine Path", text: $winePath, browseAction: {
-                            if let path = pickPath(canChooseFiles: true, canChooseDirectories: false) {
-                                winePath = path
-                            }
-                        })
-                        labeledField("DXMT Source", text: $dxmtSource, browseAction: {
-                            if let path = pickPath(canChooseFiles: true, canChooseDirectories: true) {
-                                dxmtSource = path
-                            }
-                        })
-                        labeledField("DXVK Source", text: $dxvkSource, browseAction: {
-                            if let path = pickPath(canChooseFiles: true, canChooseDirectories: true) {
-                                dxvkSource = path
-                            }
-                        })
-                        labeledField("D3DMetal Source", text: $d3dMetalSource, browseAction: {
-                            if let path = pickPath(canChooseFiles: true, canChooseDirectories: true) {
-                                d3dMetalSource = path
-                            }
-                        })
-                        labeledField("GPTK Wine Path", text: $gptkWinePath, browseAction: {
-                            if let path = pickPath(canChooseFiles: true, canChooseDirectories: false) {
-                                gptkWinePath = path
-                            }
-                        })
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Bottle Name")
-                                .font(.subheadline.weight(.semibold))
-                            Picker("Bottle Name", selection: $bottleName) {
-                                ForEach(model.managedBottleNames, id: \.self) { name in
-                                    Text(name).tag(name)
-                                }
-                            }
-                            .pickerStyle(.menu)
-                        }
-                        .opacity(useExternalPrefix ? 0.45 : 1)
-                        .disabled(useExternalPrefix)
-                        labeledField("External Prefix", text: $externalPrefix, browseAction: {
-                            if let path = pickPath(canChooseFiles: false, canChooseDirectories: true) {
-                                externalPrefix = path
-                            }
-                        })
-                            .opacity(useExternalPrefix ? 1 : 0.45)
-                            .disabled(!useExternalPrefix)
-                    }
-
-                    if !validationMessage.isEmpty {
-                        Text(validationMessage)
-                            .font(.system(.footnote, design: .monospaced))
-                            .foregroundStyle(themeMutedForeground)
-                            .padding(12)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(themePanelRaised)
-                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    }
-
-                    Divider()
-
                     settingsOperationsPanel
 
-                    settingsStatusPanel
+                    settingsAdvancedPanel
 
-                    settingsCurrentOperationPanel
-
-                    settingsResultsPanel
-
-                    settingsJobsPanel
-
-                    settingsCommandPanel
-
-                    settingsActivityPanel
+                    if !validationMessage.isEmpty {
+                        settingsValidationPanel
+                    }
                 }
                 .padding(24)
             }
@@ -191,7 +74,7 @@ struct SettingsSheet: View {
             }
             .padding(24)
         }
-        .frame(width: 760, height: 760)
+        .frame(width: 820, height: 760)
         .background(themeBackground)
         .task {
             model.refreshWineRuntimes()
@@ -205,12 +88,233 @@ struct SettingsSheet: View {
             externalPrefix = model.backendContext.externalPrefix ?? ""
             useExternalPrefix = !(model.backendContext.externalPrefix ?? "").isEmpty
         }
+        .onChange(of: model.backendContext.dxmtSource) { _, newValue in
+            dxmtSource = newValue
+        }
+        .onChange(of: model.backendContext.dxvkSource) { _, newValue in
+            dxvkSource = newValue
+        }
+    }
+
+    private var settingsColumns: [GridItem] {
+        [
+            GridItem(.flexible(minimum: 320), spacing: 14),
+            GridItem(.flexible(minimum: 320), spacing: 14)
+        ]
+    }
+
+    private var settingsOperationCards: [OperationCard] {
+        model.operationCards.filter { operation in
+            switch operation.kind {
+            case .installDXMT, .installD3DMetal, .openSteam, .refreshGames, .launchSelectedGame:
+                return false
+            case .setupMetal, .doctor, .doctorFix, .winetricks, .winecfg, .killWine:
+                return true
+            }
+        }
+    }
+
+    private var settingsHeader: some View {
+        HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Settings")
+                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                    .foregroundStyle(themeForeground)
+                Text(model.settingsSummary)
+                    .font(.subheadline)
+                    .foregroundStyle(themeMutedForeground)
+                    .lineLimit(2)
+            }
+            Spacer()
+        }
+    }
+
+    private var settingsTargetPanel: some View {
+        settingsSection("Target") {
+            settingsControlRow("Wine Runtime") {
+                Picker("Wine Runtime", selection: Binding(
+                    get: { model.selectedWineRuntimeID ?? "custom" },
+                    set: { newValue in
+                        guard newValue != "custom" else { return }
+                        model.selectWineRuntime(id: newValue)
+                        winePath = model.backendContext.winePath
+                    }
+                )) {
+                    ForEach(model.wineRuntimes) { runtime in
+                        Text("\(runtime.name) • \(runtime.displaySubtitle)").tag(runtime.id)
+                    }
+                    Text("Custom Path").tag("custom")
+                }
+                .pickerStyle(.menu)
+            }
+
+            settingsControlRow("Bottle") {
+                Picker("Bottle Name", selection: $bottleName) {
+                    ForEach(model.managedBottleNames, id: \.self) { name in
+                        Text(name).tag(name)
+                    }
+                }
+                .pickerStyle(.menu)
+            }
+        }
+    }
+
+    private var settingsAdvancedPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            DisclosureGroup(isExpanded: $showAdvancedSettings) {
+                VStack(alignment: .leading, spacing: 14) {
+                    settingsAdvancedTargetPanel
+                    settingsGraphicsPanel
+                    settingsDiagnosticsPanel
+                }
+                .padding(.top, 10)
+            } label: {
+                Label("Advanced Settings", systemImage: "slider.horizontal.3")
+                    .font(.headline)
+                    .foregroundStyle(themeForeground)
+            }
+        }
+        .padding(16)
+        .background(themePanelRaised)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private var settingsAdvancedTargetPanel: some View {
+        settingsSection("Backend Target") {
+            settingsControlRow("Target Mode") {
+                Picker("Target Mode", selection: $useExternalPrefix) {
+                    Text("Managed Bottle").tag(false)
+                    Text("External Prefix").tag(true)
+                }
+                .pickerStyle(.segmented)
+            }
+
+            labeledField("Wine Path", text: $winePath, browseAction: {
+                if let path = pickPath(canChooseFiles: true, canChooseDirectories: false) {
+                    winePath = path
+                }
+            })
+
+            labeledField("External Prefix", text: $externalPrefix, browseAction: {
+                if let path = pickPath(canChooseFiles: false, canChooseDirectories: true) {
+                    externalPrefix = path
+                }
+            })
+            .opacity(useExternalPrefix ? 1 : 0.45)
+            .disabled(!useExternalPrefix)
+
+            HStack(spacing: 10) {
+                Button("Import App") {
+                    model.importWineAppRuntime()
+                    winePath = model.backendContext.winePath
+                }
+                Button("Register Binary") {
+                    model.importWineBinaryRuntime()
+                    winePath = model.backendContext.winePath
+                }
+                Button("Reveal Folder") {
+                    model.revealManagedWineRuntimes()
+                }
+            }
+        }
+    }
+
+    private var settingsGraphicsPanel: some View {
+        settingsSection("Graphics") {
+            labeledField("DXMT Source", text: $dxmtSource, browseAction: {
+                if let path = pickPath(canChooseFiles: true, canChooseDirectories: true) {
+                    dxmtSource = path
+                }
+            })
+            labeledField("DXVK Source", text: $dxvkSource, browseAction: {
+                if let path = pickPath(canChooseFiles: true, canChooseDirectories: true) {
+                    dxvkSource = path
+                }
+            })
+            labeledField("D3DMetal Source", text: $d3dMetalSource, browseAction: {
+                if let path = pickPath(canChooseFiles: true, canChooseDirectories: true) {
+                    d3dMetalSource = path
+                }
+            })
+            labeledField("GPTK Wine Path", text: $gptkWinePath, browseAction: {
+                if let path = pickPath(canChooseFiles: true, canChooseDirectories: false) {
+                    gptkWinePath = path
+                }
+            })
+        }
+    }
+
+    private var settingsValidationPanel: some View {
+        settingsSection("Validation") {
+            Text(validationMessage.trimmingCharacters(in: .whitespacesAndNewlines))
+                .font(.system(.footnote, design: .monospaced))
+                .foregroundStyle(themeMutedForeground)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private var settingsDiagnosticsPanel: some View {
+        if model.currentOperationJob != nil
+            || model.latestDoctorResult != nil
+            || model.latestSetupResult != nil
+            || model.activeBackendJobs.isEmpty == false
+            || model.recentBackendJobs.isEmpty == false {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Diagnostics")
+                    .font(.headline)
+                    .foregroundStyle(themeForeground)
+
+                if model.currentOperationJob != nil {
+                    settingsCurrentOperationPanel
+                }
+                if model.latestDoctorResult != nil || model.latestSetupResult != nil {
+                    settingsResultsPanel
+                }
+                if model.activeBackendJobs.isEmpty == false || model.recentBackendJobs.isEmpty == false {
+                    settingsJobsPanel
+                }
+            }
+        }
+
+        settingsCommandPanel
+        settingsActivityPanel
+    }
+
+    private func settingsSection<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .font(.headline)
+                .foregroundStyle(themeForeground)
+            content()
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(themePanelRaised)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func settingsControlRow<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        HStack(spacing: 16) {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(themeForeground)
+            Spacer()
+            content()
+                .frame(maxWidth: 460)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(themePanel)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private func labeledField(_ title: String, text: Binding<String>, browseAction: (() -> Void)? = nil) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
                 .font(.subheadline.weight(.semibold))
+                .foregroundStyle(themeForeground)
             HStack(spacing: 10) {
                 TextField(title, text: text)
                     .textFieldStyle(.roundedBorder)
@@ -221,6 +325,9 @@ struct SettingsSheet: View {
                 }
             }
         }
+        .padding(14)
+        .background(themePanel)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private func pickPath(canChooseFiles: Bool, canChooseDirectories: Bool) -> String? {
@@ -239,10 +346,6 @@ struct SettingsSheet: View {
                     Text("Runtime Center")
                         .font(.headline)
                         .foregroundStyle(themeForeground)
-                    Text("Install managed Wine, DXVK, and DXMT builds without manually unpacking archives.")
-                        .font(.subheadline)
-                        .foregroundStyle(themeMutedForeground)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
                 Button {
@@ -270,7 +373,7 @@ struct SettingsSheet: View {
             }
         }
         .padding(16)
-        .background(themePanel)
+        .background(themePanelRaised)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
@@ -297,19 +400,9 @@ struct SettingsSheet: View {
                         .foregroundStyle(themeMutedForeground)
                 }
 
-                Text(runtime.notes ?? "Managed runtime catalog entry.")
-                    .font(.caption)
-                    .foregroundStyle(themeMutedForeground)
-                    .fixedSize(horizontal: false, vertical: true)
-
                 HStack(spacing: 8) {
                     Text(runtime.source ?? "local")
                     Text(runtime.license ?? "unknown license")
-                    if let path = installedRuntime?.path ?? runtime.path {
-                        Text(path)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
                 }
                 .font(.caption2.monospaced())
                 .foregroundStyle(themeMutedForeground)
@@ -331,88 +424,55 @@ struct SettingsSheet: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(themePanelRaised)
+        .background(themePanel)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private var settingsOperationsPanel: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Operations")
+            Text("Tools")
                 .font(.headline)
                 .foregroundStyle(themeForeground)
-            ForEach(model.operationCards) { operation in
-                Button {
-                    if operation.kind == .winetricks {
-                        dismiss()
-                        model.openWinetricksAfterSettingsDismiss()
-                    } else {
-                        dismiss()
-                        model.performAfterSettingsDismiss(operation)
-                    }
-                } label: {
-                    HStack(alignment: .top, spacing: 12) {
-                        Image(systemName: operation.symbolName)
-                            .font(.title3.weight(.semibold))
-                            .frame(width: 32)
-                        VStack(alignment: .leading, spacing: 4) {
+
+            LazyVGrid(columns: settingsColumns, alignment: .leading, spacing: 10) {
+                ForEach(settingsOperationCards) { operation in
+                    Button {
+                        if operation.kind == .winetricks {
+                            dismiss()
+                            model.openWinetricksAfterSettingsDismiss()
+                        } else {
+                            dismiss()
+                            model.performAfterSettingsDismiss(operation)
+                        }
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: operation.symbolName)
+                                .font(.title3.weight(.semibold))
+                                .frame(width: 28)
+                                .foregroundStyle(themeForeground)
                             Text(operation.title)
                                 .fontWeight(.semibold)
                                 .foregroundStyle(themeForeground)
-                            Text(operation.detail)
-                                .font(.subheadline)
+                                .lineLimit(2)
+                            Spacer()
+                            Image(systemName: "arrow.right")
                                 .foregroundStyle(themeMutedForeground)
                         }
-                        Spacer()
-                        Image(systemName: "arrow.right")
-                            .foregroundStyle(themeMutedForeground)
+                        .padding(14)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(themePanel)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                     }
-                    .padding(14)
-                    .background(themePanel)
-                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .buttonStyle(.plain)
+                    .help(operation.detail)
+                    .disabled(model.isBusy)
+                    .opacity(model.isBusy ? 0.65 : 1)
                 }
-                .buttonStyle(.plain)
-                .disabled(model.isBusy)
-                .opacity(model.isBusy ? 0.65 : 1)
             }
         }
-    }
-
-    private var settingsStatusPanel: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Backend Target")
-                .font(.headline)
-                .foregroundStyle(themeForeground)
-            Text(model.settingsSummary)
-                .font(.subheadline)
-                .foregroundStyle(themeMutedForeground)
-                .fixedSize(horizontal: false, vertical: true)
-            Text("Wine Runtime: \(model.wineRuntimeSummary)")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(themeForeground)
-            Text("Wine Path: \(model.backendContext.winePath)")
-                .font(.system(.footnote, design: .monospaced))
-                .foregroundStyle(themeMutedForeground)
-                .textSelection(.enabled)
-            Text("GPTK Wine: \(model.backendContext.gptkWinePath)")
-                .font(.system(.footnote, design: .monospaced))
-                .foregroundStyle(themeMutedForeground)
-                .textSelection(.enabled)
-            Text("DXMT: \(model.backendContext.dxmtSource)")
-                .font(.system(.footnote, design: .monospaced))
-                .foregroundStyle(themeMutedForeground)
-                .textSelection(.enabled)
-            Text("DXVK: \(model.backendContext.dxvkSource)")
-                .font(.system(.footnote, design: .monospaced))
-                .foregroundStyle(themeMutedForeground)
-                .textSelection(.enabled)
-            Text("D3DMetal: \(model.backendContext.d3dMetalSource)")
-                .font(.system(.footnote, design: .monospaced))
-                .foregroundStyle(themeMutedForeground)
-                .textSelection(.enabled)
-        }
         .padding(16)
-        .background(themePanel)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .background(themePanelRaised)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private var settingsResultsPanel: some View {

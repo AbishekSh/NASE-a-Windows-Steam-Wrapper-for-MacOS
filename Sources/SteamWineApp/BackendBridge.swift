@@ -243,6 +243,22 @@ struct BackendContext {
         )
     }
 
+    func overridingRuntimeSources(dxmtSource: String? = nil, dxvkSource: String? = nil) -> BackendContext {
+        let cleanedDXMT = (dxmtSource ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanedDXVK = (dxvkSource ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return BackendContext(
+            repoRoot: repoRoot,
+            pythonCommand: pythonCommand,
+            winePath: winePath,
+            dxmtSource: cleanedDXMT.isEmpty ? self.dxmtSource : cleanedDXMT,
+            dxvkSource: cleanedDXVK.isEmpty ? self.dxvkSource : cleanedDXVK,
+            d3dMetalSource: d3dMetalSource,
+            gptkWinePath: gptkWinePath,
+            bottleName: bottleName,
+            externalPrefix: externalPrefix
+        )
+    }
+
     func compatibilityContext(for graphicsBackend: GraphicsBackendOption) -> BackendContext {
         guard graphicsBackend == .d3dmetal else { return self }
         return BackendContext(

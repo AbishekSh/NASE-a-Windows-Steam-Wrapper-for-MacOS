@@ -84,36 +84,38 @@ struct ContentView: View {
                 .padding(.vertical, 12)
             }
 
-            Divider()
+            if shouldShowSidebarFooter {
+                Divider()
 
-            VStack(spacing: 8) {
-                if model.selectedRunner == .steam {
-                    Button {
-                        model.perform(
-                            OperationCard(
-                                kind: .openSteam,
-                                title: "Open Steam",
-                                detail: "Launch Windows Steam without waiting for it to exit.",
-                                symbolName: "play.circle"
+                VStack(spacing: 8) {
+                    if model.selectedRunner == .steam {
+                        Button {
+                            model.perform(
+                                OperationCard(
+                                    kind: .openSteam,
+                                    title: "Open Steam",
+                                    detail: "Launch Windows Steam without waiting for it to exit.",
+                                    symbolName: "play.circle"
+                                )
                             )
-                        )
-                    } label: {
-                        sidebarFooterLabel("Open Steam", systemImage: "play.circle")
-                    }
-                    .buttonStyle(.plain)
+                        } label: {
+                            sidebarFooterLabel("Open Steam", systemImage: "play.circle")
+                        }
+                        .buttonStyle(.plain)
 
-                    Button {
-                        model.refreshGames()
-                    } label: {
-                        sidebarFooterLabel("Refresh", systemImage: "arrow.clockwise")
+                        Button {
+                            model.refreshGames()
+                        } label: {
+                            sidebarFooterLabel("Refresh", systemImage: "arrow.clockwise")
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
+
+                    addGameControl
                 }
-
-                addGameControl
+                .padding(10)
+                .background(themePanel)
             }
-            .padding(10)
-            .background(themePanel)
         }
         .background(themeSidebar)
         .navigationTitle("Sources")
@@ -340,6 +342,10 @@ struct ContentView: View {
         }
     }
 
+    private var shouldShowSidebarFooter: Bool {
+        model.selectedRunner == .steam || model.shouldShowAddButton
+    }
+
     @ViewBuilder
     private var addGameControl: some View {
         if model.shouldShowAddButton {
@@ -352,14 +358,14 @@ struct ContentView: View {
                         model.openWineInstaller()
                     }
                 } label: {
-                    toolbarButtonLabel("Add", systemImage: "plus")
+                    sidebarFooterLabel("Add", systemImage: "plus")
                 }
                 .menuStyle(.borderlessButton)
             } else {
                 Button {
                     model.performPrimaryAddAction()
                 } label: {
-                    toolbarButtonLabel(model.selectedRunnerActionTitle, systemImage: "plus")
+                    sidebarFooterLabel(model.selectedRunnerActionTitle, systemImage: "plus")
                 }
                 .buttonStyle(.plain)
             }

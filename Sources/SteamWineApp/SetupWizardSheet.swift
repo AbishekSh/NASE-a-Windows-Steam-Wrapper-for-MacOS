@@ -507,7 +507,7 @@ struct SetupWizardSheet: View {
             let cacheURL = appCacheURL().appendingPathComponent("downloads", isDirectory: true)
             try FileManager.default.createDirectory(at: cacheURL, withIntermediateDirectories: true)
             let destinationURL = cacheURL.appendingPathComponent("dxmt-0.71.tar.gz")
-            let remoteURL = URL(string: "https://github.com/3Shain/dxmt/releases/download/v0.71/dxmt-windows-and-linux-v0.71.tar.gz")!
+            let remoteURL = URL(string: "https://github.com/3Shain/dxmt/releases/download/v0.71/dxmt-v0.71-builtin.tar.gz")!
             let (temporaryURL, _) = try await URLSession.shared.download(from: remoteURL)
             _ = try? FileManager.default.removeItem(at: destinationURL)
             try FileManager.default.moveItem(at: temporaryURL, to: destinationURL)

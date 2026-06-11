@@ -223,7 +223,7 @@ final class AppViewModel {
     }
 
     var bridgeCommands: [BackendCommand] {
-        BackendBridge.commands(for: selectedRunner ?? .steam, context: backendContext, selectedGame: selectedGame)
+        BackendBridge.commands(for: selectedRunner ?? .steam, context: effectiveBackendContext(), selectedGame: selectedGame)
     }
 
     var libraryEmptyMessage: String {
@@ -251,6 +251,11 @@ final class AppViewModel {
             return "\(wineRuntimeSummary) • External prefix: \(externalPrefix)"
         }
         return "\(wineRuntimeSummary) • Managed bottle: \(backendContext.bottleName)"
+    }
+
+    private var appSupportRootURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/MySteamWine", isDirectory: true)
     }
 
     var steamLibraryCacheURL: URL? {
@@ -439,6 +444,7 @@ final class AppViewModel {
                 await MainActor.run {
                     self.runtimeCatalog = catalog.runtimes
                     self.installedManagedRuntimes = installed.runtimes
+                    self.applyManagedRuntimeSourceDefaults()
                 }
             } catch {
                 await MainActor.run {
@@ -633,7 +639,7 @@ final class AppViewModel {
         executeDetached(
             .setupMetal,
             successMessage: "Setup Metal finished.",
-            context: backendContext
+            context: effectiveBackendContext()
         )
     }
 
@@ -649,7 +655,7 @@ final class AppViewModel {
         executeDetached(
             .installDXVK,
             successMessage: "Installed DXVK.",
-            context: backendContext
+            context: effectiveBackendContext()
         )
     }
 
@@ -1071,21 +1077,21 @@ final class AppViewModel {
             executeDetached(
                 .openWinecfg,
                 successMessage: "Opened winecfg.",
-                context: backendContext
+                context: effectiveBackendContext()
             )
             return
         case .killWine:
             executeDetached(
                 .killWine,
                 successMessage: "Stopped Wine processes.",
-                context: backendContext
+                context: effectiveBackendContext()
             )
             return
         case .openSteam:
             executeDetached(
                 .openSteam,
                 successMessage: "Opened Steam.",
-                context: backendContext
+                context: effectiveBackendContext()
             )
             return
         case .refreshGames:
@@ -1104,9 +1110,9 @@ final class AppViewModel {
 
         let context: BackendContext = switch action {
         case .installD3DMetal:
-            backendContext.compatibilityContext(for: .d3dmetal)
+            effectiveBackendContext(backendContext.compatibilityContext(for: .d3dmetal))
         default:
-            backendContext
+            effectiveBackendContext()
         }
 
         rightPanelMessage = "Running \(operation.title)..."
@@ -1299,7 +1305,7 @@ final class AppViewModel {
         executeDetached(
             .setupMetal,
             successMessage: "First-launch setup finished.",
-            context: backendContext
+            context: effectiveBackendContext()
         )
     }
 
@@ -2214,10 +2220,11 @@ final class AppViewModel {
 
     private func effectiveContext(for game: LibraryGame) -> BackendContext {
         let settings = settings(for: game)
-        return backendContext.overridingTarget(
+        let context = backendContext.overridingTarget(
             bottleName: settings.assignedBottleName,
             externalPrefix: settings.assignedExternalPrefix
         ).compatibilityContext(for: settings.graphicsBackend)
+        return effectiveBackendContext(context)
     }
 
     private func setLaunchStatus(_ phase: GameLaunchPhase, for game: LibraryGame, message: String) {
@@ -2410,11 +2417,91 @@ final class AppViewModel {
             return URL(fileURLWithPath: externalPrefix)
         }
 
-        return FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/MySteamWine", isDirectory: true)
+        return appSupportRootURL
             .appendingPathComponent("bottles", isDirectory: true)
             .appendingPathComponent(context.bottleName, isDirectory: true)
             .appendingPathComponent("prefix", isDirectory: true)
+    }
+
+    private func effectiveBackendContext(_ context: BackendContext? = nil) -> BackendContext {
+        let baseContext = context ?? backendContext
+        return baseContext.overridingRuntimeSources(
+            dxmtSource: managedRuntimeSource(kind: "dxmt"),
+            dxvkSource: managedRuntimeSource(kind: "dxvk")
+        )
+    }
+
+    @discardableResult
+    private func applyManagedRuntimeSourceDefaults() -> Bool {
+        let managedDXMT = managedRuntimeSource(kind: "dxmt")
+        let managedDXVK = managedRuntimeSource(kind: "dxvk")
+        let nextContext = backendContext.overridingRuntimeSources(
+            dxmtSource: managedDXMT,
+            dxvkSource: managedDXVK
+        )
+
+        guard nextContext.dxmtSource != backendContext.dxmtSource
+            || nextContext.dxvkSource != backendContext.dxvkSource else {
+            return false
+        }
+
+        backendContext = nextContext
+        backendContext.persist()
+
+        var changes: [String] = []
+        if let managedDXMT, managedDXMT == backendContext.dxmtSource {
+            changes.append("DXMT: \(managedDXMT)")
+        }
+        if let managedDXVK, managedDXVK == backendContext.dxvkSource {
+            changes.append("DXVK: \(managedDXVK)")
+        }
+        if changes.isEmpty == false {
+            appendLog("Runtime Center defaults updated.\n\(changes.joined(separator: "\n"))")
+        }
+        return true
+    }
+
+    private func managedRuntimeSource(kind: String) -> String? {
+        let fileManager = FileManager.default
+        let preferredIDs: [String] = switch kind {
+        case "dxmt":
+            ["dxmt-0.71", "dxmt-0.70"]
+        case "dxvk":
+            ["dxvk-2.7.1"]
+        default:
+            []
+        }
+
+        for runtimeID in preferredIDs {
+            if let runtime = installedManagedRuntimes.first(where: { $0.id == runtimeID && $0.kind == kind }),
+               let path = runtime.path,
+               fileManager.fileExists(atPath: path) {
+                return path
+            }
+        }
+
+        let runtimeRoot = appSupportRootURL
+            .appendingPathComponent("runtimes", isDirectory: true)
+            .appendingPathComponent(kind, isDirectory: true)
+
+        for runtimeID in preferredIDs {
+            let runtimeURL = runtimeRoot.appendingPathComponent(runtimeID, isDirectory: true)
+            if fileManager.fileExists(atPath: runtimeURL.path) {
+                return runtimeURL.path
+            }
+        }
+
+        if kind == "dxmt" {
+            return nil
+        }
+
+        if let runtime = installedManagedRuntimes.first(where: { $0.kind == kind }),
+           let path = runtime.path,
+           fileManager.fileExists(atPath: path) {
+            return path
+        }
+
+        return nil
     }
 
     private func loadDllOverrides(from prefixURL: URL) -> [String] {

@@ -191,7 +191,7 @@ python3 mysteamwine.py --json list-runtime-catalog
 python3 mysteamwine.py --json list-installed-runtimes
 
 # download, verify, extract, and register/install a runtime
-python3 mysteamwine.py --wine /opt/homebrew/bin/wine install-runtime --runtime dxmt-0.80
+python3 mysteamwine.py --wine /opt/homebrew/bin/wine install-runtime --runtime dxmt-0.71
 
 # install Winetricks verbs
 python3 mysteamwine.py winetricks --verbs vcrun2019,d3dx9
