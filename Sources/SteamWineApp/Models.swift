@@ -295,6 +295,43 @@ struct WineRuntimeRecord: Identifiable, Codable, Hashable {
     }
 }
 
+struct ManagedRuntime: Identifiable, Codable, Hashable {
+    let id: String
+    let name: String
+    let version: String
+    let kind: String
+    let source: String?
+    let downloadURL: String?
+    let sha256: String?
+    let archiveType: String?
+    let installLayout: String?
+    let license: String?
+    let notes: String?
+    let installed: Bool
+    let path: String?
+    let executable: String?
+    let installedAt: Double?
+
+    var displayName: String {
+        "\(name) \(version)"
+    }
+
+    var kindLabel: String {
+        switch kind {
+        case "wine":
+            return "Wine"
+        case "dxvk":
+            return "DXVK"
+        case "dxmt":
+            return "DXMT"
+        case "d3dmetal":
+            return "D3DMetal"
+        default:
+            return kind.capitalized
+        }
+    }
+}
+
 enum LibrarySourceFilter: String, CaseIterable, Identifiable {
     case all = "All Sources"
     case mac = "macOS"

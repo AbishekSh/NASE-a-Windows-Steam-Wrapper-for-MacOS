@@ -116,6 +116,8 @@ final class AppViewModel {
     private(set) var latestScanResult: BackendStructuredResult?
     private(set) var latestAdviceResult: BackendStructuredResult?
     private(set) var wineRuntimes: [WineRuntimeRecord] = []
+    private(set) var runtimeCatalog: [ManagedRuntime] = []
+    private(set) var installedManagedRuntimes: [ManagedRuntime] = []
     private(set) var discoveredSteamGames: [LibraryGame] = []
     private(set) var nativeApps: [LibraryGame] = []
     private(set) var wineApps: [LibraryGame] = []
@@ -425,6 +427,64 @@ final class AppViewModel {
             return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
         }
         persistWineRuntimes()
+    }
+
+    func refreshRuntimeCenter() {
+        let context = backendContext
+        Task.detached(priority: .userInitiated) {
+            do {
+                async let catalogResponse = BackendBridge.execute(.listRuntimeCatalog, context: context)
+                async let installedResponse = BackendBridge.execute(.listInstalledRuntimes, context: context)
+                let (catalog, installed) = try await (catalogResponse, installedResponse)
+                await MainActor.run {
+                    self.runtimeCatalog = catalog.runtimes
+                    self.installedManagedRuntimes = installed.runtimes
+                }
+            } catch {
+                await MainActor.run {
+                    self.appendLog("Runtime catalog refresh failed:\n\(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    func installManagedRuntime(_ runtime: ManagedRuntime) {
+        let action = BackendAction.installRuntime(id: runtime.id)
+        guard !isActionRunning(action) else { return }
+        appendLog("== Install Runtime ==\n\(BackendBridge.preview(action, context: backendContext))")
+        rightPanelMessage = "Installing \(runtime.displayName)..."
+        let activeJobID = beginBackendJob(for: action, message: "Installing \(runtime.displayName)...")
+        let context = backendContext
+
+        Task.detached(priority: .userInitiated) {
+            do {
+                let response = try await BackendBridge.executeStreaming(action, context: context) { update in
+                    await MainActor.run {
+                        self.applyStreamUpdate(update, fallbackActiveJobID: activeJobID, action: action)
+                    }
+                }
+                await MainActor.run {
+                    if let responseJob = response.job {
+                        self.reconcileDetachedJob(responseJob, fallbackActiveJobID: activeJobID, action: action)
+                    } else {
+                        let fallbackJob = self.makeFallbackJob(for: action, status: .completed, message: "Installed \(runtime.displayName).")
+                        self.completeBackendJob(activeJobID, finalJob: fallbackJob)
+                    }
+                    self.appendLog(response.output)
+                    self.rightPanelMessage = "Installed \(runtime.displayName)."
+                    self.refreshRuntimeCenter()
+                    self.refreshWineRuntimes()
+                }
+            } catch {
+                await MainActor.run {
+                    let message = error.localizedDescription
+                    let fallbackJob = self.makeFallbackJob(for: action, status: .failed, message: message)
+                    self.completeBackendJob(activeJobID, finalJob: fallbackJob)
+                    self.appendLog("Runtime install failed:\n\(message)")
+                    self.rightPanelMessage = "Runtime install failed."
+                }
+            }
+        }
     }
 
     func importWineAppRuntime() {
@@ -2005,6 +2065,12 @@ final class AppViewModel {
             return "Open Steam"
         case .listGames:
             return "Refresh Games"
+        case .listRuntimeCatalog:
+            return "Refresh Runtime Catalog"
+        case .listInstalledRuntimes:
+            return "Refresh Managed Runtimes"
+        case .installRuntime:
+            return "Install Runtime"
         case .launchGame:
             return "Launch Game"
         case .smartLaunchGame:
@@ -2040,6 +2106,12 @@ final class AppViewModel {
             return "Steam launch sent."
         case .listGames:
             return "Refresh Games finished."
+        case .listRuntimeCatalog:
+            return "Runtime catalog refreshed."
+        case .listInstalledRuntimes:
+            return "Managed runtimes refreshed."
+        case .installRuntime:
+            return "Runtime installed."
         case .launchGame:
             return "Launch request sent."
         case .smartLaunchGame:

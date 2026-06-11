@@ -9,6 +9,7 @@ from pathlib import Path
 from . import APP_NAME, DEFAULT_BOTTLE_NAME
 from .advisor import recommend_dependencies
 from .bottle import app_support_root, bottle_paths, ensure_bottle_dirs, external_prefix_paths, wipe_all_bottles
+from .catalog import install_runtime, list_installed_runtimes, list_runtime_catalog
 from .d3dmetal import install_d3dmetal
 from .doctor import apply_doctor_fixes, run_doctor, set_prefix_windows_version
 from .dxmt import install_dxmt
@@ -489,6 +490,100 @@ def cmd_install_d3dmetal(args: argparse.Namespace) -> None:
     )
     if code != 0:
         raise SystemExit(f"D3DMetal install failed (exit {code}). Tail:\n{tail}")
+
+
+def cmd_list_runtime_catalog(args: argparse.Namespace) -> None:
+    catalog = list_runtime_catalog()
+    if _json_enabled(args) or _stream_enabled(args):
+        _emit_json(
+            action="list-runtime-catalog",
+            ok=True,
+            message="Runtime catalog listed.",
+            data={"runtimes": catalog},
+        )
+        return
+
+    for item in catalog:
+        installed = "installed" if item.get("installed") else "available"
+        print(f"{item['id']}\t{item['kind']}\t{item['name']}\t{item['version']}\t{installed}")
+
+
+def cmd_list_installed_runtimes(args: argparse.Namespace) -> None:
+    runtimes = [runtime.__dict__ for runtime in list_installed_runtimes()]
+    if _json_enabled(args) or _stream_enabled(args):
+        _emit_json(
+            action="list-installed-runtimes",
+            ok=True,
+            message="Installed runtimes listed.",
+            data={"runtimes": runtimes},
+        )
+        return
+
+    if not runtimes:
+        print("No managed runtimes installed.")
+        return
+    for runtime in runtimes:
+        print(f"{runtime['id']}\t{runtime['kind']}\t{runtime['name']}\t{runtime['version']}\t{runtime['path']}")
+
+
+def cmd_install_runtime(args: argparse.Namespace) -> None:
+    bottle = _resolve_bottle(args)
+    wine_path = None
+    if args.wine or args.wine64:
+        wine_path = _require_wine64(args)
+    action = "install-runtime"
+    job_id = _stream_start(action=action, message=f"Installing runtime {args.runtime}...") if _stream_enabled(args) else None
+
+    def callback(name: str, status: str, message: str) -> None:
+        if _stream_enabled(args):
+            _stream_step(
+                action=action,
+                job_id=job_id or uuid.uuid4().hex,
+                name=name,
+                status=status,
+                message=message,
+            )
+
+    try:
+        installed, notes = install_runtime(
+            runtime_id=args.runtime,
+            bottle=bottle,
+            wine_path=wine_path,
+            install_into_bottle=not args.no_bottle_install,
+            callback=callback,
+        )
+    except Exception as exc:
+        message = str(exc)
+        if _stream_enabled(args):
+            _stream_result(
+                action=action,
+                job_id=job_id or uuid.uuid4().hex,
+                ok=False,
+                status="failed",
+                message=message,
+                errors=[message],
+            )
+            raise SystemExit(1)
+        _json_error(args, action=action, message=message, code=1)
+
+    data = {"runtime": installed.__dict__, "notes": notes}
+    message = f"Installed {installed.name} {installed.version}."
+    if _stream_enabled(args):
+        _stream_result(
+            action=action,
+            job_id=job_id or uuid.uuid4().hex,
+            ok=True,
+            status="completed",
+            message=message,
+            data=data,
+        )
+        return
+    if _json_enabled(args):
+        _emit_json(action=action, ok=True, message=message, data=data)
+        return
+    print(message)
+    for note in notes:
+        print(note)
 
 
 def cmd_setup_metal(args: argparse.Namespace) -> None:
@@ -1501,6 +1596,23 @@ def build_parser() -> argparse.ArgumentParser:
     d3dmetal_cmd = sub.add_parser("install-d3dmetal", help="Install D3DMetal into the bottle from a local folder or tar.gz")
     d3dmetal_cmd.add_argument("--d3dmetal-source", required=True, help="Path to a D3DMetal directory or tar.gz archive")
     d3dmetal_cmd.set_defaults(func=cmd_install_d3dmetal)
+
+    sub.add_parser("list-runtime-catalog", help="List installable Wine and graphics runtimes").set_defaults(
+        func=cmd_list_runtime_catalog
+    )
+
+    sub.add_parser("list-installed-runtimes", help="List managed runtimes installed by the launcher").set_defaults(
+        func=cmd_list_installed_runtimes
+    )
+
+    runtime_cmd = sub.add_parser("install-runtime", help="Download, verify, extract, and optionally install a managed runtime")
+    runtime_cmd.add_argument("--runtime", required=True, help="Runtime id from list-runtime-catalog")
+    runtime_cmd.add_argument(
+        "--no-bottle-install",
+        action="store_true",
+        help="Only download/register the runtime; do not install graphics DLLs into the selected bottle",
+    )
+    runtime_cmd.set_defaults(func=cmd_install_runtime)
 
     setup_cmd = sub.add_parser(
         "setup-metal",

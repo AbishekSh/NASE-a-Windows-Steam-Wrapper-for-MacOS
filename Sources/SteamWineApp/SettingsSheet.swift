@@ -72,6 +72,8 @@ struct SettingsSheet: View {
                     .background(themePanel)
                     .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
 
+                    settingsRuntimeCenterPanel
+
                     Picker("Target Mode", selection: $useExternalPrefix) {
                         Text("Managed Bottle").tag(false)
                         Text("External Prefix").tag(true)
@@ -193,6 +195,7 @@ struct SettingsSheet: View {
         .background(themeBackground)
         .task {
             model.refreshWineRuntimes()
+            model.refreshRuntimeCenter()
             winePath = model.backendContext.winePath
             dxmtSource = model.backendContext.dxmtSource
             dxvkSource = model.backendContext.dxvkSource
@@ -227,6 +230,109 @@ struct SettingsSheet: View {
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = false
         return panel.runModal() == .OK ? panel.url?.path : nil
+    }
+
+    private var settingsRuntimeCenterPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Runtime Center")
+                        .font(.headline)
+                        .foregroundStyle(themeForeground)
+                    Text("Install managed Wine, DXVK, and DXMT builds without manually unpacking archives.")
+                        .font(.subheadline)
+                        .foregroundStyle(themeMutedForeground)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                Button {
+                    model.refreshRuntimeCenter()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .help("Refresh runtime catalog")
+            }
+
+            if model.runtimeCatalog.isEmpty {
+                Text("Runtime catalog has not loaded yet.")
+                    .font(.subheadline)
+                    .foregroundStyle(themeMutedForeground)
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(themePanelRaised)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            } else {
+                VStack(spacing: 10) {
+                    ForEach(model.runtimeCatalog) { runtime in
+                        runtimeCatalogRow(runtime)
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .background(themePanel)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func runtimeCatalogRow(_ runtime: ManagedRuntime) -> some View {
+        let installedRuntime = model.installedManagedRuntimes.first(where: { $0.id == runtime.id })
+        let isInstalled = runtime.installed || installedRuntime != nil
+        let isInstalling = model.activeBackendJobs.contains {
+            $0.action == "Install Runtime" && ($0.status == .queued || $0.status == .started)
+        }
+
+        return HStack(alignment: .top, spacing: 12) {
+            Image(systemName: runtime.kind == "wine" ? "wineglass" : "shippingbox")
+                .font(.title3.weight(.semibold))
+                .frame(width: 28)
+                .foregroundStyle(themeForeground)
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Text(runtime.displayName)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(themeForeground)
+                    Text(runtime.kindLabel)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(themeMutedForeground)
+                }
+
+                Text(runtime.notes ?? "Managed runtime catalog entry.")
+                    .font(.caption)
+                    .foregroundStyle(themeMutedForeground)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: 8) {
+                    Text(runtime.source ?? "local")
+                    Text(runtime.license ?? "unknown license")
+                    if let path = installedRuntime?.path ?? runtime.path {
+                        Text(path)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
+                .font(.caption2.monospaced())
+                .foregroundStyle(themeMutedForeground)
+            }
+
+            Spacer()
+
+            Button {
+                model.installManagedRuntime(runtime)
+            } label: {
+                if isInstalling && !isInstalled {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Text(isInstalled ? "Installed" : "Install")
+                }
+            }
+            .disabled(isInstalled || isInstalling)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(themePanelRaised)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private var settingsOperationsPanel: some View {

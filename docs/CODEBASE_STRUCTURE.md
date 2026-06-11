@@ -68,7 +68,7 @@ The bridge should remain the only place that knows the exact CLI argument shape.
 
 ### Sheets
 
-- `SettingsSheet.swift`: backend paths, bottle/prefix selection, runtime status, job history, doctor/setup summaries.
+- `SettingsSheet.swift`: backend paths, bottle/prefix selection, Runtime Center, runtime status, job history, doctor/setup summaries.
 - `SetupWizardSheet.swift`: guided first-run setup.
 - `WinetricksSheet.swift`: Winetricks UI.
 - `GameSheets.swift`: game details, settings, logs, metadata, and per-game controls.
@@ -91,6 +91,7 @@ The CLI is the compatibility contract. Existing commands should keep working eve
 ### Runtime And Bottles
 
 - `runtime.py`: executable resolution, Wine runtime detection, process execution, detached process spawning, downloads, and sanitized Metal-related environment handling.
+- `catalog.py`: managed runtime catalog for Wine, DXVK, and DXMT. It owns pinned download URLs/checksums, archive extraction, install records, and one-button install helpers that can apply graphics payloads to the selected bottle.
 - `bottle.py`: managed and external-prefix path model.
   - Managed bottles live under `~/Library/Application Support/MySteamWine/bottles/<name>/`.
   - External prefixes get app-managed logs/download/cache folders under `external-prefixes/<hash>/` while preserving the external prefix path itself.

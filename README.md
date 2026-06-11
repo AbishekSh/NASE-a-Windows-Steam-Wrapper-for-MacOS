@@ -43,7 +43,10 @@ Install these on the Mac side before first setup:
 - `wine-stable 11.0` recommended
 - `winetricks`
 - Rosetta 2 on Apple Silicon
-- DXMT/DXVK/D3DMetal payloads as needed by the graphics mode you choose
+- GStreamer.framework when using managed Gcenx Wine builds
+- D3DMetal payloads as needed by the graphics mode you choose
+
+The app now includes an early Runtime Center in Settings for managed Wine, DXVK, and DXMT installs. The first catalog includes pinned upstream releases with checksums, so the launcher can download, verify, extract, and register/install them without manual linking.
 
 The default managed Wine prefix location is:
 
@@ -65,6 +68,7 @@ The native SwiftUI app can:
 
 - Manage Steam, Wine, macOS, and pinned library views
 - Configure Wine path, DXMT source, DXVK source, D3DMetal source, managed bottle, and external prefix
+- Install managed Wine, DXVK, and DXMT runtime builds from Settings
 - Run first-time Metal setup
 - Run doctor checks and safe repair actions
 - Open Windows Steam without waiting for it to exit
@@ -99,6 +103,7 @@ Key Swift files:
 Key Python modules:
 
 - `mysteamwine/runtime.py`: process execution, downloads, executable resolution, Wine runtime detection
+- `mysteamwine/catalog.py`: managed runtime catalog, downloads, checksum verification, extraction, and install records
 - `mysteamwine/bottle.py`: managed bottle and external-prefix paths
 - `mysteamwine/steam.py`: Steam installer/runner, VDF parsing, manifest discovery, Steam/direct game launch helpers
 - `mysteamwine/cli.py`: backend command contract, JSON/JSONL output, job events
@@ -179,6 +184,15 @@ python3 mysteamwine.py --wine /opt/homebrew/bin/wine debug-game --exe "/path/to/
 Dependency and graphics helpers:
 
 ```bash
+# list managed runtime catalog entries
+python3 mysteamwine.py --json list-runtime-catalog
+
+# list runtimes already installed by the launcher
+python3 mysteamwine.py --json list-installed-runtimes
+
+# download, verify, extract, and register/install a runtime
+python3 mysteamwine.py --wine /opt/homebrew/bin/wine install-runtime --runtime dxmt-0.80
+
 # install Winetricks verbs
 python3 mysteamwine.py winetricks --verbs vcrun2019,d3dx9
 

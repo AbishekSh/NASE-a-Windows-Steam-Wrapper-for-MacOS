@@ -27,6 +27,7 @@ struct BackendGame: Identifiable, Hashable {
 struct BackendResponse {
     let output: String
     let games: [BackendGame]
+    let runtimes: [ManagedRuntime]
     let job: BackendJob?
     let structured: BackendStructuredResult?
 }
@@ -89,6 +90,8 @@ private struct BackendJSONResponse: Decodable {
 
 private struct BackendJSONData: Decodable {
     let games: [BackendJSONGame]?
+    let runtimes: [BackendJSONRuntime]?
+    let runtime: BackendJSONRuntime?
     let checks: [BackendJSONCheck]?
     let actions: [String]?
     let steps: [BackendJSONStep]?
@@ -105,6 +108,24 @@ private struct BackendJSONData: Decodable {
     let appid: String?
     let name: String?
     let executable: String?
+}
+
+private struct BackendJSONRuntime: Decodable {
+    let id: String
+    let name: String
+    let version: String
+    let kind: String
+    let source: String?
+    let download_url: String?
+    let sha256: String?
+    let archive_type: String?
+    let install_layout: String?
+    let license: String?
+    let notes: String?
+    let installed: Bool?
+    let path: String?
+    let executable: String?
+    let installed_at: Double?
 }
 
 private struct BackendJSONGame: Decodable {
@@ -250,6 +271,9 @@ enum BackendAction {
     case killWine
     case openSteam
     case listGames
+    case listRuntimeCatalog
+    case listInstalledRuntimes
+    case installRuntime(id: String)
     case launchGame(appid: String)
     case smartLaunchGame(appid: String, graphicsBackend: GraphicsBackendOption = .dxmt)
     case debugGame(
@@ -388,6 +412,12 @@ enum BackendBridge {
             return base + ["run-steam", "--no-wait"]
         case .listGames:
             return context.targetArguments + ["--jsonl", "list-games"]
+        case .listRuntimeCatalog:
+            return context.targetArguments + ["--jsonl", "list-runtime-catalog"]
+        case .listInstalledRuntimes:
+            return context.targetArguments + ["--jsonl", "list-installed-runtimes"]
+        case .installRuntime(let id):
+            return base + ["install-runtime", "--runtime", id]
         case .launchGame(let appid):
             return base + ["launch-game", "--appid", appid, "--dxmt-source", context.dxmtSource, "--no-wait"]
         case .smartLaunchGame(let appid, let graphicsBackend):
@@ -571,6 +601,7 @@ enum BackendBridge {
         return BackendResponse(
             output: plainText.isEmpty ? "Command finished without output." : plainText,
             games: games,
+            runtimes: [],
             job: nil,
             structured: nil
         )
@@ -580,14 +611,39 @@ enum BackendBridge {
         let games = payload.data?.games?.map {
             BackendGame(id: $0.appid, appid: $0.appid, name: $0.name, installDir: $0.install_dir)
         } ?? []
+        var runtimes = payload.data?.runtimes?.map { makeRuntime(from: $0) } ?? []
+        if let runtime = payload.data?.runtime {
+            runtimes.append(makeRuntime(from: runtime))
+        }
         let job = parseJob(from: payload)
         let structured = parseStructuredResult(from: payload)
 
         return BackendResponse(
             output: renderOutput(from: payload),
             games: games,
+            runtimes: runtimes,
             job: job,
             structured: structured
+        )
+    }
+
+    private static func makeRuntime(from payload: BackendJSONRuntime) -> ManagedRuntime {
+        ManagedRuntime(
+            id: payload.id,
+            name: payload.name,
+            version: payload.version,
+            kind: payload.kind,
+            source: payload.source,
+            downloadURL: payload.download_url,
+            sha256: payload.sha256,
+            archiveType: payload.archive_type,
+            installLayout: payload.install_layout,
+            license: payload.license,
+            notes: payload.notes,
+            installed: payload.installed ?? (payload.path != nil),
+            path: payload.path,
+            executable: payload.executable,
+            installedAt: payload.installed_at
         )
     }
 
