@@ -26,6 +26,8 @@ struct SettingsSheet: View {
 
                     settingsTargetPanel
 
+                    settingsCompatibilityProfilesPanel
+
                     settingsRuntimeCenterPanel
 
                     settingsOperationsPanel
@@ -370,6 +372,49 @@ struct SettingsSheet: View {
                         runtimeCatalogRow(runtime)
                     }
                 }
+            }
+        }
+        .padding(16)
+        .background(themePanelRaised)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private var settingsCompatibilityProfilesPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Compatibility Profiles")
+                    .font(.headline)
+                    .foregroundStyle(themeForeground)
+                Text("Each profile owns a separate bottle and a pinned runtime fingerprint.")
+                    .font(.caption)
+                    .foregroundStyle(themeMutedForeground)
+            }
+
+            ForEach(GraphicsBackendOption.allCases) { profile in
+                let isReady = model.compatibilityProfileIsReady(profile)
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: profile == .dxvk ? "exclamationmark.triangle.fill" : (isReady ? "checkmark.seal.fill" : "checkmark.shield"))
+                        .frame(width: 24)
+                        .foregroundStyle(profile == .dxvk ? .orange : themeForeground)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(profile.rawValue)
+                            .font(.subheadline.weight(.semibold))
+                        Text(profile.profileSummary)
+                            .font(.caption)
+                            .foregroundStyle(themeMutedForeground)
+                        Text("Bottle: \(bottleName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Default" : bottleName)-\(profile.bottleSuffix)")
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(themeMutedForeground)
+                    }
+                    Spacer()
+                    Button(profile == .dxvk ? "Unavailable" : (isReady ? "Ready" : "Set Up")) {
+                        model.setupCompatibilityProfile(profile)
+                    }
+                    .disabled(profile == .dxvk || isReady || model.isBusy)
+                }
+                .padding(12)
+                .background(themePanel)
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
         }
         .padding(16)

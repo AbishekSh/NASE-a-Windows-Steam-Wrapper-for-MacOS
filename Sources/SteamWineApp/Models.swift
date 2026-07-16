@@ -79,7 +79,7 @@ struct SidebarSection: Identifiable {
 
 enum GraphicsBackendOption: String, CaseIterable, Identifiable, Codable {
     case dxmt = "DXMT"
-    case dxvk = "DXVK"
+    case dxvk = "DXVK-macOS"
     case d3dmetal = "D3DMetal"
     case none = "None"
 
@@ -95,6 +95,33 @@ enum GraphicsBackendOption: String, CaseIterable, Identifiable, Codable {
             return "d3dmetal"
         case .none:
             return "none"
+        }
+    }
+
+    var compatibilityProfileID: String {
+        switch self {
+        case .dxmt: "dxmt-wine-stable-11-v1"
+        case .d3dmetal: "d3dmetal-gptk-v1"
+        case .dxvk: "dxvk-macos-pinned-v1"
+        case .none: "plain-wine-v1"
+        }
+    }
+
+    var bottleSuffix: String {
+        switch self {
+        case .dxmt: "DXMT"
+        case .d3dmetal: "D3DMetal"
+        case .dxvk: "DXVK-macOS"
+        case .none: "Plain"
+        }
+    }
+
+    var profileSummary: String {
+        switch self {
+        case .dxmt: "Wine Stable 11 + DXMT 0.71"
+        case .d3dmetal: "GPTK Wine + its bundled D3DMetal"
+        case .dxvk: "Requires a pinned Wine, winevulkan, MoltenVK, and DXVK-macOS stack"
+        case .none: "Selected Wine runtime with built-in graphics"
         }
     }
 }
@@ -207,6 +234,25 @@ struct GameLaunchStatus: Hashable, Codable {
     let phase: GameLaunchPhase
     let message: String
     let updatedAt: Date
+}
+
+struct GameLaunchSession: Identifiable, Hashable, Codable {
+    let sessionID: String
+    let appid: String?
+    let game: String
+    let status: String
+    let strategy: String
+    let graphicsBackend: String
+    let profileID: String
+    let bottle: String
+    let prefix: String
+    let executable: String?
+    let installDir: String?
+    let pids: [Int]
+    let message: String
+
+    var id: String { sessionID }
+    var isActive: Bool { ["launching", "running", "stopping"].contains(status) }
 }
 
 struct BackendCheckSummary: Identifiable, Hashable {

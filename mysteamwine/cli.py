@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import textwrap
+import time
 import uuid
 from pathlib import Path
 
@@ -14,8 +15,10 @@ from .d3dmetal import install_d3dmetal
 from .doctor import apply_doctor_fixes, run_doctor, set_prefix_windows_version
 from .dxmt import install_dxmt
 from .dxvk import install_dxvk
+from .profiles import bind_profile, list_profiles, mark_profile_ready
 from .runtime import detect_wine_runtime, is_apple_silicon, resolve_executable, resolve_with_fallback, run_logged
 from .scanner import scan_game_dir
+from .sessions import create_session, mark_steam_opened_by_user, reconcile_sessions, steam_is_running, stop_session, update_session
 from .steam import (
     find_app,
     guess_game_executable,
@@ -215,6 +218,33 @@ def _resolved_graphics_backend(args: argparse.Namespace, *, for_steam: bool) -> 
     return args.graphics_backend
 
 
+def _bind_launch_profile(args: argparse.Namespace, *, action: str, bottle, wine_path: Path, graphics_backend: str) -> str:
+    defaults = {
+        "dxmt": "dxmt-wine-stable-11-v1",
+        "d3dmetal": "d3dmetal-gptk-v1",
+        "dxvk": "dxvk-macos-pinned-v1",
+        "none": "plain-wine-v1",
+    }
+    profile_id = getattr(args, "compatibility_profile", None) or defaults[graphics_backend]
+    source_value = {
+        "dxmt": getattr(args, "dxmt_source", None),
+        "d3dmetal": getattr(args, "d3dmetal_source", None),
+        "dxvk": getattr(args, "dxvk_source", None),
+        "none": None,
+    }[graphics_backend]
+    try:
+        bind_profile(
+            bottle=bottle,
+            profile_id=profile_id,
+            graphics_backend=graphics_backend,
+            wine_path=wine_path,
+            graphics_source=Path(source_value) if source_value else None,
+        )
+    except RuntimeError as exc:
+        _json_error(args, action=action, message=f"Compatibility profile is not ready: {exc}")
+    return profile_id
+
+
 def cmd_info(args: argparse.Namespace) -> None:
     bottle = _resolve_bottle(args)
     print(f"TARGET:           {_target_label(args, bottle)}")
@@ -225,6 +255,157 @@ def cmd_info(args: argparse.Namespace) -> None:
     print(f"DOWNLOADS:        {bottle.downloads}")
     print(f"CACHE:            {bottle.cache}")
     print(f"Apple Silicon:    {is_apple_silicon()}")
+
+
+def cmd_list_compatibility_profiles(args: argparse.Namespace) -> None:
+    profiles = list_profiles()
+    if _stream_enabled(args):
+        job_id = _stream_start(action="list-compatibility-profiles", message="Loading compatibility profiles...")
+        _stream_result(
+            action="list-compatibility-profiles",
+            job_id=job_id,
+            ok=True,
+            status="completed",
+            message=f"Found {len(profiles)} compatibility profiles.",
+            data={"profiles": profiles},
+        )
+        return
+    if _json_enabled(args):
+        _emit_json(
+            action="list-compatibility-profiles",
+            ok=True,
+            message="Compatibility profiles listed.",
+            data={"profiles": profiles},
+        )
+        return
+    for profile in profiles:
+        state = "ready" if profile["ready"] else "unavailable"
+        print(f"{profile['id']}\t{state}\t{profile['name']}")
+
+
+def cmd_setup_compatibility_profile(args: argparse.Namespace) -> None:
+    action = "setup-compatibility-profile"
+    wine64 = _require_wine64(args)
+    bottle = _resolve_bottle(args)
+    if _is_external_prefix(args):
+        _json_error(args, action=action, message="Compatibility profiles require a dedicated managed bottle.")
+    profile_id = args.profile
+    backend_by_profile = {
+        "dxmt-wine-stable-11-v1": "dxmt",
+        "d3dmetal-gptk-v1": "d3dmetal",
+        "dxvk-macos-pinned-v1": "dxvk",
+        "plain-wine-v1": "none",
+    }
+    if profile_id not in backend_by_profile:
+        _json_error(args, action=action, message=f"Unknown compatibility profile: {profile_id}")
+    graphics_backend = backend_by_profile[profile_id]
+    source_value = {
+        "dxmt": args.dxmt_source,
+        "d3dmetal": args.d3dmetal_source,
+        "dxvk": args.dxvk_source,
+        "none": None,
+    }[graphics_backend]
+    graphics_source = Path(source_value) if source_value else None
+    job_id = _stream_start(action=action, message=f"Preparing {profile_id} in {bottle.name}...") if _stream_enabled(args) else None
+    steps: list[dict[str, str]] = []
+
+    def run_step(name: str, message: str, operation) -> None:
+        if _stream_enabled(args):
+            _stream_step(action=action, job_id=job_id or uuid.uuid4().hex, name=name, status="started", message=message)
+        code, tail = operation()
+        if code != 0:
+            raise RuntimeError(f"{message} failed (exit {code}). Tail:\n{tail}")
+        steps.append({"name": name, "status": "ok"})
+        if _stream_enabled(args):
+            _stream_progress(
+                action=action,
+                job_id=job_id or uuid.uuid4().hex,
+                name=name,
+                status="ok",
+                message=message.replace("...", "") + " complete.",
+                completed_steps=len(steps),
+                total_steps=4,
+            )
+
+    try:
+        bind_profile(
+            bottle=bottle,
+            profile_id=profile_id,
+            graphics_backend=graphics_backend,
+            wine_path=wine64,
+            graphics_source=graphics_source,
+            require_ready=False,
+        )
+        ensure_bottle_dirs(bottle)
+        run_step(
+            "wineboot",
+            "Initializing the dedicated bottle...",
+            lambda: run_logged(
+                cmd=[str(wine64), "wineboot", "-u"],
+                env={"WINEPREFIX": str(bottle.prefix), "WINEDEBUG": "-all"},
+                log_file=bottle.logs / "01_profile_wineboot.log",
+                timeout=120,
+            ),
+        )
+        run_step(
+            "set-win10",
+            "Setting Windows 10 compatibility...",
+            lambda: set_prefix_windows_version(bottle, wine64, "win10"),
+        )
+        steam_exe = bottle.drive_c / "Program Files (x86)" / "Steam" / "Steam.exe"
+        if steam_exe.exists():
+            steps.append({"name": "install-steam", "status": "ok"})
+        else:
+            winetricks = resolve_executable(args.winetricks, "winetricks")
+            run_step(
+                "install-steam",
+                "Installing Steam...",
+                lambda: run_winetricks(
+                    bottle=bottle,
+                    winetricks_path=winetricks,
+                    verbs=["steam"],
+                    log_name="02_profile_steam.log",
+                    unattended=not args.interactive,
+                ),
+            )
+        if graphics_backend == "dxmt":
+            run_step(
+                "install-graphics",
+                "Installing DXMT 0.71...",
+                lambda: install_dxmt(bottle=bottle, dxmt_source=graphics_source, wine64_path=wine64),
+            )
+        elif graphics_backend == "d3dmetal":
+            run_step(
+                "install-graphics",
+                "Installing the matching D3DMetal payload...",
+                lambda: install_d3dmetal(bottle=bottle, d3dmetal_source=graphics_source, wine64_path=wine64),
+            )
+        else:
+            steps.append({"name": "install-graphics", "status": "ok"})
+        manifest = mark_profile_ready(bottle)
+    except Exception as exc:
+        message = str(exc)
+        if _stream_enabled(args):
+            _stream_result(
+                action=action,
+                job_id=job_id or uuid.uuid4().hex,
+                ok=False,
+                status="failed",
+                message=message,
+                data={"profile_id": profile_id, "bottle": bottle.name, "steps": steps},
+                errors=[message],
+            )
+            raise SystemExit(1)
+        _json_error(args, action=action, message=message, code=1)
+
+    message = f"{manifest['profile']['name']} is ready in {bottle.name}."
+    data = {"profile": manifest["profile"], "bottle": bottle.name, "manifest": manifest, "steps": steps}
+    if _stream_enabled(args):
+        _stream_result(action=action, job_id=job_id or uuid.uuid4().hex, ok=True, status="completed", message=message, data=data)
+    elif _json_enabled(args):
+        _emit_json(action=action, ok=True, message=message, data=data)
+    else:
+        print(message)
 
 
 def cmd_init(args: argparse.Namespace) -> None:
@@ -255,6 +436,7 @@ def cmd_install_steam(args: argparse.Namespace) -> None:
 def cmd_run_steam(args: argparse.Namespace) -> None:
     wine64 = _require_wine64(args)
     bottle = _resolve_bottle(args)
+    mark_steam_opened_by_user(str(bottle.prefix))
     job_id = _stream_start(action="run-steam", message=f"Launching Steam in {_target_label(args, bottle)}...") if _stream_enabled(args) else None
     if not _json_enabled(args):
         print(f"Launching Steam in {_target_label(args, bottle)}...")
@@ -453,6 +635,52 @@ def cmd_kill_wine(args: argparse.Namespace) -> None:
         )
         return
     print("Stopped Wine processes.")
+
+
+def cmd_list_sessions(args: argparse.Namespace) -> None:
+    sessions = reconcile_sessions()
+    active_only = not getattr(args, "all", False)
+    if active_only:
+        sessions = [session for session in sessions if session.get("status") in {"launching", "running", "stopping"}]
+    if _stream_enabled(args):
+        job_id = _stream_start(action="list-sessions", message="Reconciling launch sessions...")
+        _stream_result(
+            action="list-sessions",
+            job_id=job_id,
+            ok=True,
+            status="completed",
+            message=f"Found {len(sessions)} launch session(s).",
+            data={"sessions": sessions},
+        )
+        return
+    if _json_enabled(args):
+        _emit_json(action="list-sessions", ok=True, message="Launch sessions reconciled.", data={"sessions": sessions})
+        return
+    for session in sessions:
+        print(f"{session.get('session_id')}\t{session.get('status')}\t{session.get('game')}\t{session.get('bottle')}")
+
+
+def cmd_stop_game(args: argparse.Namespace) -> None:
+    job_id = _stream_start(action="stop-game", message="Stopping game...") if _stream_enabled(args) else None
+    session, pids = stop_session(args.session_id)
+    if session is None:
+        _json_error(args, action="stop-game", message=f"Unknown launch session: {args.session_id}")
+    message = session.get("message") or "Game stopped."
+    data = {"session": session, "stopped_pids": pids}
+    if _stream_enabled(args):
+        _stream_result(
+            action="stop-game",
+            job_id=job_id or uuid.uuid4().hex,
+            ok=True,
+            status="completed",
+            message=message,
+            data=data,
+        )
+        return
+    if _json_enabled(args):
+        _emit_json(action="stop-game", ok=True, message=message, data=data)
+        return
+    print(message)
 
 
 def cmd_install_dxvk(args: argparse.Namespace) -> None:
@@ -1005,6 +1233,9 @@ def cmd_launch_game(args: argparse.Namespace) -> None:
     bottle = _resolve_bottle(args)
     app = find_app(bottle, args.appid)
     graphics_backend = _resolved_graphics_backend(args, for_steam=False)
+    profile_id = _bind_launch_profile(
+        args, action="launch-game", bottle=bottle, wine_path=wine64, graphics_backend=graphics_backend
+    )
     job_id = _stream_start(action="launch-game", message=f"Launching {app.name} ({app.appid})...") if _stream_enabled(args) else None
     if not _json_enabled(args):
         print(f"Launching {app.name} ({app.appid}) via Steam.")
@@ -1066,6 +1297,24 @@ def cmd_launch_game(args: argparse.Namespace) -> None:
                 )
                 raise SystemExit(code)
             _json_error(args, action="launch-game", message=f"D3DMetal restore failed (exit {code}). Tail:\n{tail}", code=code)
+    try:
+        executable_hint = guess_game_executable(app.install_dir)
+    except (FileNotFoundError, RuntimeError):
+        executable_hint = None
+    steam_was_running = steam_is_running(str(bottle.prefix))
+    launch_session = create_session(
+        bottle=bottle,
+        appid=app.appid,
+        game=app.name,
+        executable=executable_hint,
+        install_dir=app.install_dir,
+        graphics_backend=graphics_backend,
+        strategy="steam",
+        profile_id=profile_id,
+        wine_path=wine64,
+        steam_started_by_nase=not steam_was_running,
+        steam_was_running=steam_was_running,
+    )
     code, tail = launch_app(
         bottle=bottle,
         wine64_path=wine64,
@@ -1074,6 +1323,12 @@ def cmd_launch_game(args: argparse.Namespace) -> None:
         wait=not args.no_wait,
     )
     if code != 0:
+        update_session(
+            launch_session["session_id"],
+            status="failed",
+            message="Steam launch failed.",
+            steam_cleanup_after=time.time() + 10 if launch_session.get("steam_started_by_nase") else None,
+        )
         if _stream_enabled(args):
             _stream_result(
                 action="launch-game",
@@ -1086,6 +1341,10 @@ def cmd_launch_game(args: argparse.Namespace) -> None:
             )
             raise SystemExit(code)
         _json_error(args, action="launch-game", message=f"App launch failed (exit {code}). Tail:\n{tail}", code=code)
+    launch_session = next(
+        (item for item in reconcile_sessions() if item.get("session_id") == launch_session["session_id"]),
+        launch_session,
+    )
     if args.no_wait:
         if _stream_enabled(args):
             _stream_result(
@@ -1094,7 +1353,7 @@ def cmd_launch_game(args: argparse.Namespace) -> None:
                 ok=True,
                 status="started",
                 message="Launch request sent.",
-                data={"appid": app.appid, "name": app.name, "tail": tail},
+                data={"appid": app.appid, "name": app.name, "tail": tail, "session": launch_session},
             )
             return
         if _json_enabled(args):
@@ -1102,7 +1361,7 @@ def cmd_launch_game(args: argparse.Namespace) -> None:
                 action="launch-game",
                 ok=True,
                 message="Launch request sent.",
-                data={"appid": app.appid, "name": app.name, "tail": tail},
+                data={"appid": app.appid, "name": app.name, "tail": tail, "session": launch_session},
                 status="started",
             )
         else:
@@ -1113,6 +1372,9 @@ def cmd_smart_launch_game(args: argparse.Namespace) -> None:
     wine64 = _require_wine64(args)
     bottle = _resolve_bottle(args)
     graphics_backend = _resolved_graphics_backend(args, for_steam=False)
+    profile_id = _bind_launch_profile(
+        args, action="smart-launch-game", bottle=bottle, wine_path=wine64, graphics_backend=graphics_backend
+    )
     try:
         app = find_app(bottle, args.appid)
     except FileNotFoundError:
@@ -1235,6 +1497,23 @@ def cmd_smart_launch_game(args: argparse.Namespace) -> None:
 
     direct_error: str | None = None
     skip_direct_reason: str | None = None
+    executable_hint: Path | None = None
+    if app is not None:
+        try:
+            executable_hint = guess_game_executable(app.install_dir)
+        except (FileNotFoundError, RuntimeError):
+            executable_hint = None
+    launch_session = create_session(
+        bottle=bottle,
+        appid=args.appid,
+        game=app_name,
+        executable=executable_hint,
+        install_dir=app.install_dir if app is not None else None,
+        graphics_backend=graphics_backend,
+        strategy="pending",
+        profile_id=profile_id,
+        wine_path=wine64,
+    )
     try:
         if app is None:
             skip_direct_reason = "No manifest found in the hidden D3DMetal environment yet; using Steam protocol launch."
@@ -1247,7 +1526,7 @@ def cmd_smart_launch_game(args: argparse.Namespace) -> None:
 
     if skip_direct_reason is None:
         try:
-            executable = guess_game_executable(app.install_dir)
+            executable = executable_hint or guess_game_executable(app.install_dir)
             code, tail = run_game_executable(
                 bottle=bottle,
                 wine64_path=wine64,
@@ -1261,6 +1540,11 @@ def cmd_smart_launch_game(args: argparse.Namespace) -> None:
                 probe_seconds=args.probe_seconds,
             )
             if code == 0:
+                update_session(launch_session["session_id"], strategy="direct", message="Direct launch request sent.")
+                launch_session = next(
+                    (item for item in reconcile_sessions() if item.get("session_id") == launch_session["session_id"]),
+                    launch_session,
+                )
                 message = "Direct launch started."
                 data = {
                     "appid": args.appid,
@@ -1268,6 +1552,7 @@ def cmd_smart_launch_game(args: argparse.Namespace) -> None:
                     "executable": str(executable),
                     "strategy": "direct",
                     "tail": tail,
+                    "session": launch_session,
                 }
                 if _stream_enabled(args):
                     _stream_result(
@@ -1296,6 +1581,13 @@ def cmd_smart_launch_game(args: argparse.Namespace) -> None:
     else:
         direct_error = skip_direct_reason
 
+    steam_was_running = steam_is_running(str(bottle.prefix))
+    update_session(
+        launch_session["session_id"],
+        steam_was_running=steam_was_running,
+        steam_started_by_nase=not steam_was_running,
+        steam_cleanup_status="not-owned" if steam_was_running else "pending",
+    )
     code, tail = launch_app(
         bottle=bottle,
         wine64_path=wine64,
@@ -1304,6 +1596,13 @@ def cmd_smart_launch_game(args: argparse.Namespace) -> None:
         wait=not args.no_wait,
     )
     if code != 0:
+        update_session(
+            launch_session["session_id"],
+            status="failed",
+            strategy="steam-fallback",
+            message="Steam launch failed.",
+            steam_cleanup_after=time.time() + 10 if not steam_was_running else None,
+        )
         failure = f"Fallback Steam launch failed (exit {code}). Tail:\n{tail}"
         combined = f"{direct_error or 'Direct launch failed.'}\n\n{failure}"
         if _stream_enabled(args):
@@ -1313,12 +1612,17 @@ def cmd_smart_launch_game(args: argparse.Namespace) -> None:
                 ok=False,
                 status="failed",
                 message=combined,
-                data={"appid": args.appid, "name": app_name, "tail": tail, "strategy": "steam-fallback"},
+                data={"appid": args.appid, "name": app_name, "tail": tail, "strategy": "steam-fallback", "session": launch_session},
                 errors=[failure],
             )
             raise SystemExit(code)
         _json_error(args, action="smart-launch-game", message=combined, code=code)
 
+    update_session(launch_session["session_id"], strategy="steam-fallback", message="Steam launch request sent.")
+    launch_session = next(
+        (item for item in reconcile_sessions() if item.get("session_id") == launch_session["session_id"]),
+        launch_session,
+    )
     message = "Opened with Steam after direct launch failed."
     data = {
         "appid": args.appid,
@@ -1326,6 +1630,7 @@ def cmd_smart_launch_game(args: argparse.Namespace) -> None:
         "strategy": "steam-fallback",
         "tail": tail,
         "warnings": [direct_error] if direct_error else [],
+        "session": launch_session,
     }
     if _stream_enabled(args):
         _stream_result(
@@ -1372,6 +1677,9 @@ def cmd_debug_game(args: argparse.Namespace) -> None:
     bottle = _resolve_bottle(args)
     executable = _resolve_debug_executable(args)
     graphics_backend = _resolved_graphics_backend(args, for_steam=False)
+    profile_id = _bind_launch_profile(
+        args, action="debug-game", bottle=bottle, wine_path=wine64, graphics_backend=graphics_backend
+    )
     job_id = _stream_start(action="debug-game", message=f"Launching {executable.name} with Wine debug logging...") if _stream_enabled(args) else None
     extra_args = list(args.game_args or [])
     if extra_args and extra_args[0] == "--":
@@ -1443,6 +1751,18 @@ def cmd_debug_game(args: argparse.Namespace) -> None:
                 )
                 raise SystemExit(code)
             _json_error(args, action="debug-game", message=f"D3DMetal restore failed (exit {code}). Tail:\n{tail}", code=code)
+    debug_app = find_app(bottle, args.appid) if args.appid else None
+    launch_session = create_session(
+        bottle=bottle,
+        appid=args.appid,
+        game=debug_app.name if debug_app else executable.stem,
+        executable=executable,
+        install_dir=debug_app.install_dir if debug_app else executable.parent,
+        graphics_backend=graphics_backend,
+        strategy="direct",
+        profile_id=profile_id,
+        wine_path=wine64,
+    )
     code, tail = run_game_executable(
         bottle=bottle,
         wine64_path=wine64,
@@ -1455,6 +1775,7 @@ def cmd_debug_game(args: argparse.Namespace) -> None:
         graphics_backend=graphics_backend,
     )
     if code != 0:
+        update_session(launch_session["session_id"], status="failed", message="Direct game launch failed.")
         if _stream_enabled(args):
             _stream_result(
                 action="debug-game",
@@ -1467,6 +1788,12 @@ def cmd_debug_game(args: argparse.Namespace) -> None:
             )
             raise SystemExit(code)
         _json_error(args, action="debug-game", message=f"Direct game launch failed (exit {code}). Tail:\n{tail}", code=code)
+    if not args.no_wait:
+        update_session(launch_session["session_id"], status="exited", message="Game process exited.")
+    launch_session = next(
+        (item for item in reconcile_sessions() if item.get("session_id") == launch_session["session_id"]),
+        launch_session,
+    )
     if _stream_enabled(args):
         _stream_result(
             action="debug-game",
@@ -1474,7 +1801,7 @@ def cmd_debug_game(args: argparse.Namespace) -> None:
             ok=True,
             status="started" if args.no_wait else "completed",
             message="Game process exited." if not args.no_wait else "Debug launch started.",
-            data={"executable": str(executable), "tail": tail},
+            data={"executable": str(executable), "tail": tail, "session": launch_session},
         )
         return
     if _json_enabled(args):
@@ -1482,7 +1809,7 @@ def cmd_debug_game(args: argparse.Namespace) -> None:
             action="debug-game",
             ok=True,
             message="Game process exited." if not args.no_wait else "Debug launch started.",
-            data={"executable": str(executable), "tail": tail},
+            data={"executable": str(executable), "tail": tail, "session": launch_session},
             status="started" if args.no_wait else "completed",
         )
     else:
@@ -1582,10 +1909,23 @@ def build_parser() -> argparse.ArgumentParser:
         default="auto",
         help="Graphics backend override to apply at launch time (default: auto: plain Steam, DXMT for games)",
     )
+    parser.add_argument(
+        "--compatibility-profile",
+        help="Pinned compatibility profile id. Defaults to the profile for --graphics-backend.",
+    )
 
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("info", help="Show paths used for this bottle").set_defaults(func=cmd_info)
+    sub.add_parser("list-compatibility-profiles", help="List pinned graphics/runtime profiles").set_defaults(func=cmd_list_compatibility_profiles)
+    profile_setup = sub.add_parser("setup-compatibility-profile", help="Prepare a dedicated bottle for a pinned graphics profile")
+    profile_setup.add_argument("--profile", required=True, help="Profile id from list-compatibility-profiles")
+    profile_setup.add_argument("--dxmt-source", help="Verified DXMT source directory")
+    profile_setup.add_argument("--dxvk-source", help="Pinned DXVK-macOS bundle directory")
+    profile_setup.add_argument("--d3dmetal-source", help="D3DMetal directory from the selected GPTK installation")
+    profile_setup.add_argument("--winetricks", default="winetricks", help="Path to winetricks")
+    profile_setup.add_argument("--interactive", action="store_true", help="Allow interactive Steam installation")
+    profile_setup.set_defaults(func=cmd_setup_compatibility_profile)
     sub.add_parser("init", help="Create or initialize the Wine prefix").set_defaults(func=cmd_init)
     sub.add_parser("install-steam", help="Download and run SteamSetup.exe").set_defaults(func=cmd_install_steam)
 
@@ -1603,6 +1943,14 @@ def build_parser() -> argparse.ArgumentParser:
     tricks_cmd.set_defaults(func=cmd_run_winetricks)
 
     sub.add_parser("kill-wine", help="Stop all Wine processes for the current bottle or prefix").set_defaults(func=cmd_kill_wine)
+
+    sessions_cmd = sub.add_parser("list-sessions", help="Reconcile and list tracked game launch sessions")
+    sessions_cmd.add_argument("--all", action="store_true", help="Include exited and failed sessions")
+    sessions_cmd.set_defaults(func=cmd_list_sessions)
+
+    stop_game_cmd = sub.add_parser("stop-game", help="Stop one tracked game session without stopping shared Steam")
+    stop_game_cmd.add_argument("--session-id", required=True, help="Launch session id returned by a game launch")
+    stop_game_cmd.set_defaults(func=cmd_stop_game)
 
     dxvk_cmd = sub.add_parser("install-dxvk", help="Install DXVK into the bottle from a local folder or tar.gz")
     dxvk_cmd.add_argument("--dxvk-source", required=True, help="Path to a DXVK directory or tar.gz archive")

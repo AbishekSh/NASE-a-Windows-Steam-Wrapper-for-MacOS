@@ -243,9 +243,13 @@ struct ContentView: View {
                                     isDragging: draggedGame?.pinID == game.pinID,
                                     collection: model.settings(for: game).collection,
                                     launchStatus: model.launchStatus(for: game),
+                                    canStop: model.canStop(game),
                                     steamCacheURL: model.steamLibraryCacheURL,
                                     onLaunch: {
                                         model.launch(game)
+                                    },
+                                    onStop: {
+                                        model.stop(game)
                                     },
                                     isPinned: model.isPinned(game),
                                     onTogglePin: {

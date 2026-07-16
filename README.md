@@ -48,6 +48,18 @@ Install these on the Mac side before first setup:
 
 The app now includes an early Runtime Center in Settings for managed Wine, DXVK, and DXMT installs. The first catalog includes pinned upstream releases with checksums, so the launcher can download, verify, extract, and register/install them without manual linking.
 
+Graphics choices are compatibility profiles rather than DLL toggles. DXMT uses Wine Stable 11 and DXMT 0.71 in a dedicated `-DXMT` bottle; D3DMetal uses GPTK Wine and its matching D3DMetal payload in a dedicated `-D3DMetal` bottle. DXVK-macOS remains visibly unavailable until NASE has a complete pinned Wine/winevulkan/MoltenVK/DXVK-macOS bundle. Each profile bottle stores `compatibility-profile.json` and refuses silent runtime or graphics-source drift.
+
+Profiles can be prepared from Settings → Compatibility Profiles. The backend equivalent is:
+
+```bash
+python3 mysteamwine.py --bottle Default-DXMT --wine /opt/homebrew/bin/wine --jsonl \
+  setup-compatibility-profile --profile dxmt-wine-stable-11-v1 \
+  --dxmt-source "$HOME/Library/Application Support/MySteamWine/runtimes/dxmt/dxmt-0.71"
+```
+
+Setup initializes the dedicated prefix, selects Windows 10, installs Steam and the matching renderer, and marks the profile ready only after every step succeeds.
+
 The default managed Wine prefix location is:
 
 ```text
@@ -79,6 +91,7 @@ The native SwiftUI app can:
 - Edit per-game launch arguments, working directory, environment variables, graphics backend, collection, bottle, and external prefix
 - View bounded log tails in-app
 - Run Winetricks from the UI
+- Track game launch sessions, reconcile real process state, and stop one running game without shutting down shared Steam
 
 Graphics runtimes are not interchangeable DLL packs. DXMT is the validated default with Wine Stable 11. D3DMetal uses a separate Game Porting Toolkit Wine context and bottle. DXVK remains experimental on macOS because it additionally requires a compatible Wine Vulkan and MoltenVK host stack; installing the upstream DXVK DLL archive alone is not sufficient.
 
@@ -210,10 +223,20 @@ python3 mysteamwine.py install-dxvk --dxvk-source ~/Downloads/DXVK-macOS --dxvk-
 # install D3DMetal
 python3 mysteamwine.py --wine /opt/homebrew/bin/wine install-d3dmetal --d3dmetal-source ~/Downloads/d3dmetal
 
+# inspect active game sessions and stop one game cleanly
+python3 mysteamwine.py --json list-sessions
+python3 mysteamwine.py --json stop-game --session-id launch_123
+
 # scan a game folder and get rule-based recommendations
 python3 mysteamwine.py scan-game --path "/path/to/game"
 python3 mysteamwine.py advise-game --appid 2056220
 ```
+
+NASE tracks whether Steam was already open when a game launched. When NASE owns
+that Steam launch, it gracefully closes Steam after the last game exits and a
+short sync grace period. Steam stays open when another game is active, a
+download or update is in progress, or the user explicitly opened Steam. **Kill
+All Wine Processes** remains the recovery option for a stuck bottle.
 
 External prefix examples:
 

@@ -37,8 +37,10 @@ struct GameCard: View {
     let isDragging: Bool
     let collection: GameCollection
     let launchStatus: GameLaunchStatus?
+    let canStop: Bool
     let steamCacheURL: URL?
     let onLaunch: () -> Void
+    let onStop: () -> Void
     let isPinned: Bool
     let onTogglePin: () -> Void
     let onOpenStore: () -> Void
@@ -75,17 +77,23 @@ struct GameCard: View {
                     Spacer(minLength: 8)
                     cardActionMenu
                     Button {
-                        onLaunch()
+                        if canStop {
+                            onStop()
+                        } else {
+                            onLaunch()
+                        }
                     } label: {
-                        Image(systemName: "play.fill")
+                        Image(systemName: canStop ? "stop.fill" : "play.fill")
                             .font(.subheadline.weight(.bold))
                             .foregroundStyle(Color.black)
                             .frame(width: 34, height: 34)
-                            .background(themePrimary)
+                            .background(canStop ? Color(hex: "#D96C6C") : themePrimary)
                             .clipShape(Circle())
                     }
                     .buttonStyle(.plain)
                     .opacity(isBusy ? 0.55 : 1)
+                    .disabled(launchStatus?.phase == .launching)
+                    .help(canStop ? "Stop \(game.title)" : "Play \(game.title)")
                 }
                 .frame(height: 36)
 

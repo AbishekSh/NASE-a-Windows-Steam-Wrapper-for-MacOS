@@ -1,0 +1,208 @@
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+import hashlib
+import json
+from pathlib import Path
+import subprocess
+import time
+
+from .bottle import Bottle
+from .catalog import list_installed_runtimes
+
+
+@dataclass(frozen=True)
+class CompatibilityProfile:
+    id: str
+    name: str
+    graphics_backend: str
+    bottle_suffix: str
+    wine_requirement: str
+    graphics_requirement: str
+    ready: bool
+    unavailable_reason: str | None = None
+
+
+PROFILES: dict[str, CompatibilityProfile] = {
+    "dxmt-wine-stable-11-v1": CompatibilityProfile(
+        id="dxmt-wine-stable-11-v1",
+        name="DXMT Recommended",
+        graphics_backend="dxmt",
+        bottle_suffix="DXMT",
+        wine_requirement="Wine Stable 11.x",
+        graphics_requirement="DXMT 0.71",
+        ready=True,
+    ),
+    "d3dmetal-gptk-v1": CompatibilityProfile(
+        id="d3dmetal-gptk-v1",
+        name="D3DMetal (GPTK)",
+        graphics_backend="d3dmetal",
+        bottle_suffix="D3DMetal",
+        wine_requirement="GPTK Wine from the selected GPTK installation",
+        graphics_requirement="D3DMetal bundled with that GPTK installation",
+        ready=True,
+    ),
+    "dxvk-macos-pinned-v1": CompatibilityProfile(
+        id="dxvk-macos-pinned-v1",
+        name="DXVK-macOS Pinned",
+        graphics_backend="dxvk",
+        bottle_suffix="DXVK-macOS",
+        wine_requirement="Pinned supported Wine build with matching winevulkan",
+        graphics_requirement="Pinned DXVK-macOS and MoltenVK bundle",
+        ready=False,
+        unavailable_reason=(
+            "The complete DXVK-macOS bundle is not pinned yet. Install a matched Wine, winevulkan, "
+            "MoltenVK, and DXVK-macOS stack before enabling this profile."
+        ),
+    ),
+    "plain-wine-v1": CompatibilityProfile(
+        id="plain-wine-v1",
+        name="Plain Wine",
+        graphics_backend="none",
+        bottle_suffix="Plain",
+        wine_requirement="Selected Wine runtime",
+        graphics_requirement="Wine built-in graphics",
+        ready=True,
+    ),
+}
+
+
+def list_profiles() -> list[dict]:
+    return [asdict(profile) for profile in PROFILES.values()]
+
+
+def profile_for(profile_id: str, graphics_backend: str) -> CompatibilityProfile:
+    try:
+        profile = PROFILES[profile_id]
+    except KeyError as exc:
+        raise RuntimeError(f"Unknown compatibility profile: {profile_id}") from exc
+    if profile.graphics_backend != graphics_backend:
+        raise RuntimeError(
+            f"Compatibility profile {profile.id} requires {profile.graphics_backend}, not {graphics_backend}."
+        )
+    if not profile.ready:
+        raise RuntimeError(profile.unavailable_reason or f"Compatibility profile {profile.name} is not ready.")
+    return profile
+
+
+def _wine_version(wine_path: Path) -> str:
+    try:
+        result = subprocess.run(
+            [str(wine_path), "--version"], capture_output=True, text=True, timeout=10, check=False
+        )
+    except OSError as exc:
+        raise RuntimeError(f"Wine runtime is not executable: {wine_path}") from exc
+    version = (result.stdout or result.stderr).strip()
+    if result.returncode != 0 or not version:
+        raise RuntimeError(f"Could not identify Wine runtime at {wine_path}.")
+    return version
+
+
+def _source_fingerprint(source: Path | None) -> str | None:
+    if source is None:
+        return None
+    resolved = source.expanduser().resolve()
+    if not resolved.exists():
+        raise RuntimeError(f"Graphics runtime source does not exist: {resolved}")
+    digest = hashlib.sha256()
+    digest.update(str(resolved).encode())
+    if resolved.is_file():
+        digest.update(str(resolved.stat().st_size).encode())
+        digest.update(str(resolved.stat().st_mtime_ns).encode())
+    else:
+        for path in sorted(resolved.rglob("*")):
+            if not path.is_file():
+                continue
+            relative = path.relative_to(resolved)
+            stat = path.stat()
+            digest.update(str(relative).encode())
+            digest.update(str(stat.st_size).encode())
+            digest.update(str(stat.st_mtime_ns).encode())
+    return digest.hexdigest()
+
+
+def _runtime_id_for_source(source: Path) -> str | None:
+    resolved = source.expanduser().resolve()
+    for runtime in list_installed_runtimes():
+        try:
+            runtime_path = Path(runtime.path).expanduser().resolve()
+        except OSError:
+            continue
+        if resolved == runtime_path:
+            return runtime.id
+    return None
+
+
+def bind_profile(
+    *,
+    bottle: Bottle,
+    profile_id: str,
+    graphics_backend: str,
+    wine_path: Path,
+    graphics_source: Path | None,
+    require_ready: bool = True,
+) -> dict:
+    profile = profile_for(profile_id, graphics_backend)
+    wine_version = _wine_version(wine_path)
+    if profile.id == "dxmt-wine-stable-11-v1" and not wine_version.lower().startswith("wine-11.0"):
+        raise RuntimeError(
+            f"{profile.name} requires Wine Stable 11.x, but {wine_version or wine_path.name} was selected."
+        )
+    if profile.id == "dxmt-wine-stable-11-v1":
+        if graphics_source is None or _runtime_id_for_source(graphics_source) != "dxmt-0.71":
+            raise RuntimeError(
+                "DXMT Recommended requires the verified DXMT 0.71 package from Runtime Center."
+            )
+    if profile.id == "d3dmetal-gptk-v1" and "game porting toolkit" not in str(wine_path).lower() and "game-porting-toolkit" not in str(wine_path).lower():
+        raise RuntimeError("D3DMetal requires the Wine runtime inside the selected Game Porting Toolkit installation.")
+    if profile.id == "d3dmetal-gptk-v1" and graphics_source is None:
+        raise RuntimeError("D3DMetal requires the payload shipped with the selected Game Porting Toolkit installation.")
+
+    fingerprint = {
+        "schema_version": 1,
+        "profile": asdict(profile),
+        "wine_path": str(wine_path.expanduser().resolve()),
+        "wine_version": wine_version,
+        "graphics_source": str(graphics_source.expanduser().resolve()) if graphics_source else None,
+        "graphics_source_fingerprint": _source_fingerprint(graphics_source),
+        "graphics_runtime_id": _runtime_id_for_source(graphics_source) if graphics_source else None,
+    }
+    manifest_path = bottle.root / "compatibility-profile.json"
+    if manifest_path.exists():
+        try:
+            existing = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"Compatibility manifest is damaged: {manifest_path}") from exc
+        comparable_keys = ("profile", "wine_path", "wine_version", "graphics_source_fingerprint")
+        if any(existing.get(key) != fingerprint.get(key) for key in comparable_keys):
+            raise RuntimeError(
+                f"Bottle '{bottle.name}' is already bound to a different compatibility stack. "
+                "Choose its original profile or create a new profile bottle."
+            )
+        if require_ready and existing.get("setup_status") != "ready":
+            raise RuntimeError(f"Profile bottle '{bottle.name}' needs profile setup before launching a game.")
+        return existing
+
+    bottle.root.mkdir(parents=True, exist_ok=True)
+    fingerprint["created_at"] = time.time()
+    fingerprint["setup_status"] = "bound"
+    temporary = manifest_path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(fingerprint, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    temporary.replace(manifest_path)
+    if require_ready:
+        raise RuntimeError(f"Profile bottle '{bottle.name}' was created and now needs profile setup.")
+    return fingerprint
+
+
+def mark_profile_ready(bottle: Bottle) -> dict:
+    manifest_path = bottle.root / "compatibility-profile.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Compatibility manifest is missing or damaged: {manifest_path}") from exc
+    manifest["setup_status"] = "ready"
+    manifest["ready_at"] = time.time()
+    temporary = manifest_path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    temporary.replace(manifest_path)
+    return manifest

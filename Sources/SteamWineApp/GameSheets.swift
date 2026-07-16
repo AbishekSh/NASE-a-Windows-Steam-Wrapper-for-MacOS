@@ -128,6 +128,23 @@ struct GameSettingsSheet: View {
                         }
                         .pickerStyle(.segmented)
 
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: graphicsBackend == .dxvk ? "exclamationmark.triangle.fill" : "checkmark.shield.fill")
+                                .foregroundStyle(graphicsBackend == .dxvk ? .orange : .green)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(graphicsBackend.profileSummary)
+                                    .font(.subheadline.weight(.semibold))
+                                Text("Uses dedicated bottle: \(profileBottleName)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                if graphicsBackend == .dxvk {
+                                    Text("Unavailable until the complete matched Vulkan stack is installed.")
+                                        .font(.caption)
+                                        .foregroundStyle(.orange)
+                                }
+                            }
+                        }
+
                         let effectiveOverrides = model.effectiveGraphicsOverrides(
                             for: game,
                             graphicsBackend: graphicsBackend,
@@ -244,6 +261,11 @@ struct GameSettingsSheet: View {
             assignedBottleName = settings.assignedBottleName
             assignedExternalPrefix = settings.assignedExternalPrefix
         }
+    }
+
+    private var profileBottleName: String {
+        let base = assignedBottleName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return "\(base.isEmpty ? model.backendContext.bottleName : base)-\(graphicsBackend.bottleSuffix)"
     }
 
     private func labeledField(_ title: String, text: Binding<String>, browse: (() -> String?)? = nil) -> some View {

@@ -130,8 +130,10 @@ final class AppViewModel {
     private(set) var sourceHealth: [RunnerKind: HealthStatus] = [.home: .healthy, .mac: .healthy, .steam: .unknown, .wine: .unknown]
     private(set) var gameSettingsByPinID: [String: StoredGameSettings] = [:]
     private(set) var launchStatusByPinID: [String: GameLaunchStatus] = [:]
+    private(set) var launchSessionByPinID: [String: GameLaunchSession] = [:]
     fileprivate var steamMetadataByAppID: [String: SteamLocalMetadata] = [:]
     private var runningHealthChecks = Set<RunnerKind>()
+    private var isRefreshingLaunchSessions = false
 
     var managedBottleNames: [String] {
         let root = FileManager.default.homeDirectoryForCurrentUser
@@ -176,6 +178,12 @@ final class AppViewModel {
         wineRuntimes = loadWineRuntimes()
         refreshWineRuntimes()
         selectedGame = nil
+        Task { [weak self] in
+            while let self {
+                self.refreshLaunchSessions()
+                try? await Task.sleep(for: .seconds(5))
+            }
+        }
     }
 
     var operationCards: [OperationCard] {
@@ -331,8 +339,69 @@ final class AppViewModel {
         launchStatusByPinID[game.pinID]
     }
 
+    func canStop(_ game: LibraryGame) -> Bool {
+        launchSessionByPinID[game.pinID]?.isActive == true
+    }
+
     func clearLaunchStatus(for game: LibraryGame) {
         launchStatusByPinID.removeValue(forKey: game.pinID)
+        launchSessionByPinID.removeValue(forKey: game.pinID)
+    }
+
+    func stop(_ game: LibraryGame) {
+        guard let session = launchSessionByPinID[game.pinID], session.isActive else { return }
+        setLaunchStatus(.launching, for: game, message: "Stopping...")
+        let context = effectiveContext(for: game)
+        Task.detached(priority: .userInitiated) {
+            do {
+                let response = try await BackendBridge.execute(.stopGame(sessionID: session.sessionID), context: context)
+                await MainActor.run {
+                    self.applyLaunchSessions(response.sessions)
+                    self.setLaunchStatus(.exited, for: game, message: response.sessions.first?.message ?? "Stopped by user.")
+                    self.rightPanelMessage = "Stopped \(game.title)."
+                }
+            } catch {
+                await MainActor.run {
+                    self.setLaunchStatus(.failed, for: game, message: error.localizedDescription)
+                    self.rightPanelMessage = "Could not stop \(game.title)."
+                }
+            }
+        }
+    }
+
+    private func refreshLaunchSessions() {
+        guard !isRefreshingLaunchSessions else { return }
+        isRefreshingLaunchSessions = true
+        let context = backendContext
+        Task.detached(priority: .utility) {
+            let response = try? await BackendBridge.execute(.listSessions, context: context)
+            await MainActor.run {
+                self.isRefreshingLaunchSessions = false
+                if let response {
+                    self.applyLaunchSessions(response.sessions)
+                }
+            }
+        }
+    }
+
+    private func applyLaunchSessions(_ sessions: [GameLaunchSession]) {
+        let activeAppIDs = Set(sessions.filter(\.isActive).compactMap(\.appid))
+        for game in nativeApps + discoveredSteamGames + wineApps {
+            guard let appid = game.backendID else { continue }
+            if let session = sessions.last(where: { $0.appid == appid }) {
+                launchSessionByPinID[game.pinID] = session
+                let phase: GameLaunchPhase = switch session.status {
+                case "running": .running
+                case "launching", "stopping": .launching
+                case "failed": .failed
+                default: .exited
+                }
+                setLaunchStatus(phase, for: game, message: session.message)
+            } else if !activeAppIDs.contains(appid), [.running, .launching].contains(launchStatusByPinID[game.pinID]?.phase) {
+                setLaunchStatus(.exited, for: game, message: "Game process exited.")
+                launchSessionByPinID.removeValue(forKey: game.pinID)
+            }
+        }
     }
 
     func selectRunner(_ runner: RunnerKind) {
@@ -1168,6 +1237,34 @@ final class AppViewModel {
                 }
             }
         }
+    }
+
+    func setupCompatibilityProfile(_ profile: GraphicsBackendOption) {
+        guard profile != .dxvk else {
+            rightPanelMessage = "DXVK-macOS needs a complete pinned Vulkan stack before setup can be enabled."
+            return
+        }
+        let context = effectiveBackendContext(backendContext.compatibilityContext(for: profile))
+        executeDetached(
+            .setupCompatibilityProfile(profile),
+            successMessage: "\(profile.rawValue) profile is ready.",
+            context: context
+        )
+    }
+
+    func compatibilityProfileIsReady(_ profile: GraphicsBackendOption) -> Bool {
+        let context = backendContext.compatibilityContext(for: profile)
+        let manifestURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/MySteamWine/bottles", isDirectory: true)
+            .appendingPathComponent(context.bottleName, isDirectory: true)
+            .appendingPathComponent("compatibility-profile.json")
+        guard
+            let data = try? Data(contentsOf: manifestURL),
+            let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            payload["setup_status"] as? String == "ready",
+            let storedProfile = payload["profile"] as? [String: Any]
+        else { return false }
+        return storedProfile["id"] as? String == profile.compatibilityProfileID
     }
 
     func runWinetricks(verbsText: String, interactive: Bool) {
@@ -2093,6 +2190,8 @@ final class AppViewModel {
 
     private func actionDisplayName(_ action: BackendAction) -> String {
         switch action {
+        case .setupCompatibilityProfile:
+            return "Set Up Compatibility Profile"
         case .setupMetal:
             return "Finish Setup"
         case .doctor:
@@ -2111,6 +2210,10 @@ final class AppViewModel {
             return "Wine Configuration"
         case .killWine:
             return "Kill Wine"
+        case .listSessions:
+            return "Refresh Game Sessions"
+        case .stopGame:
+            return "Stop Game"
         case .openSteam:
             return "Open Steam"
         case .listGames:
@@ -2134,6 +2237,8 @@ final class AppViewModel {
 
     private func jobSuccessMessage(for action: BackendAction) -> String {
         switch action {
+        case .setupCompatibilityProfile:
+            return "Compatibility profile is ready."
         case .setupMetal:
             return "Setup finished."
         case .doctor:
@@ -2152,6 +2257,10 @@ final class AppViewModel {
             return "winecfg exited."
         case .killWine:
             return "Stopped Wine processes."
+        case .listSessions:
+            return "Game sessions refreshed."
+        case .stopGame:
+            return "Game stopped."
         case .openSteam:
             return "Steam launch sent."
         case .listGames:
@@ -2279,7 +2388,11 @@ final class AppViewModel {
                     self.appendLog(response.output)
                     self.rightPanelMessage = response.job?.message ?? successMessage
                     if let game {
-                        self.setLaunchStatus(.running, for: game, message: successMessage)
+                        if response.sessions.isEmpty {
+                            self.setLaunchStatus(.launching, for: game, message: "Waiting for the game process...")
+                        } else {
+                            self.applyLaunchSessions(response.sessions)
+                        }
                     }
                 }
             } catch {

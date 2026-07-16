@@ -58,8 +58,8 @@ CATALOG: tuple[RuntimeCatalogEntry, ...] = (
         install_layout="dxvk",
         license="zlib",
         notes=(
-            "Experimental on macOS. Requires a compatible Wine Vulkan and MoltenVK host stack; "
-            "installing these DLLs alone does not provide Vulkan support."
+            "Upstream DXVK only; this does not enable the DXVK-macOS compatibility profile. "
+            "That profile requires a separately pinned matching Wine, winevulkan, MoltenVK, and DXVK-macOS stack."
         ),
     ),
     RuntimeCatalogEntry(

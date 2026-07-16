@@ -124,6 +124,9 @@ Treat each graphics choice as a runtime profile, not only a DLL selection. DXMT 
 ### Health, Dependencies, And Advice
 
 - `doctor.py`: environment and prefix checks plus safe repairs.
+- `sessions.py`: persistent launch-session registry, real process reconciliation, targeted per-game termination, and ownership-aware Steam cleanup. Session records already carry a compatibility-profile id so runtime fingerprints can be added without replacing the lifecycle contract.
+- `profiles.py`: compatibility-profile definitions and immutable per-bottle runtime/source fingerprints. A profile binds Wine, the graphics stack, and a dedicated bottle as one launch unit.
+  - `setup-compatibility-profile` performs the observable setup workflow and only marks the profile manifest ready after Wine, Steam, and renderer setup succeed.
 - `winetricks.py`: Winetricks invocation.
 - `scanner.py`: local game folder signal detection.
 - `advisor.py`: rule-based dependency recommendations from scanner signals.

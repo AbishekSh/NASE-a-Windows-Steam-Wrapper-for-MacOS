@@ -28,6 +28,7 @@ struct BackendResponse {
     let output: String
     let games: [BackendGame]
     let runtimes: [ManagedRuntime]
+    let sessions: [GameLaunchSession]
     let job: BackendJob?
     let structured: BackendStructuredResult?
 }
@@ -108,6 +109,24 @@ private struct BackendJSONData: Decodable {
     let appid: String?
     let name: String?
     let executable: String?
+    let session: BackendJSONSession?
+    let sessions: [BackendJSONSession]?
+}
+
+private struct BackendJSONSession: Decodable {
+    let session_id: String
+    let appid: String?
+    let game: String
+    let status: String
+    let strategy: String
+    let graphics_backend: String
+    let profile_id: String
+    let bottle: String
+    let prefix: String
+    let executable: String?
+    let install_dir: String?
+    let pids: [Int]
+    let message: String
 }
 
 private struct BackendJSONRuntime: Decodable {
@@ -260,22 +279,24 @@ struct BackendContext {
     }
 
     func compatibilityContext(for graphicsBackend: GraphicsBackendOption) -> BackendContext {
-        guard graphicsBackend == .d3dmetal else { return self }
+        let suffix = "-\(graphicsBackend.bottleSuffix)"
+        let profileBottle = bottleName.hasSuffix(suffix) ? bottleName : "\(bottleName)\(suffix)"
         return BackendContext(
             repoRoot: repoRoot,
             pythonCommand: pythonCommand,
-            winePath: gptkWinePath,
+            winePath: graphicsBackend == .d3dmetal ? gptkWinePath : winePath,
             dxmtSource: dxmtSource,
             dxvkSource: dxvkSource,
             d3dMetalSource: d3dMetalSource,
             gptkWinePath: gptkWinePath,
-            bottleName: "\(bottleName)-D3DMetal",
+            bottleName: profileBottle,
             externalPrefix: nil
         )
     }
 }
 
 enum BackendAction {
+    case setupCompatibilityProfile(GraphicsBackendOption)
     case setupMetal
     case doctor
     case doctorFix
@@ -285,6 +306,8 @@ enum BackendAction {
     case installD3DMetal
     case openWinecfg
     case killWine
+    case listSessions
+    case stopGame(sessionID: String)
     case openSteam
     case listGames
     case listRuntimeCatalog
@@ -403,6 +426,16 @@ enum BackendBridge {
         let base = context.targetArguments + ["--wine", context.winePath, "--jsonl"]
 
         switch action {
+        case .setupCompatibilityProfile(let profile):
+            var args = base + ["setup-compatibility-profile", "--profile", profile.compatibilityProfileID]
+            if profile == .dxmt {
+                args += ["--dxmt-source", context.dxmtSource]
+            } else if profile == .dxvk {
+                args += ["--dxvk-source", context.dxvkSource]
+            } else if profile == .d3dmetal {
+                args += ["--d3dmetal-source", context.d3dMetalSource]
+            }
+            return args
         case .setupMetal:
             return base + ["setup-metal", "--dxmt-source", context.dxmtSource, "--no-wait"]
         case .doctor:
@@ -424,6 +457,10 @@ enum BackendBridge {
             return base + ["winecfg"]
         case .killWine:
             return base + ["kill-wine"]
+        case .listSessions:
+            return base + ["list-sessions"]
+        case .stopGame(let sessionID):
+            return base + ["stop-game", "--session-id", sessionID]
         case .openSteam:
             return base + ["run-steam", "--no-wait"]
         case .listGames:
@@ -435,10 +472,10 @@ enum BackendBridge {
         case .installRuntime(let id):
             return base + ["install-runtime", "--runtime", id]
         case .launchGame(let appid):
-            return base + ["launch-game", "--appid", appid, "--dxmt-source", context.dxmtSource, "--no-wait"]
+            return base + ["--graphics-backend", GraphicsBackendOption.dxmt.cliValue, "--compatibility-profile", GraphicsBackendOption.dxmt.compatibilityProfileID, "launch-game", "--appid", appid, "--dxmt-source", context.dxmtSource, "--no-wait"]
         case .smartLaunchGame(let appid, let graphicsBackend):
             var args = base
-            args += ["--graphics-backend", graphicsBackend.cliValue, "smart-launch-game", "--appid", appid]
+            args += ["--graphics-backend", graphicsBackend.cliValue, "--compatibility-profile", graphicsBackend.compatibilityProfileID, "smart-launch-game", "--appid", appid]
             if graphicsBackend == .dxmt {
                 args += ["--dxmt-source", context.dxmtSource]
             } else if graphicsBackend == .dxvk {
@@ -450,7 +487,7 @@ enum BackendBridge {
             return args
         case .debugGame(let appid, let gameArgs, let graphicsBackend, let workingDirectory, let environment, let wineDebug):
             var args = base
-            args += ["--graphics-backend", graphicsBackend.cliValue, "debug-game", "--appid", appid]
+            args += ["--graphics-backend", graphicsBackend.cliValue, "--compatibility-profile", graphicsBackend.compatibilityProfileID, "debug-game", "--appid", appid]
             if graphicsBackend == .dxmt {
                 args += ["--dxmt-source", context.dxmtSource]
             } else if graphicsBackend == .dxvk {
@@ -465,7 +502,7 @@ enum BackendBridge {
             return args
         case .debugExecutable(let path, let gameArgs, let graphicsBackend, let workingDirectory, let environment, let wineDebug):
             var args = base
-            args += ["--graphics-backend", graphicsBackend.cliValue, "debug-game", "--exe", path]
+            args += ["--graphics-backend", graphicsBackend.cliValue, "--compatibility-profile", graphicsBackend.compatibilityProfileID, "debug-game", "--exe", path]
             if graphicsBackend == .dxmt {
                 args += ["--dxmt-source", context.dxmtSource]
             } else if graphicsBackend == .dxvk {
@@ -618,6 +655,7 @@ enum BackendBridge {
             output: plainText.isEmpty ? "Command finished without output." : plainText,
             games: games,
             runtimes: [],
+            sessions: [],
             job: nil,
             structured: nil
         )
@@ -633,13 +671,36 @@ enum BackendBridge {
         }
         let job = parseJob(from: payload)
         let structured = parseStructuredResult(from: payload)
+        var sessions = payload.data?.sessions?.map { makeSession(from: $0) } ?? []
+        if let session = payload.data?.session {
+            sessions.append(makeSession(from: session))
+        }
 
         return BackendResponse(
             output: renderOutput(from: payload),
             games: games,
             runtimes: runtimes,
+            sessions: sessions,
             job: job,
             structured: structured
+        )
+    }
+
+    private static func makeSession(from payload: BackendJSONSession) -> GameLaunchSession {
+        GameLaunchSession(
+            sessionID: payload.session_id,
+            appid: payload.appid,
+            game: payload.game,
+            status: payload.status,
+            strategy: payload.strategy,
+            graphicsBackend: payload.graphics_backend,
+            profileID: payload.profile_id,
+            bottle: payload.bottle,
+            prefix: payload.prefix,
+            executable: payload.executable,
+            installDir: payload.install_dir,
+            pids: payload.pids,
+            message: payload.message
         )
     }
 
