@@ -27,11 +27,11 @@ from .steam import (
     install_steam,
     kill_wine_processes,
     launch_app,
-    list_installed_apps,
     run_game_executable,
     run_steam,
     steam_windows_path,
 )
+from .steam_libraries import installed_games, refresh_registry
 from .winetricks import run_winetricks
 
 
@@ -1159,44 +1159,43 @@ def cmd_wipe_bottles(args: argparse.Namespace) -> None:
 
 def cmd_list_games(args: argparse.Namespace) -> None:
     bottle = _resolve_bottle(args)
-    job_id = _stream_start(action="list-games", message=f"Listing Steam games for {_target_label(args, bottle)}...") if _stream_enabled(args) else None
-    apps = list_installed_apps(bottle)
+    job_id = _stream_start(action="list-games", message="Scanning registered Steam libraries...") if _stream_enabled(args) else None
+    registry = refresh_registry(bottle)
+    games = installed_games(registry)
+    data = {
+        "target": _target_label(args, bottle),
+        "registry_path": str(app_support_root() / "steam-libraries.json"),
+        "library_count": len(registry["libraries"]),
+        "libraries": registry["libraries"],
+        "games": games,
+    }
+    message = f"Found {len(games)} installed Steam game(s) across {len(registry['libraries'])} library location(s)." if games else "No installed Steam games were found in registered libraries."
     if _stream_enabled(args):
         _stream_result(
             action="list-games",
             job_id=job_id or uuid.uuid4().hex,
             ok=True,
             status="completed",
-            message="Installed Steam games listed." if apps else "No Steam manifests found.",
-            data={
-                "target": _target_label(args, bottle),
-                "games": [
-                    {"appid": app.appid, "name": app.name, "install_dir": str(app.install_dir)}
-                    for app in apps
-                ]
-            },
+            message=message,
+            data=data,
+            warnings=registry["warnings"],
         )
         return
     if _json_enabled(args):
         _emit_json(
             action="list-games",
             ok=True,
-            message="Installed Steam games listed." if apps else "No Steam manifests found.",
-            data={
-                "target": _target_label(args, bottle),
-                "games": [
-                    {"appid": app.appid, "name": app.name, "install_dir": str(app.install_dir)}
-                    for app in apps
-                ]
-            },
+            message=message,
+            data=data,
+            warnings=registry["warnings"],
             status="completed",
         )
         return
-    if not apps:
-        print("No Steam manifests found.")
+    if not games:
+        print(message)
         return
-    for app in apps:
-        print(f"{app.appid}\t{app.name}\t{app.install_dir}")
+    for game in games:
+        print(f"{game['appid']}\t{game['name']}\t{game['install_dir']}")
 
 
 def cmd_doctor(args: argparse.Namespace) -> None:

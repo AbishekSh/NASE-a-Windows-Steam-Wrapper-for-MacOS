@@ -91,6 +91,7 @@ The CLI is the compatibility contract. Existing commands should keep working eve
 ### Runtime And Bottles
 
 - `runtime.py`: executable resolution, Wine runtime detection, process execution, detached process spawning, downloads, and sanitized Metal-related environment handling.
+- `steam_libraries.py`: read-only cross-bottle Steam library discovery and the canonical atomic `steam-libraries.json` registry.
 - `catalog.py`: managed runtime catalog for Wine, DXVK, and DXMT. It owns pinned download URLs/checksums, archive extraction, install records, and one-button install helpers that can apply graphics payloads to the selected bottle.
 - `bottle.py`: managed and external-prefix path model.
   - Managed bottles live under `~/Library/Application Support/MySteamWine/bottles/<name>/`.
@@ -140,6 +141,15 @@ Treat each graphics choice as a runtime profile, not only a DLL selection. DXMT 
 - `gui.py`: thin GUI/browser launcher glue.
 
 ## Current Data Flow
+
+### Steam Library Discovery
+
+1. `list-games` enumerates all managed bottles and includes the currently selected external prefix.
+2. Each bottle's primary `steamapps` directory and `libraryfolders.vdf` references are normalized to host paths.
+3. Physical libraries are deduplicated by resolved path and assigned a stable hashed ID.
+4. `appmanifest_*.acf` records are validated against `steamapps/common`; stale and duplicate locations remain diagnostic registry entries.
+5. The registry is atomically replaced at `~/Library/Application Support/MySteamWine/steam-libraries.json`.
+6. SwiftUI receives one preferred installed location per AppID. This phase never edits Steam configuration.
 
 ### Setup Flow
 

@@ -103,6 +103,14 @@ Graphics runtimes are not interchangeable DLL packs. DXMT is the validated defau
 
 The current Steam experience still uses Windows Steam as the reliable baseline. Direct launch and hidden-Steam style work should build on the existing backend boundaries described in the architecture docs.
 
+Steam library refresh is now bottle-independent. The backend reads `libraryfolders.vdf` from every managed bottle plus the currently selected external prefix, normalizes and deduplicates library paths, validates manifests against `steamapps/common`, and atomically writes:
+
+```text
+~/Library/Application Support/MySteamWine/steam-libraries.json
+```
+
+The registry retains stale manifests and duplicate physical locations for diagnostics, while the normal game list exposes one preferred installed location per AppID. Discovery is read-only: it does not edit Steam's `libraryfolders.vdf` or move game files.
+
 ## Architecture
 
 High-level split:
@@ -124,6 +132,7 @@ Key Swift files:
 Key Python modules:
 
 - `mysteamwine/runtime.py`: process execution, downloads, executable resolution, Wine runtime detection
+- `mysteamwine/steam_libraries.py`: cross-bottle Steam library discovery and the canonical read-only registry
 - `mysteamwine/catalog.py`: managed runtime catalog, downloads, checksum verification, extraction, and install records
 - `mysteamwine/bottle.py`: managed bottle and external-prefix paths
 - `mysteamwine/steam.py`: Steam installer/runner, VDF parsing, manifest discovery, Steam/direct game launch helpers
