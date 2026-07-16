@@ -115,6 +115,7 @@ final class AppViewModel {
     private(set) var activeBackendJobs: [BackendJob] = []
     private(set) var recentBackendJobs: [BackendJob] = []
     private(set) var latestDoctorResult: BackendStructuredResult?
+    private(set) var latestDependencyResult: BackendStructuredResult?
     private(set) var latestSetupResult: BackendStructuredResult?
     private(set) var latestScanResult: BackendStructuredResult?
     private(set) var latestAdviceResult: BackendStructuredResult?
@@ -524,6 +525,22 @@ final class AppViewModel {
             } catch {
                 await MainActor.run {
                     self.appendLog("Runtime catalog refresh failed:\n\(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    func refreshDependencyStatus() {
+        let context = effectiveBackendContext()
+        Task.detached(priority: .utility) {
+            do {
+                let response = try await BackendBridge.execute(.dependencyStatus, context: context)
+                await MainActor.run {
+                    self.latestDependencyResult = response.structured
+                }
+            } catch {
+                await MainActor.run {
+                    self.appendLog("Dependency check failed:\n\(error.localizedDescription)")
                 }
             }
         }
@@ -2190,6 +2207,8 @@ final class AppViewModel {
 
     private func actionDisplayName(_ action: BackendAction) -> String {
         switch action {
+        case .dependencyStatus:
+            return "Check Dependencies"
         case .setupCompatibilityProfile:
             return "Set Up Compatibility Profile"
         case .setupMetal:
@@ -2237,6 +2256,8 @@ final class AppViewModel {
 
     private func jobSuccessMessage(for action: BackendAction) -> String {
         switch action {
+        case .dependencyStatus:
+            return "Dependency check finished."
         case .setupCompatibilityProfile:
             return "Compatibility profile is ready."
         case .setupMetal:

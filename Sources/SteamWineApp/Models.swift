@@ -260,6 +260,8 @@ struct BackendCheckSummary: Identifiable, Hashable {
     let status: String
     let name: String
     let detail: String
+    let required: Bool
+    let fix: String?
 }
 
 struct BackendStepSummary: Identifiable, Hashable {

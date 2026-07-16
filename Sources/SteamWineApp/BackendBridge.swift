@@ -157,6 +157,8 @@ private struct BackendJSONCheck: Decodable {
     let status: String
     let name: String
     let detail: String
+    let required: Bool?
+    let fix: String?
 }
 
 private struct BackendJSONStep: Decodable {
@@ -296,6 +298,7 @@ struct BackendContext {
 }
 
 enum BackendAction {
+    case dependencyStatus
     case setupCompatibilityProfile(GraphicsBackendOption)
     case setupMetal
     case doctor
@@ -426,6 +429,8 @@ enum BackendBridge {
         let base = context.targetArguments + ["--wine", context.winePath, "--jsonl"]
 
         switch action {
+        case .dependencyStatus:
+            return base + ["dependency-status", "--gptk-wine", context.gptkWinePath, "--d3dmetal-source", context.d3dMetalSource]
         case .setupCompatibilityProfile(let profile):
             var args = base + ["setup-compatibility-profile", "--profile", profile.compatibilityProfileID]
             if profile == .dxmt {
@@ -750,7 +755,9 @@ enum BackendBridge {
                 id: "\($0.name)|\($0.detail)",
                 status: $0.status,
                 name: $0.name,
-                detail: $0.detail
+                detail: $0.detail,
+                required: $0.required ?? true,
+                fix: $0.fix
             )
         } ?? []
         let steps = payload.data?.steps?.map {

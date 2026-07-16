@@ -26,6 +26,8 @@ struct SettingsSheet: View {
 
                     settingsTargetPanel
 
+                    settingsDependencyPanel
+
                     settingsCompatibilityProfilesPanel
 
                     settingsRuntimeCenterPanel
@@ -81,6 +83,7 @@ struct SettingsSheet: View {
         .task {
             model.refreshWineRuntimes()
             model.refreshRuntimeCenter()
+            model.refreshDependencyStatus()
             winePath = model.backendContext.winePath
             dxmtSource = model.backendContext.dxmtSource
             dxvkSource = model.backendContext.dxvkSource
@@ -372,6 +375,55 @@ struct SettingsSheet: View {
                         runtimeCatalogRow(runtime)
                     }
                 }
+            }
+        }
+        .padding(16)
+        .background(themePanelRaised)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private var settingsDependencyPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("System Readiness")
+                        .font(.headline)
+                    Text("Required host components for the recommended DXMT profile.")
+                        .font(.caption)
+                        .foregroundStyle(themeMutedForeground)
+                }
+                Spacer()
+                Button {
+                    model.refreshDependencyStatus()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .help("Check dependencies again")
+            }
+
+            if let result = model.latestDependencyResult {
+                ForEach(result.checks) { check in
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: check.status == "ok" ? "checkmark.circle.fill" : (check.status == "warn" ? "exclamationmark.triangle.fill" : "xmark.circle.fill"))
+                            .foregroundStyle(check.status == "ok" ? .green : (check.status == "warn" ? .orange : .red))
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 6) {
+                                Text(check.name).font(.subheadline.weight(.semibold))
+                                if !check.required {
+                                    Text("Optional").font(.caption2).foregroundStyle(themeMutedForeground)
+                                }
+                            }
+                            Text(check.detail).font(.caption).foregroundStyle(themeMutedForeground)
+                            if let fix = check.fix {
+                                Text(fix).font(.caption.weight(.medium))
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else {
+                ProgressView("Checking dependencies...")
+                    .controlSize(.small)
             }
         }
         .padding(16)

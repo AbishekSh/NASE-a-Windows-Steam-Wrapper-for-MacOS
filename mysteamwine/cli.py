@@ -12,6 +12,7 @@ from .advisor import recommend_dependencies
 from .bottle import app_support_root, bottle_paths, ensure_bottle_dirs, external_prefix_paths, wipe_all_bottles
 from .catalog import install_runtime, list_installed_runtimes, list_runtime_catalog
 from .d3dmetal import install_d3dmetal
+from .dependencies import dependency_status
 from .doctor import apply_doctor_fixes, run_doctor, set_prefix_windows_version
 from .dxmt import install_dxmt
 from .dxvk import install_dxvk
@@ -281,6 +282,28 @@ def cmd_list_compatibility_profiles(args: argparse.Namespace) -> None:
     for profile in profiles:
         state = "ready" if profile["ready"] else "unavailable"
         print(f"{profile['id']}\t{state}\t{profile['name']}")
+
+
+def cmd_dependency_status(args: argparse.Namespace) -> None:
+    action = "dependency-status"
+    wine = Path(args.wine or args.wine64 or "/opt/homebrew/bin/wine")
+    result = dependency_status(
+        wine_path=wine,
+        winetricks_path=args.winetricks,
+        gptk_wine_path=Path(args.gptk_wine) if args.gptk_wine else None,
+        d3dmetal_source=Path(args.d3dmetal_source) if args.d3dmetal_source else None,
+    )
+    missing = result["missing_required"]
+    message = "Dependencies are ready." if not missing else f"Missing required dependencies: {', '.join(missing)}."
+    if _stream_enabled(args):
+        job_id = _stream_start(action=action, message="Checking host dependencies...")
+        _stream_result(action=action, job_id=job_id, ok=not missing, status="completed" if not missing else "failed", message=message, data=result)
+        return
+    if _json_enabled(args):
+        _emit_json(action=action, ok=not missing, message=message, data=result, status="completed" if not missing else "failed")
+        return
+    for check in result["checks"]:
+        print(f"[{check['status'].upper():4}] {check['name']}: {check['detail']}")
 
 
 def cmd_setup_compatibility_profile(args: argparse.Namespace) -> None:
@@ -1918,6 +1941,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("info", help="Show paths used for this bottle").set_defaults(func=cmd_info)
     sub.add_parser("list-compatibility-profiles", help="List pinned graphics/runtime profiles").set_defaults(func=cmd_list_compatibility_profiles)
+    dependency_cmd = sub.add_parser("dependency-status", help="Check host dependencies required by NASE profiles")
+    dependency_cmd.add_argument("--winetricks", default="winetricks", help="Path or command name for Winetricks")
+    dependency_cmd.add_argument("--gptk-wine", help="Optional GPTK Wine executable")
+    dependency_cmd.add_argument("--d3dmetal-source", help="Optional D3DMetal source directory")
+    dependency_cmd.set_defaults(func=cmd_dependency_status)
     profile_setup = sub.add_parser("setup-compatibility-profile", help="Prepare a dedicated bottle for a pinned graphics profile")
     profile_setup.add_argument("--profile", required=True, help="Profile id from list-compatibility-profiles")
     profile_setup.add_argument("--dxmt-source", help="Verified DXMT source directory")
