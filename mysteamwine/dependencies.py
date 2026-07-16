@@ -174,4 +174,6 @@ def dependency_install_command(dependency: str, *, confirm_rosetta_license: bool
         return [str(brew), "install", "--cask", "wine-stable"]
     if dependency == "winetricks":
         return [str(brew), "install", "winetricks"]
+    if dependency == "python":
+        return [str(brew), "install", "python"]
     raise RuntimeError(f"Unsupported host dependency: {dependency}")

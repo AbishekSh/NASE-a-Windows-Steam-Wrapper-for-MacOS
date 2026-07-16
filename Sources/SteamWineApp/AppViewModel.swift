@@ -580,7 +580,7 @@ final class AppViewModel {
                 let initial = try await BackendBridge.execute(.dependencyStatus, context: initialContext)
                 let checks = initial.structured?.checks ?? []
                 let missing = Set(checks.filter { $0.required && $0.status == "fail" }.map(\.name))
-                let unsupported = missing.intersection(["macOS", "Python"])
+                let unsupported = missing.intersection(["macOS"])
                 if !unsupported.isEmpty {
                     throw NSError(
                         domain: "SteamWineApp.DependencyBootstrap",
@@ -597,7 +597,8 @@ final class AppViewModel {
                 }
 
                 var completed = 0
-                let installCount = ["Rosetta 2", "Winetricks", "Wine Stable 11", "DXMT 0.71"].filter(missing.contains).count
+                var workingContext = initialContext
+                let installCount = ["Python", "Rosetta 2", "Winetricks", "Wine Stable 11", "DXMT 0.71"].filter(missing.contains).count
                 func report(_ message: String, completedSteps: Int) async {
                     await MainActor.run {
                         self.dependencyBootstrapPhase = .installing
@@ -606,19 +607,32 @@ final class AppViewModel {
                     }
                 }
 
+                if missing.contains("Python") {
+                    await report("Installing a supported Python 3...", completedSteps: completed)
+                    _ = try await BackendBridge.execute(.installHostDependency(id: "python", confirmLicense: false), context: workingContext)
+                    guard let pythonPath = await MainActor.run(body: { self.detectInstalledPythonPath() }) else {
+                        throw NSError(
+                            domain: "SteamWineApp.DependencyBootstrap",
+                            code: 5,
+                            userInfo: [NSLocalizedDescriptionKey: "Python 3.10 or newer was not found after installation."]
+                        )
+                    }
+                    workingContext = workingContext.overridingPythonCommand(pythonPath)
+                    completed += 1
+                }
                 if missing.contains("Rosetta 2") {
                     await report("Installing Rosetta 2...", completedSteps: completed)
-                    _ = try await BackendBridge.execute(.installHostDependency(id: "rosetta", confirmLicense: true), context: initialContext)
+                    _ = try await BackendBridge.execute(.installHostDependency(id: "rosetta", confirmLicense: true), context: workingContext)
                     completed += 1
                 }
                 if missing.contains("Winetricks") {
                     await report("Installing Winetricks...", completedSteps: completed)
-                    _ = try await BackendBridge.execute(.installHostDependency(id: "winetricks", confirmLicense: false), context: initialContext)
+                    _ = try await BackendBridge.execute(.installHostDependency(id: "winetricks", confirmLicense: false), context: workingContext)
                     completed += 1
                 }
                 if missing.contains("Wine Stable 11") {
                     await report("Installing Wine Stable 11...", completedSteps: completed)
-                    _ = try await BackendBridge.execute(.installHostDependency(id: "wine-stable", confirmLicense: false), context: initialContext)
+                    _ = try await BackendBridge.execute(.installHostDependency(id: "wine-stable", confirmLicense: false), context: workingContext)
                     completed += 1
                 }
 
@@ -630,7 +644,10 @@ final class AppViewModel {
                         userInfo: [NSLocalizedDescriptionKey: "Wine Stable was not found after installation. Choose an existing Wine Stable app in Settings."]
                     )
                 }
-                var configuredContext = await MainActor.run { self.contextAdoptingWineStable(winePath) }
+                let installedHostContext = workingContext
+                var configuredContext = await MainActor.run {
+                    self.contextAdoptingWineStable(winePath, baseContext: installedHostContext)
+                }
 
                 if missing.contains("DXMT 0.71") {
                     await report("Downloading and verifying DXMT 0.71...", completedSteps: completed)
@@ -708,19 +725,28 @@ final class AppViewModel {
         return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
-    private func contextAdoptingWineStable(_ winePath: String) -> BackendContext {
+    private func detectInstalledPythonPath() -> String? {
+        let candidates = [
+            "/opt/homebrew/bin/python3",
+            "/usr/local/bin/python3",
+            backendContext.pythonCommand,
+        ]
+        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+
+    private func contextAdoptingWineStable(_ winePath: String, baseContext: BackendContext) -> BackendContext {
         let managedDXMT = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/MySteamWine/runtimes/dxmt/dxmt-0.71", isDirectory: true)
         let detectedDXMT = FileManager.default.fileExists(atPath: managedDXMT.path) ? managedDXMT.path : nil
         return BackendContext(
-            repoRoot: backendContext.repoRoot,
-            pythonCommand: backendContext.pythonCommand,
+            repoRoot: baseContext.repoRoot,
+            pythonCommand: baseContext.pythonCommand,
             winePath: winePath,
-            dxmtSource: managedRuntimeSource(kind: "dxmt") ?? detectedDXMT ?? backendContext.dxmtSource,
-            dxvkSource: backendContext.dxvkSource,
-            d3dMetalSource: backendContext.d3dMetalSource,
-            gptkWinePath: backendContext.gptkWinePath,
-            bottleName: backendContext.bottleName,
+            dxmtSource: managedRuntimeSource(kind: "dxmt") ?? detectedDXMT ?? baseContext.dxmtSource,
+            dxvkSource: baseContext.dxvkSource,
+            d3dMetalSource: baseContext.d3dMetalSource,
+            gptkWinePath: baseContext.gptkWinePath,
+            bottleName: baseContext.bottleName,
             externalPrefix: nil
         )
     }
@@ -2632,7 +2658,12 @@ final class AppViewModel {
                     }
                     self.appendLog(response.output)
                     self.rightPanelMessage = response.job?.message ?? successMessage
-                    if case .installHostDependency = action {
+                    if case .installHostDependency(let dependencyID, _) = action {
+                        if dependencyID == "python", let pythonPath = self.detectInstalledPythonPath() {
+                            self.backendContext = self.backendContext.overridingPythonCommand(pythonPath)
+                            self.backendContext.persist()
+                            self.rightPanelMessage = "Installed Python and selected \(pythonPath)."
+                        }
                         self.refreshWineRuntimes()
                         self.refreshDependencyStatus()
                     }

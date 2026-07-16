@@ -263,6 +263,20 @@ struct BackendContext {
         )
     }
 
+    func overridingPythonCommand(_ command: String) -> BackendContext {
+        BackendContext(
+            repoRoot: repoRoot,
+            pythonCommand: command,
+            winePath: winePath,
+            dxmtSource: dxmtSource,
+            dxvkSource: dxvkSource,
+            d3dMetalSource: d3dMetalSource,
+            gptkWinePath: gptkWinePath,
+            bottleName: bottleName,
+            externalPrefix: externalPrefix
+        )
+    }
+
     func overridingRuntimeSources(dxmtSource: String? = nil, dxvkSource: String? = nil) -> BackendContext {
         let cleanedDXMT = (dxmtSource ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanedDXVK = (dxvkSource ?? "").trimmingCharacters(in: .whitespacesAndNewlines)

@@ -129,7 +129,7 @@ Treat each graphics choice as a runtime profile, not only a DLL selection. DXMT 
 - `profiles.py`: compatibility-profile definitions and immutable per-bottle runtime/source fingerprints. A profile binds Wine, the graphics stack, and a dedicated bottle as one launch unit.
   - `setup-compatibility-profile` performs the observable setup workflow and only marks the profile manifest ready after Wine, Steam, and renderer setup succeed.
 - `dependencies.py`: read-only host readiness checks for macOS, Python, Rosetta, Winetricks, Wine Stable 11, managed DXMT 0.71, and optional GPTK components.
-  - Confirmed installation commands are generated as argument arrays without a shell. Rosetta license acceptance is mandatory, Homebrew installs Wine Stable/Winetricks, and DXMT remains handled by the verified runtime catalog.
+  - Confirmed installation commands are generated as argument arrays without a shell. Rosetta license acceptance is mandatory, Homebrew installs Python/Wine Stable/Winetricks, and DXMT remains handled by the verified runtime catalog. A successful Python repair adopts and persists Homebrew's `python3` path before readiness is checked again.
   - `AppViewModel.startRecommendedBootstrap` is the guided state machine: check, confirm, install missing requirements, adopt paths, verify again, set up the DXMT profile, and open Steam. Retry starts from a fresh readiness scan, so successful work is not repeated.
 - `winetricks.py`: Winetricks invocation.
 - `scanner.py`: local game folder signal detection.

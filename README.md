@@ -48,7 +48,7 @@ Install these on the Mac side before first setup:
 
 Settings → System Readiness checks these dependencies using structured backend results. Required DXMT components are separated from optional GPTK support, and every missing required component includes a suggested fix.
 
-Missing dependencies now expose explicit **Fix** actions. Wine Stable and Winetricks installations show the exact Homebrew-backed operation before running, Rosetta requires a separate confirmation that accepts Apple's software license, and DXMT continues through the checksum-verified Runtime Center installer. Readiness checks themselves remain read-only.
+Missing dependencies now expose explicit **Fix** actions. Python, Wine Stable, and Winetricks installations show the exact Homebrew-backed operation before running; after installing Python, NASE automatically selects Homebrew's supported `python3` instead of continuing to use an outdated Xcode Python. Rosetta requires a separate confirmation that accepts Apple's software license, and DXMT continues through the checksum-verified Runtime Center installer. Readiness checks themselves remain read-only.
 
 The **Recommended Gaming Environment** action completes the full bootstrap in dependency order. It installs only missing required components, automatically selects Wine Stable and the verified DXMT source, rescans before continuing, creates the dedicated `-DXMT` profile bottle, installs Steam, and opens Steam for sign-in. A failed run keeps completed work, shows the failing step, and can be retried after opening the profile-specific logs.
 

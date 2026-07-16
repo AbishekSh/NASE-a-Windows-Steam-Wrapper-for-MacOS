@@ -518,6 +518,8 @@ struct SettingsSheet: View {
             return "NASE will ask Homebrew to install the Wine Stable cask and its dependencies. Homebrew currently marks this cask as deprecated because it does not pass Gatekeeper checks."
         case "winetricks":
             return "NASE will ask Homebrew to install Winetricks and its required packages."
+        case "python":
+            return "NASE will ask Homebrew to install the current supported Python 3 release, then select its python3 executable for the backend."
         default:
             return "NASE will install the selected dependency."
         }
@@ -546,6 +548,9 @@ struct SettingsSheet: View {
             showDependencyConfirmation = true
         case "Winetricks":
             pendingDependencyInstall = "winetricks"
+            showDependencyConfirmation = true
+        case "Python":
+            pendingDependencyInstall = "python"
             showDependencyConfirmation = true
         default:
             break

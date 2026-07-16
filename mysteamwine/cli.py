@@ -2017,7 +2017,7 @@ def build_parser() -> argparse.ArgumentParser:
     dependency_cmd.add_argument("--d3dmetal-source", help="Optional D3DMetal source directory")
     dependency_cmd.set_defaults(func=cmd_dependency_status)
     install_dependency_cmd = sub.add_parser("install-host-dependency", help="Install one confirmed host dependency")
-    install_dependency_cmd.add_argument("--dependency", choices=("rosetta", "wine-stable", "winetricks"), required=True)
+    install_dependency_cmd.add_argument("--dependency", choices=("python", "rosetta", "wine-stable", "winetricks"), required=True)
     install_dependency_cmd.add_argument("--confirm-rosetta-license", action="store_true", help="Confirm acceptance of Apple's Rosetta software license")
     install_dependency_cmd.set_defaults(func=cmd_install_host_dependency)
     profile_setup = sub.add_parser("setup-compatibility-profile", help="Prepare a dedicated bottle for a pinned graphics profile")

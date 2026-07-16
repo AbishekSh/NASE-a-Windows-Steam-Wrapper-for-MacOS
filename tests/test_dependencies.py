@@ -67,6 +67,10 @@ class DependencyStatusTests(unittest.TestCase):
                 dependencies.dependency_install_command("winetricks"),
                 ["/opt/homebrew/bin/brew", "install", "winetricks"],
             )
+            self.assertEqual(
+                dependencies.dependency_install_command("python"),
+                ["/opt/homebrew/bin/brew", "install", "python"],
+            )
 
 
 if __name__ == "__main__":
