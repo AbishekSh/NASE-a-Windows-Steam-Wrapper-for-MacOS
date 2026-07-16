@@ -56,12 +56,17 @@ The app now includes an early Runtime Center in Settings for managed Wine, DXVK,
 
 Graphics choices are compatibility profiles rather than DLL toggles. DXMT uses Wine Stable 11 and DXMT 0.71 in a dedicated `-DXMT` bottle; D3DMetal uses GPTK Wine and its matching D3DMetal payload in a dedicated `-D3DMetal` bottle. DXVK-macOS remains visibly unavailable until NASE has a complete pinned Wine/winevulkan/MoltenVK/DXVK-macOS bundle. Each profile bottle stores `compatibility-profile.json` and refuses silent runtime or graphics-source drift.
 
-D3DMetal setup is available from Settings → Compatibility Profiles. **Find GPTK** searches standard app, package-manager, and mounted-volume locations and only adopts Wine/D3DMetal paths proven to belong to the same Game Porting Toolkit installation. **Set Up** creates the dedicated bottle, installs Steam and the bundled D3DMetal payload, attaches shared libraries, and verifies the required DLLs, overrides, and Steam installation before marking the profile ready. Once ready, **Repair** reruns those idempotent installation and verification steps. Apple’s Toolkit must be installed or mounted first because its distribution and license acceptance remain outside NASE.
+D3DMetal setup is available from Settings → Compatibility Profiles. **Get GPTK** opens Apple’s official authenticated download page, **Find GPTK** detects the downloaded or mounted Toolkit and proves Wine/D3DMetal belong to the same installation, and **Install** copies that pair into NASE’s persistent managed runtime storage after explicit Apple-license confirmation. **Set Up** then creates the dedicated bottle, installs Steam and D3DMetal, attaches shared libraries, and verifies the required DLLs, overrides, and Steam installation before marking the profile ready. Once ready, **Repair** reruns those idempotent installation and verification steps. NASE does not bypass Apple’s sign-in or silently accept its license.
 
 Profiles can be prepared from Settings → Compatibility Profiles. The backend equivalent is:
 
 ```bash
 python3 mysteamwine.py --json discover-d3dmetal
+
+python3 mysteamwine.py --json import-gptk \
+  --gptk-wine "/Volumes/Game Porting Toolkit/path/to/wine" \
+  --d3dmetal-source "/Volumes/Game Porting Toolkit" \
+  --confirm-license
 
 python3 mysteamwine.py --bottle Default-DXMT --wine /opt/homebrew/bin/wine --jsonl \
   setup-compatibility-profile --profile dxmt-wine-stable-11-v1 \

@@ -329,6 +329,7 @@ struct BackendContext {
 enum BackendAction {
     case dependencyStatus
     case discoverD3DMetal
+    case importGPTK(confirmLicense: Bool)
     case installHostDependency(id: String, confirmLicense: Bool)
     case setupCompatibilityProfile(GraphicsBackendOption)
     case attachSteamLibraries(GraphicsBackendOption)
@@ -465,6 +466,9 @@ enum BackendBridge {
             return base + ["dependency-status", "--gptk-wine", context.gptkWinePath, "--d3dmetal-source", context.d3dMetalSource]
         case .discoverD3DMetal:
             return base + ["discover-d3dmetal", "--gptk-wine", context.gptkWinePath, "--d3dmetal-source", context.d3dMetalSource]
+        case .importGPTK(let confirmLicense):
+            return base + ["import-gptk", "--gptk-wine", context.gptkWinePath, "--d3dmetal-source", context.d3dMetalSource]
+                + (confirmLicense ? ["--confirm-license"] : [])
         case .installHostDependency(let id, let confirmLicense):
             return base + ["install-host-dependency", "--dependency", id] + (confirmLicense ? ["--confirm-rosetta-license"] : [])
         case .setupCompatibilityProfile(let profile):

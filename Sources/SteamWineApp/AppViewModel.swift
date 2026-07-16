@@ -1502,6 +1502,20 @@ final class AppViewModel {
         )
     }
 
+    func openGPTKDownload() {
+        guard let url = URL(string: "https://developer.apple.com/games/game-porting-toolkit/") else { return }
+        NSWorkspace.shared.open(url)
+        rightPanelMessage = "Download and mount Game Porting Toolkit from Apple, then choose Find GPTK."
+    }
+
+    func importGPTK(confirmLicense: Bool) {
+        executeDetached(
+            .importGPTK(confirmLicense: confirmLicense),
+            successMessage: "Game Porting Toolkit installed in NASE managed storage.",
+            context: backendContext
+        )
+    }
+
     func attachSteamLibraries(to profile: GraphicsBackendOption) {
         let context = effectiveBackendContext(backendContext.compatibilityContext(for: profile))
         executeDetached(
@@ -2463,6 +2477,8 @@ final class AppViewModel {
             return "Check Dependencies"
         case .discoverD3DMetal:
             return "Find Game Porting Toolkit"
+        case .importGPTK:
+            return "Install Game Porting Toolkit"
         case .installHostDependency:
             return "Install Host Dependency"
         case .setupCompatibilityProfile:
@@ -2518,6 +2534,8 @@ final class AppViewModel {
             return "Dependency check finished."
         case .discoverD3DMetal:
             return "Matched Game Porting Toolkit installation found."
+        case .importGPTK:
+            return "Game Porting Toolkit installed."
         case .installHostDependency:
             return "Host dependency installed."
         case .setupCompatibilityProfile:
@@ -2671,6 +2689,16 @@ final class AppViewModel {
                         self.recordStructuredResult(response.structured, for: action)
                     }
                     if case .discoverD3DMetal = action,
+                       let winePath = response.structured?.gptkWinePath,
+                       let source = response.structured?.d3dMetalSource {
+                        self.backendContext = self.backendContext.overridingGPTK(
+                            winePath: winePath,
+                            d3dMetalSource: source
+                        )
+                        self.backendContext.persist()
+                        self.refreshDependencyStatus()
+                    }
+                    if case .importGPTK = action,
                        let winePath = response.structured?.gptkWinePath,
                        let source = response.structured?.d3dMetalSource {
                         self.backendContext = self.backendContext.overridingGPTK(

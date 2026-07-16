@@ -17,7 +17,7 @@ from .dependencies import dependency_install_command, dependency_status
 from .doctor import apply_doctor_fixes, run_doctor, set_prefix_windows_version
 from .dxmt import install_dxmt
 from .dxvk import install_dxvk
-from .gptk import discover_gptk_installations
+from .gptk import discover_gptk_installations, import_managed_gptk
 from .library_activity import acquire_steam_activity, assert_direct_launch_safe, release_steam_activity
 from .profiles import bind_profile, list_profiles, mark_profile_ready
 from .runtime import detect_wine_runtime, is_apple_silicon, resolve_executable, resolve_with_fallback, run_logged
@@ -308,6 +308,29 @@ def cmd_discover_d3dmetal(args: argparse.Namespace) -> None:
     if selected:
         print(f"Wine: {selected['wine_path']}")
         print(f"D3DMetal: {selected['d3dmetal_source']}")
+
+
+def cmd_import_gptk(args: argparse.Namespace) -> None:
+    action = "import-gptk"
+    try:
+        installed = import_managed_gptk(
+            wine_path=Path(args.gptk_wine),
+            d3dmetal_source=Path(args.d3dmetal_source),
+            confirm_license=args.confirm_license,
+        )
+    except Exception as exc:
+        _json_error(args, action=action, message=str(exc), code=1)
+        return
+    data = {
+        "gptk_wine_path": installed["wine_path"],
+        "d3dmetal_source": installed["installation_root"],
+        "installation": installed,
+    }
+    message = f"Installed a managed Game Porting Toolkit runtime at {installed['installation_root']}."
+    if _json_enabled(args) or _stream_enabled(args):
+        _emit_json(action=action, ok=True, message=message, data=data)
+    else:
+        print(message)
 
 
 def cmd_dependency_status(args: argparse.Namespace) -> None:
@@ -2096,6 +2119,11 @@ def build_parser() -> argparse.ArgumentParser:
     discover_d3dmetal.add_argument("--gptk-wine", help="Previously selected GPTK Wine executable")
     discover_d3dmetal.add_argument("--d3dmetal-source", help="Previously selected GPTK/D3DMetal root")
     discover_d3dmetal.set_defaults(func=cmd_discover_d3dmetal)
+    import_gptk = sub.add_parser("import-gptk", help="Copy a licensed GPTK installation into NASE managed storage")
+    import_gptk.add_argument("--gptk-wine", required=True, help="GPTK Wine executable")
+    import_gptk.add_argument("--d3dmetal-source", required=True, help="Root of the same GPTK installation")
+    import_gptk.add_argument("--confirm-license", action="store_true", help="Confirm acceptance of Apple's GPTK license")
+    import_gptk.set_defaults(func=cmd_import_gptk)
     dependency_cmd = sub.add_parser("dependency-status", help="Check host dependencies required by NASE profiles")
     dependency_cmd.add_argument("--winetricks", default="winetricks", help="Path or command name for Winetricks")
     dependency_cmd.add_argument("--gptk-wine", help="Optional GPTK Wine executable")

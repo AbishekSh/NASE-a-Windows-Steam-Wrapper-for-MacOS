@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import os
+import hashlib
 from pathlib import Path
+import shutil
 import subprocess
 from typing import Any
 
 from .d3dmetal import locate_d3dmetal_payload
+from .bottle import app_support_root
 
 
 def _candidate_roots() -> list[Path]:
@@ -96,3 +99,31 @@ def discover_gptk_installations(
             seen.add(key)
             found.append(item)
     return found
+
+
+def import_managed_gptk(
+    *, wine_path: Path, d3dmetal_source: Path, confirm_license: bool = False
+) -> dict[str, Any]:
+    if not confirm_license:
+        raise RuntimeError("Importing Game Porting Toolkit requires explicit acceptance of Apple's license.")
+    inspected = inspect_gptk_installation(wine_path, d3dmetal_source)
+    source_root = Path(inspected["installation_root"])
+    identity = hashlib.sha256(
+        f"{source_root}|{inspected['wine_version']}|{inspected['payload_path']}".encode("utf-8")
+    ).hexdigest()[:12]
+    destination = app_support_root() / "runtimes" / "gptk" / f"game-porting-toolkit-{identity}"
+    wine_relative = Path(inspected["wine_path"]).relative_to(source_root)
+    payload_relative = Path(inspected["payload_path"]).relative_to(source_root)
+    if not destination.exists():
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary = destination.with_name(destination.name + ".tmp")
+        if temporary.exists():
+            shutil.rmtree(temporary)
+        shutil.copytree(source_root, temporary, symlinks=True)
+        temporary.replace(destination)
+    managed_wine = destination / wine_relative
+    managed_payload = destination / payload_relative
+    managed = inspect_gptk_installation(managed_wine, managed_payload)
+    managed["managed"] = True
+    managed["source_root"] = str(source_root)
+    return managed

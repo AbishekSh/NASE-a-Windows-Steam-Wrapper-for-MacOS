@@ -3,9 +3,11 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from mysteamwine.bottle import Bottle
 from mysteamwine.d3dmetal import enable_d3dmetal_overrides, verify_d3dmetal_profile
+import mysteamwine.gptk as gptk
 from mysteamwine.gptk import inspect_gptk_installation
 
 
@@ -52,6 +54,23 @@ class GPTKTests(unittest.TestCase):
         checks = verify_d3dmetal_profile(bottle)
 
         self.assertTrue(all(check["status"] == "ok" for check in checks))
+
+    def test_managed_import_requires_license_and_copies_paired_runtime(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "explicit acceptance"):
+            gptk.import_managed_gptk(wine_path=self.wine, d3dmetal_source=self.installation)
+
+        managed_root = self.root / "Application Support"
+        with patch.object(gptk, "app_support_root", return_value=managed_root):
+            installed = gptk.import_managed_gptk(
+                wine_path=self.wine,
+                d3dmetal_source=self.installation,
+                confirm_license=True,
+            )
+
+        self.assertTrue(installed["managed"])
+        self.assertTrue(Path(installed["wine_path"]).is_file())
+        self.assertTrue(Path(installed["payload_path"]).is_dir())
+        self.assertTrue(str(Path(installed["installation_root"]).resolve()).startswith(str(managed_root.resolve())))
 
 
 if __name__ == "__main__":

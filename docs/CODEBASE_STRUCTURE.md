@@ -117,7 +117,7 @@ Current Steam launch modes are:
 
 - `dxmt.py`: DXMT install and registry override management.
 - `dxvk.py`: DXVK install from upstream or DXVK-macOS layouts.
-- `gptk.py`: bounded local GPTK discovery and strict pairing of Wine with the D3DMetal payload from the same installation root.
+- `gptk.py`: bounded local GPTK discovery, strict Wine/D3DMetal pairing, and confirmed import into persistent NASE-managed runtime storage.
 - `d3dmetal.py`: D3DMetal payload installation, overrides, and post-install profile verification.
 
 Graphics-specific modules should own file layout detection, copying, and registry override edits. Launch modules should only choose the graphics backend and pass launch environment values.

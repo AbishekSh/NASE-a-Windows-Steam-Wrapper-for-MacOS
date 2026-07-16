@@ -20,6 +20,7 @@ struct SettingsSheet: View {
     @State private var pendingDependencyInstall: String?
     @State private var showDependencyConfirmation: Bool = false
     @State private var showRecommendedBootstrapConfirmation: Bool = false
+    @State private var showGPTKImportConfirmation: Bool = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -130,6 +131,14 @@ struct SettingsSheet: View {
             }
         } message: {
             Text(recommendedBootstrapConfirmationMessage)
+        }
+        .alert("Install Game Porting Toolkit?", isPresented: $showGPTKImportConfirmation) {
+            Button("Cancel", role: .cancel) {}
+            Button("Accept and Install") {
+                model.importGPTK(confirmLicense: true)
+            }
+        } message: {
+            Text("NASE will copy the detected Game Porting Toolkit installation into its managed runtime folder. Continue only if you have read and accept Apple’s license included with the Toolkit.")
         }
     }
 
@@ -610,8 +619,15 @@ struct SettingsSheet: View {
                         .disabled(hasSharedLibraries || model.isBusy)
                     } else {
                         if profile == .d3dmetal {
+                            Button("Get GPTK") {
+                                model.openGPTKDownload()
+                            }
                             Button("Find GPTK") {
                                 model.discoverD3DMetal()
+                            }
+                            .disabled(model.isBusy)
+                            Button("Install") {
+                                showGPTKImportConfirmation = true
                             }
                             .disabled(model.isBusy)
                         }
