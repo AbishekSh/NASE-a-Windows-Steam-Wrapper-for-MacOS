@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from mysteamwine.bottle import Bottle
-from mysteamwine.d3dmetal import enable_d3dmetal_overrides, verify_d3dmetal_profile
+from mysteamwine.d3dmetal import d3dmetal_launch_environment, enable_d3dmetal_overrides, verify_d3dmetal_profile
 import mysteamwine.gptk as gptk
 from mysteamwine.gptk import inspect_gptk_installation
 
@@ -17,27 +17,48 @@ class GPTKTests(unittest.TestCase):
         self.installation = self.root / "Game Porting Toolkit 2"
         self.wine = self.installation / "bin" / "wine"
         self.wine.parent.mkdir(parents=True)
-        self.wine.write_text("#!/bin/sh\necho wine-9.0-gptk\n", encoding="utf-8")
+        self.wine.write_text("#!/bin/sh\necho 'wine-9.0 (SikarugirCX 24.0.7)'\n", encoding="utf-8")
         self.wine.chmod(0o755)
         self.payload = self.installation / "lib" / "wine" / "x86_64-windows"
         self.payload.mkdir(parents=True)
         for name in ("dxgi.dll", "d3d11.dll", "d3d12.dll"):
             (self.payload / name).write_text(name, encoding="utf-8")
+        unix = self.installation / "lib" / "wine" / "x86_64-unix"
+        unix.mkdir(parents=True)
+        (unix / "d3d11.so").write_text("unix", encoding="utf-8")
+        external = self.installation / "external"
+        framework = external / "D3DMetal.framework" / "Versions" / "A"
+        framework.mkdir(parents=True)
+        (framework / "D3DMetal").write_text("framework", encoding="utf-8")
+        (external / "libd3dshared.dylib").write_text("shared", encoding="utf-8")
 
     def test_inspection_pairs_wine_and_payload_from_one_installation(self) -> None:
         result = inspect_gptk_installation(self.wine, self.installation)
 
-        self.assertEqual(result["wine_version"], "wine-9.0-gptk")
+        self.assertEqual(result["wine_version"], "wine-9.0 (SikarugirCX 24.0.7)")
         self.assertEqual(Path(result["payload_path"]), self.payload.resolve())
 
-    def test_inspection_rejects_unrelated_payload(self) -> None:
+    def test_inspection_rejects_incomplete_payload(self) -> None:
         unrelated = self.root / "Downloads" / "d3dmetal" / "x86_64-windows"
         unrelated.mkdir(parents=True)
         (unrelated / "dxgi.dll").write_text("", encoding="utf-8")
         (unrelated / "d3d11.dll").write_text("", encoding="utf-8")
 
-        with self.assertRaisesRegex(RuntimeError, "same Toolkit installation"):
+        with self.assertRaisesRegex(FileNotFoundError, "Unix Wine modules"):
             inspect_gptk_installation(self.wine, unrelated.parent)
+
+    def test_inspection_rejects_unsupported_wine_engine(self) -> None:
+        self.wine.write_text("#!/bin/sh\necho wine-11.0\n", encoding="utf-8")
+
+        with self.assertRaisesRegex(RuntimeError, "requires a tested Wine engine"):
+            inspect_gptk_installation(self.wine, self.installation)
+
+    def test_launch_environment_points_to_preserved_bundle(self) -> None:
+        environment = d3dmetal_launch_environment(self.installation)
+
+        self.assertEqual(environment["WINEDLLPATH_PREPEND"], str((self.installation / "lib" / "wine").resolve()))
+        self.assertEqual(environment["CX_D3DMETALPATH"], str(self.installation.resolve()))
+        self.assertEqual(environment["CX_APPLEGPTK_LIBD3DSHARED_PATH"], str((self.installation / "external" / "libd3dshared.dylib").resolve()))
 
     def test_profile_verification_reports_dlls_overrides_and_steam(self) -> None:
         bottle_root = self.root / "bottle"
@@ -49,11 +70,18 @@ class GPTKTests(unittest.TestCase):
         steam = bottle.drive_c / "Program Files (x86)" / "Steam" / "Steam.exe"
         steam.parent.mkdir(parents=True)
         steam.write_text("", encoding="utf-8")
+        (bottle.prefix / "user.reg").write_text(
+            '[Software\\\\Wine\\\\DllOverrides]\n"winemetal"="native,builtin"\n"d3d9"="native"\n',
+            encoding="utf-8",
+        )
         enable_d3dmetal_overrides(bottle)
 
-        checks = verify_d3dmetal_profile(bottle)
+        checks = verify_d3dmetal_profile(bottle, self.installation)
 
         self.assertTrue(all(check["status"] == "ok" for check in checks))
+        registry = (bottle.prefix / "user.reg").read_text(encoding="utf-8")
+        self.assertNotIn('"winemetal"=', registry)
+        self.assertNotIn('"d3d9"=', registry)
 
     def test_managed_import_requires_license_and_copies_paired_runtime(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "explicit acceptance"):

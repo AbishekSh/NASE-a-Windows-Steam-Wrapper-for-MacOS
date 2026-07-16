@@ -39,8 +39,8 @@ PROFILES: dict[str, CompatibilityProfile] = {
         name="D3DMetal (GPTK)",
         graphics_backend="d3dmetal",
         bottle_suffix="D3DMetal",
-        wine_requirement="GPTK Wine from the selected GPTK installation",
-        graphics_requirement="D3DMetal bundled with that GPTK installation",
+        wine_requirement="wine-9.0 (SikarugirCX 24.0.7)",
+        graphics_requirement="Complete D3DMetal bundle with Wine modules and native framework",
         ready=True,
     ),
     "dxvk-macos-pinned-v1": CompatibilityProfile(

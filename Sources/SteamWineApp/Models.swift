@@ -119,7 +119,7 @@ enum GraphicsBackendOption: String, CaseIterable, Identifiable, Codable {
     var profileSummary: String {
         switch self {
         case .dxmt: "Wine Stable 11 + DXMT 0.71"
-        case .d3dmetal: "GPTK Wine + its bundled D3DMetal"
+        case .d3dmetal: "SikarugirCX 24.0.7 + complete D3DMetal runtime bundle"
         case .dxvk: "Requires a pinned Wine, winevulkan, MoltenVK, and DXVK-macOS stack"
         case .none: "Selected Wine runtime with built-in graphics"
         }

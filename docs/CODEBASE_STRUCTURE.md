@@ -117,12 +117,12 @@ Current Steam launch modes are:
 
 - `dxmt.py`: DXMT install and registry override management.
 - `dxvk.py`: DXVK install from upstream or DXVK-macOS layouts.
-- `gptk.py`: bounded local GPTK discovery, strict Wine/D3DMetal pairing, and confirmed import into persistent NASE-managed runtime storage.
-- `d3dmetal.py`: D3DMetal payload installation, overrides, and post-install profile verification.
+- `gptk.py`: bounded compatible-runtime discovery, explicit Wine/D3DMetal version pairing, and confirmed import into persistent NASE-managed runtime storage without flattening the renderer bundle.
+- `d3dmetal.py`: complete D3DMetal bundle inspection, mutually exclusive overrides, per-launch native search-path injection, and post-install profile verification.
 
-Graphics-specific modules should own file layout detection, copying, and registry override edits. Launch modules should only choose the graphics backend and pass launch environment values.
+Graphics-specific modules own file-layout validation and registry override edits. D3DMetal keeps its `wine`, `external`, and framework directories intact; launch modules obtain the complete environment from `d3dmetal.py` and inject it for every Steam and direct-game process.
 
-Treat each graphics choice as a runtime profile, not only a DLL selection. DXMT uses the validated Wine Stable context, D3DMetal uses GPTK Wine plus an isolated `-D3DMetal` bottle, and DXVK requires a separately validated Wine Vulkan/MoltenVK host stack. A successful DLL copy does not prove that the host graphics runtime can launch a game.
+Treat each graphics choice as a runtime profile, not only a DLL selection. DXMT uses the validated Wine Stable context. D3DMetal pins `wine-9.0 (SikarugirCX 24.0.7)` to a complete renderer bundle plus an isolated `-D3DMetal` bottle. DXVK requires a separately validated Wine Vulkan/MoltenVK host stack. These renderer modes are mutually exclusive, and a successful DLL copy alone does not prove that the host graphics runtime can launch a game.
 
 ### Health, Dependencies, And Advice
 

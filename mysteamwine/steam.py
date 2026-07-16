@@ -11,6 +11,7 @@ from typing import Any, Iterator
 from . import DEFAULT_STEAM_WINDOWS_PATH, STEAM_SETUP_URL
 from .bottle import Bottle, ensure_bottle_dirs
 from .runtime import download, run_logged, run_logged_detached
+from .d3dmetal import d3dmetal_launch_environment
 
 
 @dataclass(frozen=True)
@@ -138,7 +139,12 @@ def _terminate_orphaned_prefix_processes(prefix: Path) -> list[int]:
     return stopped
 
 
-def _graphics_launch_env(bottle: Bottle, wine_debug: str, graphics_backend: str) -> dict[str, str]:
+def _graphics_launch_env(
+    bottle: Bottle,
+    wine_debug: str,
+    graphics_backend: str,
+    graphics_source: Path | None = None,
+) -> dict[str, str]:
     env = {"WINEPREFIX": str(bottle.prefix), "WINEDEBUG": wine_debug}
     if graphics_backend == "dxvk":
         env["WINEDLLOVERRIDES"] = "d3d11=n;dxgi=n;d3d10core=n;d3d9=n"
@@ -146,6 +152,13 @@ def _graphics_launch_env(bottle: Bottle, wine_debug: str, graphics_backend: str)
         env["WINEDLLOVERRIDES"] = "dxgi=n,b;d3d11=n,b;d3d10core=n,b;winemetal=n,b"
     elif graphics_backend == "d3dmetal":
         env["WINEDLLOVERRIDES"] = "dxgi=n,b;d3d11=n,b;d3d12=n,b;atidxx64=n,b;nvapi64=n,b;nvngx=n,b"
+        if graphics_source is None:
+            raise RuntimeError("D3DMetal launches require a validated renderer bundle.")
+        d3dmetal_env = d3dmetal_launch_environment(graphics_source)
+        existing_fallback = os.environ.get("DYLD_FALLBACK_LIBRARY_PATH", "")
+        if existing_fallback:
+            d3dmetal_env["DYLD_FALLBACK_LIBRARY_PATH"] += ":" + existing_fallback
+        env.update(d3dmetal_env)
     return env
 
 
@@ -170,10 +183,11 @@ def run_steam(
     extra_env: dict[str, str] | None = None,
     graphics_backend: str = "none",
     restart_existing: bool = True,
+    graphics_source: Path | None = None,
 ) -> tuple[int, str]:
     ensure_bottle_dirs(bottle)
     wineserver = _wineserver_path(wine64_path)
-    env = _graphics_launch_env(bottle, "-all", graphics_backend)
+    env = _graphics_launch_env(bottle, "-all", graphics_backend, graphics_source)
     if extra_env:
         env.update(extra_env)
     open_main = False
@@ -318,6 +332,7 @@ def launch_app(
     graphics_backend: str = "dxmt",
     wait: bool = True,
     restart_existing: bool = True,
+    graphics_source: Path | None = None,
 ) -> tuple[int, str]:
     return run_steam(
         bottle=bottle,
@@ -327,6 +342,7 @@ def launch_app(
         wait=wait,
         graphics_backend=graphics_backend,
         restart_existing=restart_existing and graphics_backend != "none",
+        graphics_source=graphics_source,
     )
 
 
@@ -361,6 +377,7 @@ def run_game_executable(
     wait: bool = True,
     graphics_backend: str = "dxmt",
     probe_seconds: int = 0,
+    graphics_source: Path | None = None,
 ) -> tuple[int, str]:
     ensure_bottle_dirs(bottle)
     exe_path = executable.expanduser().resolve()
@@ -371,7 +388,7 @@ def run_game_executable(
     if extra_args:
         command.extend(extra_args)
 
-    env = _graphics_launch_env(bottle, wine_debug, graphics_backend)
+    env = _graphics_launch_env(bottle, wine_debug, graphics_backend, graphics_source)
     if extra_env:
         env.update(extra_env)
 

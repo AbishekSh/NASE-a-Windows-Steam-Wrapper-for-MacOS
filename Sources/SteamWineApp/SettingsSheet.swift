@@ -619,10 +619,10 @@ struct SettingsSheet: View {
                         .disabled(hasSharedLibraries || model.isBusy)
                     } else {
                         if profile == .d3dmetal {
-                            Button("Get GPTK") {
+                            Button("Get Compatible Runtime") {
                                 model.openGPTKDownload()
                             }
-                            Button("Find GPTK") {
+                            Button("Find Runtime") {
                                 model.discoverD3DMetal()
                             }
                             .disabled(model.isBusy)

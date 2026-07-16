@@ -488,7 +488,7 @@ def cmd_setup_compatibility_profile(args: argparse.Namespace) -> None:
                 "Installing the matching D3DMetal payload...",
                 lambda: install_d3dmetal(bottle=bottle, d3dmetal_source=graphics_source, wine64_path=wine64),
             )
-            verification = verify_d3dmetal_profile(bottle)
+            verification = verify_d3dmetal_profile(bottle, graphics_source)
             failed = [check for check in verification if check["status"] != "ok"]
             if failed:
                 raise RuntimeError("D3DMetal verification failed: " + "; ".join(check["detail"] for check in failed))
@@ -1503,6 +1503,7 @@ def cmd_launch_game(args: argparse.Namespace) -> None:
         graphics_backend=graphics_backend,
         wait=not args.no_wait,
         restart_existing=not steam_was_running,
+        graphics_source=Path(args.d3dmetal_source) if graphics_backend == "d3dmetal" and args.d3dmetal_source else None,
     )
     if code != 0:
         if not steam_is_running(str(bottle.prefix)):
@@ -1725,6 +1726,7 @@ def cmd_smart_launch_game(args: argparse.Namespace) -> None:
                 wait=False,
                 graphics_backend=graphics_backend,
                 probe_seconds=args.probe_seconds,
+                graphics_source=Path(args.d3dmetal_source) if graphics_backend == "d3dmetal" and args.d3dmetal_source else None,
             )
             if code == 0:
                 update_session(launch_session["session_id"], strategy="direct", message="Direct launch request sent.")
@@ -1789,6 +1791,7 @@ def cmd_smart_launch_game(args: argparse.Namespace) -> None:
         graphics_backend=graphics_backend,
         wait=not args.no_wait,
         restart_existing=not steam_was_running,
+        graphics_source=Path(args.d3dmetal_source) if graphics_backend == "d3dmetal" and args.d3dmetal_source else None,
     )
     if code != 0:
         if not steam_is_running(str(bottle.prefix)):
@@ -1970,6 +1973,7 @@ def cmd_debug_game(args: argparse.Namespace) -> None:
         wine_debug=args.wine_debug,
         wait=not args.no_wait,
         graphics_backend=graphics_backend,
+        graphics_source=Path(args.d3dmetal_source) if graphics_backend == "d3dmetal" and args.d3dmetal_source else None,
     )
     if code != 0:
         update_session(launch_session["session_id"], status="failed", message="Direct game launch failed.")

@@ -1848,30 +1848,30 @@ final class AppViewModel {
             return results
         }
 
-        let directCandidates = [
-            sourceURL.appendingPathComponent("wine/x86_64-windows/d3d11.dll").path,
-            sourceURL.appendingPathComponent("x86_64-windows/d3d11.dll").path,
-            sourceURL.appendingPathComponent("x64/d3d11.dll").path,
-            sourceURL.appendingPathComponent("redist/lib/wine/x86_64-windows/d3d11.dll").path,
-            sourceURL.appendingPathComponent("lib64/wine/x86_64-windows/d3d11.dll").path,
-            sourceURL.appendingPathComponent("lib/wine/x86_64-windows/d3d11.dll").path,
-        ]
+        let wineRoot = sourceURL.appendingPathComponent("wine")
+        let windowsDirectory = wineRoot.appendingPathComponent("x86_64-windows")
+        let unixDirectory = wineRoot.appendingPathComponent("x86_64-unix")
+        let externalDirectory = sourceURL.appendingPathComponent("external")
+        let frameworkVersioned = externalDirectory.appendingPathComponent("D3DMetal.framework/Versions/A/D3DMetal")
+        let frameworkDirect = externalDirectory.appendingPathComponent("D3DMetal.framework/D3DMetal")
+        let requiredFiles = ["d3d11.dll", "dxgi.dll", "d3d12.dll"]
 
-        var foundRecursivePayload = false
-        if let enumerator = fileManager.enumerator(at: sourceURL, includingPropertiesForKeys: nil) {
-            while let item = enumerator.nextObject() as? URL {
-                if item.lastPathComponent.lowercased() == "d3d11.dll" {
-                    foundRecursivePayload = true
-                    break
-                }
-            }
-        }
-
-        if directCandidates.contains(where: fileManager.fileExists(atPath:)) || foundRecursivePayload {
-            results.append("OK: D3DMetal payload looks valid")
+        if requiredFiles.allSatisfy({ fileManager.fileExists(atPath: windowsDirectory.appendingPathComponent($0).path) }) {
+            results.append("OK: D3DMetal Windows modules found")
         } else {
-            results.append("FAIL: D3DMetal source is missing the Wine d3d11.dll payload")
+            results.append("FAIL: D3DMetal wine/x86_64-windows modules are incomplete")
         }
+        results.append(fileManager.fileExists(atPath: unixDirectory.path)
+            ? "OK: D3DMetal Unix Wine modules found"
+            : "FAIL: D3DMetal wine/x86_64-unix is missing")
+        results.append(
+            fileManager.fileExists(atPath: frameworkVersioned.path) || fileManager.fileExists(atPath: frameworkDirect.path)
+                ? "OK: D3DMetal.framework found"
+                : "FAIL: external/D3DMetal.framework is missing"
+        )
+        results.append(fileManager.fileExists(atPath: externalDirectory.appendingPathComponent("libd3dshared.dylib").path)
+            ? "OK: libd3dshared.dylib found"
+            : "FAIL: external/libd3dshared.dylib is missing")
 
         return results
     }

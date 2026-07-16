@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 import tarfile
+from dataclasses import dataclass
 from pathlib import Path
 
 from .bottle import Bottle, ensure_bottle_dirs
@@ -46,6 +47,60 @@ D3DMETAL_DLL_NAMES = (
     "nvapi64.dll",
     "nvngx.dll",
 )
+
+
+@dataclass(frozen=True)
+class D3DMetalBundle:
+    root: Path
+    wine_root: Path
+    windows_dir: Path
+    unix_dir: Path
+    external_dir: Path
+    framework_binary: Path
+    shared_library: Path
+
+
+def inspect_d3dmetal_bundle(source: Path) -> D3DMetalBundle:
+    root = source.expanduser().resolve(strict=False)
+    if not root.is_dir():
+        raise FileNotFoundError(f"D3DMetal bundle directory was not found: {root}")
+    windows_dir = _locate_payload_dir(root)
+    wine_root = windows_dir.parent
+    unix_dir = wine_root / "x86_64-unix"
+    external_dir = _locate_external_payload_dir(root)
+    if not unix_dir.is_dir():
+        raise FileNotFoundError(f"D3DMetal Unix Wine modules were not found under: {root}")
+    if external_dir is None:
+        raise FileNotFoundError(f"D3DMetal external runtime directory was not found under: {root}")
+    framework = external_dir / "D3DMetal.framework"
+    framework_binary = framework / "Versions" / "A" / "D3DMetal"
+    if not framework_binary.is_file():
+        framework_binary = framework / "D3DMetal"
+    shared_library = external_dir / "libd3dshared.dylib"
+    if not framework_binary.is_file():
+        raise FileNotFoundError(f"D3DMetal.framework binary was not found under: {external_dir}")
+    if not shared_library.is_file():
+        raise FileNotFoundError(f"libd3dshared.dylib was not found under: {external_dir}")
+    return D3DMetalBundle(
+        root=root,
+        wine_root=wine_root,
+        windows_dir=windows_dir,
+        unix_dir=unix_dir,
+        external_dir=external_dir,
+        framework_binary=framework_binary,
+        shared_library=shared_library,
+    )
+
+
+def d3dmetal_launch_environment(source: Path) -> dict[str, str]:
+    bundle = inspect_d3dmetal_bundle(source)
+    return {
+        "WINEDLLPATH_PREPEND": str(bundle.wine_root),
+        "CX_D3DMETALPATH": str(bundle.root),
+        "CX_APPLEGPT_LIBD3DSHARED_PATH": str(bundle.shared_library),
+        "CX_APPLEGPTK_LIBD3DSHARED_PATH": str(bundle.shared_library),
+        "DYLD_FALLBACK_LIBRARY_PATH": str(bundle.external_dir),
+    }
 
 
 def _extract_archive(archive: Path, target_dir: Path) -> Path:
@@ -234,49 +289,10 @@ def enable_d3dmetal_overrides(bottle: Bottle) -> None:
 def install_d3dmetal(*, bottle: Bottle, d3dmetal_source: Path, wine64_path: Path | None = None) -> tuple[int, str]:
     ensure_bottle_dirs(bottle)
     d3dmetal_root = resolve_d3dmetal_root(d3dmetal_source, bottle.cache / "d3dmetal")
-    x64_dir = _locate_payload_dir(d3dmetal_root)
-    x32_dir = _locate_optional_32bit_dir(d3dmetal_root)
-    unix_dir = _locate_unix_payload_dir(d3dmetal_root)
-    external_dir = _locate_external_payload_dir(d3dmetal_root)
-
-    system32 = bottle.drive_c / "windows" / "system32"
-    syswow64 = bottle.drive_c / "windows" / "syswow64"
-    system32.mkdir(parents=True, exist_ok=True)
-    syswow64.mkdir(parents=True, exist_ok=True)
-
-    copied: list[str] = []
-    for dll_name in D3DMETAL_DLL_NAMES:
-        source = x64_dir / dll_name
-        if source.exists():
-            destination = system32 / dll_name
-            shutil.copy2(source, destination)
-            copied.append(str(destination))
-
-    if x32_dir:
-        for dll in sorted(x32_dir.glob("*.dll")):
-            destination = syswow64 / dll.name
-            shutil.copy2(dll, destination)
-            copied.append(str(destination))
-
-    if external_dir:
-        prefix_external = bottle.root / "d3dmetal_external"
-        if prefix_external.exists():
-            shutil.rmtree(prefix_external)
-        shutil.copytree(external_dir, prefix_external, symlinks=True)
-        copied.append(str(prefix_external))
-
-    if unix_dir:
-        prefix_unix = bottle.root / "d3dmetal_unix"
-        if prefix_unix.exists():
-            shutil.rmtree(prefix_unix)
-        shutil.copytree(unix_dir, prefix_unix, symlinks=True)
-        copied.append(str(prefix_unix))
-
-    if not copied:
-        raise FileNotFoundError(f"No D3DMetal DLLs found under: {d3dmetal_root}")
+    bundle = inspect_d3dmetal_bundle(d3dmetal_root)
 
     enable_d3dmetal_overrides(bottle)
-    tail_parts = ["\n".join(copied)]
+    tail_parts = [f"Using preserved D3DMetal bundle at {bundle.root}"]
     if wine64_path is not None:
         wineserver = _wineserver_path(wine64_path)
         code, tail = run_logged(
@@ -292,15 +308,20 @@ def install_d3dmetal(*, bottle: Bottle, d3dmetal_source: Path, wine64_path: Path
     return 0, "\n".join(part for part in tail_parts if part)
 
 
-def verify_d3dmetal_profile(bottle: Bottle) -> list[dict[str, str]]:
-    system32 = bottle.drive_c / "windows" / "system32"
+def verify_d3dmetal_profile(bottle: Bottle, source: Path) -> list[dict[str, str]]:
+    try:
+        bundle = inspect_d3dmetal_bundle(source)
+    except (OSError, FileNotFoundError) as exc:
+        return [{"name": "D3DMetal bundle", "status": "fail", "detail": str(exc)}]
     required_dlls = ("dxgi.dll", "d3d11.dll", "d3d12.dll")
-    missing = [name for name in required_dlls if not (system32 / name).is_file()]
+    missing = [name for name in required_dlls if not (bundle.windows_dir / name).is_file()]
     checks = [{
         "name": "D3DMetal DLLs",
         "status": "ok" if not missing else "fail",
-        "detail": "Required D3DMetal DLLs are installed." if not missing else f"Missing: {', '.join(missing)}",
+        "detail": "Required D3DMetal DLLs are present in the preserved bundle." if not missing else f"Missing: {', '.join(missing)}",
     }]
+    checks.append({"name": "D3DMetal.framework", "status": "ok", "detail": str(bundle.framework_binary)})
+    checks.append({"name": "libd3dshared", "status": "ok", "detail": str(bundle.shared_library)})
     user_reg = bottle.prefix / "user.reg"
     registry = user_reg.read_text(encoding="utf-8", errors="replace") if user_reg.exists() else ""
     missing_overrides = [name for name in ("dxgi", "d3d11", "d3d12") if f'"{name}"="native,builtin"' not in registry]
@@ -308,6 +329,12 @@ def verify_d3dmetal_profile(bottle: Bottle) -> list[dict[str, str]]:
         "name": "D3DMetal overrides",
         "status": "ok" if not missing_overrides else "fail",
         "detail": "D3DMetal DLL overrides are enabled." if not missing_overrides else f"Missing overrides: {', '.join(missing_overrides)}",
+    })
+    conflicting = [name for name in ("winemetal", "d3d10core", "d3d9") if f'"{name}"=' in registry or f'"*{name}"=' in registry]
+    checks.append({
+        "name": "Renderer exclusivity",
+        "status": "ok" if not conflicting else "fail",
+        "detail": "DXMT and DXVK overrides are disabled." if not conflicting else f"Conflicting renderer overrides: {', '.join(conflicting)}",
     })
     steam = bottle.drive_c / "Program Files (x86)" / "Steam" / "Steam.exe"
     checks.append({
