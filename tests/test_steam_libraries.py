@@ -90,6 +90,62 @@ class SteamLibraryRegistryTests(unittest.TestCase):
         self.assertFalse(destination.with_suffix(".tmp").exists())
         self.assertEqual(steam_libraries.installed_games(registry)[0]["appid"], "300")
 
+    def test_attach_shares_files_without_copying_them_into_profile(self) -> None:
+        write_manifest(self.external, "400", "Shared Game", "Shared Game")
+        shared_game = self.external / "common" / "Shared Game"
+        shared_game.mkdir(parents=True)
+        shared_exe = shared_game / "Shared.exe"
+        shared_exe.write_text("game-data", encoding="utf-8")
+        registry = {
+            "libraries": [{
+                "library_id": "library_shared",
+                "path": str(self.external.parent),
+                "steamapps_path": str(self.external),
+                "exists": True,
+                "writable": True,
+                "referenced_by": [{"bottle": "Default", "prefix": str(self.bottle.prefix), "source": "primary"}],
+            }],
+            "apps": [{
+                "appid": "400",
+                "name": "Shared Game",
+                "locations": [{
+                    "library_id": "library_shared",
+                    "state": "installed",
+                    "install_dir": str(shared_game),
+                }],
+            }],
+        }
+        steam_root = self.bottle.prefix / "drive_c" / "Program Files (x86)" / "Steam"
+        steam_root.mkdir(parents=True)
+        (steam_root / "Steam.exe").write_text("", encoding="utf-8")
+        config = steam_root / "steamapps" / "libraryfolders.vdf"
+        config.parent.mkdir()
+        config.write_text('"libraryfolders"\n{\n\t"0"\n\t{\n\t\t"path" "C:\\\\Program Files (x86)\\\\Steam"\n\t}\n}\n', encoding="utf-8")
+
+        with patch.object(steam_libraries, "steam_is_running", return_value=False):
+            result = steam_libraries.attach_registered_libraries(self.bottle, registry)
+            repeated = steam_libraries.attach_registered_libraries(self.bottle, registry)
+
+        self.assertEqual(len(result["attached"]), 1)
+        self.assertEqual(len(repeated["already_attached"]), 1)
+        self.assertIsNotNone(result["backup_path"])
+        self.assertTrue(Path(result["backup_path"]).is_file())
+        self.assertIn("Z:\\\\", config.read_text(encoding="utf-8"))
+        self.assertEqual(shared_exe.read_text(encoding="utf-8"), "game-data")
+        self.assertFalse((config.parent / "common" / "Shared Game").exists())
+
+    def test_attach_refuses_while_target_steam_is_running(self) -> None:
+        steam_root = self.bottle.prefix / "drive_c" / "Program Files (x86)" / "Steam"
+        steam_root.mkdir(parents=True)
+        (steam_root / "Steam.exe").write_text("", encoding="utf-8")
+        registry = {"libraries": [], "apps": []}
+
+        with (
+            patch.object(steam_libraries, "steam_is_running", return_value=True),
+            self.assertRaisesRegex(RuntimeError, "Close Steam"),
+        ):
+            steam_libraries.attach_registered_libraries(self.bottle, registry)
+
 
 if __name__ == "__main__":
     unittest.main()

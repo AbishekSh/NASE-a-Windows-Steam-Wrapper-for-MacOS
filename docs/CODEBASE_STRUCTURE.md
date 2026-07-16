@@ -151,6 +151,15 @@ Treat each graphics choice as a runtime profile, not only a DLL selection. DXMT 
 5. The registry is atomically replaced at `~/Library/Application Support/MySteamWine/steam-libraries.json`.
 6. SwiftUI receives one preferred installed location per AppID. This phase never edits Steam configuration.
 
+### Steam Library Attachment
+
+1. A ready managed profile requests one or more stable library IDs, or all canonical libraries.
+2. The backend refuses external targets, missing Steam installations, and profile bottles whose Steam process is running.
+3. A per-bottle file lock serializes attachment jobs.
+4. Existing VDF entries are preserved; new host libraries are added as Wine `Z:` paths without copying game content.
+5. The original `libraryfolders.vdf` receives a timestamped backup, the replacement is atomic, and parsed host paths are verified after writing.
+6. Only the target profile's Steam configuration changes. Its prefix, graphics payload, shader cache, and logs remain independent from every other profile.
+
 ### Setup Flow
 
 1. SwiftUI calls `BackendBridge.executeStreaming(.setupMetal, context: ...)`.

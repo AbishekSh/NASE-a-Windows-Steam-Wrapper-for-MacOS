@@ -300,6 +300,7 @@ enum BackendAction {
     case dependencyStatus
     case installHostDependency(id: String, confirmLicense: Bool)
     case setupCompatibilityProfile(GraphicsBackendOption)
+    case attachSteamLibraries(GraphicsBackendOption)
     case setupMetal
     case doctor
     case doctorFix
@@ -443,6 +444,8 @@ enum BackendBridge {
                 args += ["--d3dmetal-source", context.d3dMetalSource]
             }
             return args
+        case .attachSteamLibraries:
+            return base + ["attach-steam-library", "--all"]
         case .setupMetal:
             return base + ["setup-metal", "--dxmt-source", context.dxmtSource, "--no-wait"]
         case .doctor:

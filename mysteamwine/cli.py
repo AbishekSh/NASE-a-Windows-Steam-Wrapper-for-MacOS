@@ -31,7 +31,7 @@ from .steam import (
     run_steam,
     steam_windows_path,
 )
-from .steam_libraries import installed_games, refresh_registry
+from .steam_libraries import attach_registered_libraries, installed_games, refresh_registry
 from .winetricks import run_winetricks
 
 
@@ -384,7 +384,7 @@ def cmd_setup_compatibility_profile(args: argparse.Namespace) -> None:
                 status="ok",
                 message=message.replace("...", "") + " complete.",
                 completed_steps=len(steps),
-                total_steps=4,
+                total_steps=5,
             )
 
     try:
@@ -442,6 +442,10 @@ def cmd_setup_compatibility_profile(args: argparse.Namespace) -> None:
             )
         else:
             steps.append({"name": "install-graphics", "status": "ok"})
+        if _stream_enabled(args):
+            _stream_step(action=action, job_id=job_id or uuid.uuid4().hex, name="attach-libraries", status="started", message="Attaching existing Steam libraries...")
+        attachment = attach_registered_libraries(bottle, refresh_registry(bottle))
+        steps.append({"name": "attach-libraries", "status": "ok"})
         manifest = mark_profile_ready(bottle)
     except Exception as exc:
         message = str(exc)
@@ -459,7 +463,37 @@ def cmd_setup_compatibility_profile(args: argparse.Namespace) -> None:
         _json_error(args, action=action, message=message, code=1)
 
     message = f"{manifest['profile']['name']} is ready in {bottle.name}."
-    data = {"profile": manifest["profile"], "bottle": bottle.name, "manifest": manifest, "steps": steps}
+    data = {"profile": manifest["profile"], "bottle": bottle.name, "manifest": manifest, "steps": steps, "library_attachment": attachment}
+    if _stream_enabled(args):
+        _stream_result(action=action, job_id=job_id or uuid.uuid4().hex, ok=True, status="completed", message=message, data=data)
+    elif _json_enabled(args):
+        _emit_json(action=action, ok=True, message=message, data=data)
+    else:
+        print(message)
+
+
+def cmd_attach_steam_library(args: argparse.Namespace) -> None:
+    action = "attach-steam-library"
+    bottle = _resolve_bottle(args)
+    if _is_external_prefix(args):
+        _json_error(args, action=action, message="Shared libraries can only be attached to a managed profile bottle.")
+    library_ids = set(args.library_id or [])
+    if not args.all and not library_ids:
+        _json_error(args, action=action, message="Choose --all or provide at least one --library-id.")
+    job_id = _stream_start(action=action, message=f"Attaching shared Steam libraries to {bottle.name}...") if _stream_enabled(args) else None
+    try:
+        registry = refresh_registry(bottle)
+        result = attach_registered_libraries(bottle, registry, library_ids=None if args.all else library_ids)
+        refreshed = refresh_registry(bottle)
+    except RuntimeError as exc:
+        message = str(exc)
+        if _stream_enabled(args):
+            _stream_result(action=action, job_id=job_id or uuid.uuid4().hex, ok=False, status="failed", message=message, errors=[message])
+            raise SystemExit(1)
+        _json_error(args, action=action, message=message, code=1)
+    count = len(result["attached"])
+    message = f"Attached {count} shared Steam library location(s) to {bottle.name}." if count else f"All selected Steam libraries are already attached to {bottle.name}."
+    data = {**result, "registry_path": str(app_support_root() / "steam-libraries.json"), "library_count": len(refreshed["libraries"])}
     if _stream_enabled(args):
         _stream_result(action=action, job_id=job_id or uuid.uuid4().hex, ok=True, status="completed", message=message, data=data)
     elif _json_enabled(args):
@@ -1994,6 +2028,10 @@ def build_parser() -> argparse.ArgumentParser:
     profile_setup.add_argument("--winetricks", default="winetricks", help="Path to winetricks")
     profile_setup.add_argument("--interactive", action="store_true", help="Allow interactive Steam installation")
     profile_setup.set_defaults(func=cmd_setup_compatibility_profile)
+    attach_library = sub.add_parser("attach-steam-library", help="Attach canonical shared Steam libraries to one managed profile bottle")
+    attach_library.add_argument("--all", action="store_true", help="Attach every discovered Steam library")
+    attach_library.add_argument("--library-id", action="append", help="Attach one stable library id; may be repeated")
+    attach_library.set_defaults(func=cmd_attach_steam_library)
     sub.add_parser("init", help="Create or initialize the Wine prefix").set_defaults(func=cmd_init)
     sub.add_parser("install-steam", help="Download and run SteamSetup.exe").set_defaults(func=cmd_install_steam)
 

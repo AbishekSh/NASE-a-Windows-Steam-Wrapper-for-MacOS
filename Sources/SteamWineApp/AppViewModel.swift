@@ -92,6 +92,7 @@ final class AppViewModel {
             || isActionRunning(.installDXMT)
             || isActionRunning(.installDXVK)
             || isActionRunning(.installD3DMetal)
+            || isActionRunning(.attachSteamLibraries(.dxmt))
     }
     var isRefreshingSteamGames: Bool {
         isActionRunning(.listGames)
@@ -1467,6 +1468,23 @@ final class AppViewModel {
         )
     }
 
+    func attachSteamLibraries(to profile: GraphicsBackendOption) {
+        let context = effectiveBackendContext(backendContext.compatibilityContext(for: profile))
+        executeDetached(
+            .attachSteamLibraries(profile),
+            successMessage: "Shared Steam libraries attached to \(profile.rawValue).",
+            context: context
+        )
+    }
+
+    func compatibilityProfileHasSharedLibraries(_ profile: GraphicsBackendOption) -> Bool {
+        let context = backendContext.compatibilityContext(for: profile)
+        let config = currentPrefixURL(for: context)?
+            .appendingPathComponent("drive_c/Program Files (x86)/Steam/steamapps/libraryfolders.vdf")
+        guard let config, let text = try? String(contentsOf: config, encoding: .utf8) else { return false }
+        return text.contains("NASE Shared Library")
+    }
+
     func compatibilityProfileIsReady(_ profile: GraphicsBackendOption) -> Bool {
         let context = backendContext.compatibilityContext(for: profile)
         let manifestURL = FileManager.default.homeDirectoryForCurrentUser
@@ -2411,6 +2429,8 @@ final class AppViewModel {
             return "Install Host Dependency"
         case .setupCompatibilityProfile:
             return "Set Up Compatibility Profile"
+        case .attachSteamLibraries:
+            return "Attach Shared Steam Libraries"
         case .setupMetal:
             return "Finish Setup"
         case .doctor:
@@ -2462,6 +2482,8 @@ final class AppViewModel {
             return "Host dependency installed."
         case .setupCompatibilityProfile:
             return "Compatibility profile is ready."
+        case .attachSteamLibraries:
+            return "Shared Steam libraries attached."
         case .setupMetal:
             return "Setup finished."
         case .doctor:

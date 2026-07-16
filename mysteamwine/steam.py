@@ -467,7 +467,7 @@ def parse_vdf_file(path: Path) -> dict[str, Any]:
     return parse_vdf_text(path.read_text(encoding="utf-8", errors="replace"))
 
 
-def _wine_path_to_host(bottle: Bottle, raw_path: str) -> Path:
+def wine_path_to_host(bottle: Bottle, raw_path: str) -> Path:
     normalized = raw_path.replace("\\\\", "\\")
     if len(normalized) >= 2 and normalized[1] == ":":
         drive = normalized[0].lower()
@@ -497,7 +497,7 @@ def steamapps_dirs(bottle: Bottle) -> list[Path]:
         if isinstance(value, dict):
             raw_path = value.get("path")
             if raw_path:
-                path = _wine_path_to_host(bottle, str(raw_path))
+                path = wine_path_to_host(bottle, str(raw_path))
                 libraries.append(path / "steamapps")
     unique: list[Path] = []
     seen: set[Path] = set()

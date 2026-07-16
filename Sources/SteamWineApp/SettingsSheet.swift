@@ -565,6 +565,7 @@ struct SettingsSheet: View {
 
             ForEach(GraphicsBackendOption.allCases) { profile in
                 let isReady = model.compatibilityProfileIsReady(profile)
+                let hasSharedLibraries = model.compatibilityProfileHasSharedLibraries(profile)
                 HStack(alignment: .top, spacing: 12) {
                     Image(systemName: profile == .dxvk ? "exclamationmark.triangle.fill" : (isReady ? "checkmark.seal.fill" : "checkmark.shield"))
                         .frame(width: 24)
@@ -575,15 +576,27 @@ struct SettingsSheet: View {
                         Text(profile.profileSummary)
                             .font(.caption)
                             .foregroundStyle(themeMutedForeground)
+                        if hasSharedLibraries {
+                            Label("Shared game files attached", systemImage: "externaldrive.connected.to.line.below")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.green)
+                        }
                         Text("Bottle: \(bottleName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Default" : bottleName)-\(profile.bottleSuffix)")
                             .font(.caption2.monospaced())
                             .foregroundStyle(themeMutedForeground)
                     }
                     Spacer()
-                    Button(profile == .dxvk ? "Unavailable" : (isReady ? "Ready" : "Set Up")) {
-                        model.setupCompatibilityProfile(profile)
+                    if isReady {
+                        Button(hasSharedLibraries ? "Attached" : "Attach Libraries") {
+                            model.attachSteamLibraries(to: profile)
+                        }
+                        .disabled(hasSharedLibraries || model.isBusy)
+                    } else {
+                        Button(profile == .dxvk ? "Unavailable" : "Set Up") {
+                            model.setupCompatibilityProfile(profile)
+                        }
+                        .disabled(profile == .dxvk || model.isBusy)
                     }
-                    .disabled(profile == .dxvk || isReady || model.isBusy)
                 }
                 .padding(12)
                 .background(themePanel)
