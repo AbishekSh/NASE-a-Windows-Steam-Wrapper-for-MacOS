@@ -56,12 +56,20 @@ The app now includes an early Runtime Center in Settings for managed Wine, DXVK,
 
 Graphics choices are compatibility profiles rather than DLL toggles. DXMT uses Wine Stable 11 and DXMT 0.71 in a dedicated `-DXMT` bottle; D3DMetal uses GPTK Wine and its matching D3DMetal payload in a dedicated `-D3DMetal` bottle. DXVK-macOS remains visibly unavailable until NASE has a complete pinned Wine/winevulkan/MoltenVK/DXVK-macOS bundle. Each profile bottle stores `compatibility-profile.json` and refuses silent runtime or graphics-source drift.
 
+D3DMetal setup is available from Settings → Compatibility Profiles. **Find GPTK** searches standard app, package-manager, and mounted-volume locations and only adopts Wine/D3DMetal paths proven to belong to the same Game Porting Toolkit installation. **Set Up** creates the dedicated bottle, installs Steam and the bundled D3DMetal payload, attaches shared libraries, and verifies the required DLLs, overrides, and Steam installation before marking the profile ready. Once ready, **Repair** reruns those idempotent installation and verification steps. Apple’s Toolkit must be installed or mounted first because its distribution and license acceptance remain outside NASE.
+
 Profiles can be prepared from Settings → Compatibility Profiles. The backend equivalent is:
 
 ```bash
+python3 mysteamwine.py --json discover-d3dmetal
+
 python3 mysteamwine.py --bottle Default-DXMT --wine /opt/homebrew/bin/wine --jsonl \
   setup-compatibility-profile --profile dxmt-wine-stable-11-v1 \
   --dxmt-source "$HOME/Library/Application Support/MySteamWine/runtimes/dxmt/dxmt-0.71"
+
+python3 mysteamwine.py --bottle Default-D3DMetal --wine /path/to/gptk/bin/wine --jsonl \
+  setup-compatibility-profile --profile d3dmetal-gptk-v1 \
+  --d3dmetal-source "/path/to/the/same/Game Porting Toolkit"
 ```
 
 Setup initializes the dedicated prefix, selects Windows 10, installs Steam and the matching renderer, and marks the profile ready only after every step succeeds.

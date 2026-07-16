@@ -9,6 +9,7 @@ import time
 
 from .bottle import Bottle
 from .catalog import list_installed_runtimes
+from .gptk import inspect_gptk_installation
 
 
 @dataclass(frozen=True)
@@ -144,6 +145,7 @@ def bind_profile(
 ) -> dict:
     profile = profile_for(profile_id, graphics_backend)
     wine_version = _wine_version(wine_path)
+    d3dmetal_inspection: dict | None = None
     if profile.id == "dxmt-wine-stable-11-v1" and not wine_version.lower().startswith("wine-11.0"):
         raise RuntimeError(
             f"{profile.name} requires Wine Stable 11.x, but {wine_version or wine_path.name} was selected."
@@ -153,10 +155,12 @@ def bind_profile(
             raise RuntimeError(
                 "DXMT Recommended requires the verified DXMT 0.71 package from Runtime Center."
             )
-    if profile.id == "d3dmetal-gptk-v1" and "game porting toolkit" not in str(wine_path).lower() and "game-porting-toolkit" not in str(wine_path).lower():
-        raise RuntimeError("D3DMetal requires the Wine runtime inside the selected Game Porting Toolkit installation.")
     if profile.id == "d3dmetal-gptk-v1" and graphics_source is None:
         raise RuntimeError("D3DMetal requires the payload shipped with the selected Game Porting Toolkit installation.")
+    if profile.id == "d3dmetal-gptk-v1":
+        d3dmetal_inspection = inspect_gptk_installation(wine_path, graphics_source)
+
+    fingerprint_source = Path(d3dmetal_inspection["payload_path"]) if d3dmetal_inspection else graphics_source
 
     fingerprint = {
         "schema_version": 1,
@@ -164,8 +168,9 @@ def bind_profile(
         "wine_path": str(wine_path.expanduser().resolve()),
         "wine_version": wine_version,
         "graphics_source": str(graphics_source.expanduser().resolve()) if graphics_source else None,
-        "graphics_source_fingerprint": _source_fingerprint(graphics_source),
+        "graphics_source_fingerprint": _source_fingerprint(fingerprint_source),
         "graphics_runtime_id": _runtime_id_for_source(graphics_source) if graphics_source else None,
+        "gptk_installation_root": d3dmetal_inspection["installation_root"] if d3dmetal_inspection else None,
     }
     manifest_path = bottle.root / "compatibility-profile.json"
     if manifest_path.exists():

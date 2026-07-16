@@ -12,11 +12,12 @@ from . import APP_NAME, DEFAULT_BOTTLE_NAME
 from .advisor import recommend_dependencies
 from .bottle import app_support_root, bottle_paths, ensure_bottle_dirs, external_prefix_paths, wipe_all_bottles
 from .catalog import install_runtime, list_installed_runtimes, list_runtime_catalog
-from .d3dmetal import install_d3dmetal
+from .d3dmetal import install_d3dmetal, verify_d3dmetal_profile
 from .dependencies import dependency_install_command, dependency_status
 from .doctor import apply_doctor_fixes, run_doctor, set_prefix_windows_version
 from .dxmt import install_dxmt
 from .dxvk import install_dxvk
+from .gptk import discover_gptk_installations
 from .library_activity import acquire_steam_activity, assert_direct_launch_safe, release_steam_activity
 from .profiles import bind_profile, list_profiles, mark_profile_ready
 from .runtime import detect_wine_runtime, is_apple_silicon, resolve_executable, resolve_with_fallback, run_logged
@@ -285,6 +286,30 @@ def cmd_list_compatibility_profiles(args: argparse.Namespace) -> None:
         print(f"{profile['id']}\t{state}\t{profile['name']}")
 
 
+def cmd_discover_d3dmetal(args: argparse.Namespace) -> None:
+    action = "discover-d3dmetal"
+    installations = discover_gptk_installations(
+        configured_wine=Path(args.gptk_wine) if args.gptk_wine else None,
+        configured_source=Path(args.d3dmetal_source) if args.d3dmetal_source else None,
+    )
+    selected = installations[0] if installations else None
+    message = "Found a matched Game Porting Toolkit installation." if selected else "No complete Game Porting Toolkit installation was found."
+    data = {
+        "installations": installations,
+        "gptk_wine_path": selected["wine_path"] if selected else None,
+        "d3dmetal_source": selected["d3dmetal_source"] if selected else None,
+    }
+    if _json_enabled(args) or _stream_enabled(args):
+        _emit_json(action=action, ok=bool(selected), message=message, data=data, warnings=[] if selected else ["Install Apple's Game Porting Toolkit, then choose its folder in Advanced Settings."])
+        if not selected:
+            raise SystemExit(1)
+        return
+    print(message)
+    if selected:
+        print(f"Wine: {selected['wine_path']}")
+        print(f"D3DMetal: {selected['d3dmetal_source']}")
+
+
 def cmd_dependency_status(args: argparse.Namespace) -> None:
     action = "dependency-status"
     wine = Path(args.wine or args.wine64 or "/opt/homebrew/bin/wine")
@@ -440,6 +465,11 @@ def cmd_setup_compatibility_profile(args: argparse.Namespace) -> None:
                 "Installing the matching D3DMetal payload...",
                 lambda: install_d3dmetal(bottle=bottle, d3dmetal_source=graphics_source, wine64_path=wine64),
             )
+            verification = verify_d3dmetal_profile(bottle)
+            failed = [check for check in verification if check["status"] != "ok"]
+            if failed:
+                raise RuntimeError("D3DMetal verification failed: " + "; ".join(check["detail"] for check in failed))
+            steps.append({"name": "verify-graphics", "status": "ok"})
         else:
             steps.append({"name": "install-graphics", "status": "ok"})
         if _stream_enabled(args):
@@ -2062,6 +2092,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("info", help="Show paths used for this bottle").set_defaults(func=cmd_info)
     sub.add_parser("list-compatibility-profiles", help="List pinned graphics/runtime profiles").set_defaults(func=cmd_list_compatibility_profiles)
+    discover_d3dmetal = sub.add_parser("discover-d3dmetal", help="Find a matched local GPTK Wine and D3DMetal installation")
+    discover_d3dmetal.add_argument("--gptk-wine", help="Previously selected GPTK Wine executable")
+    discover_d3dmetal.add_argument("--d3dmetal-source", help="Previously selected GPTK/D3DMetal root")
+    discover_d3dmetal.set_defaults(func=cmd_discover_d3dmetal)
     dependency_cmd = sub.add_parser("dependency-status", help="Check host dependencies required by NASE profiles")
     dependency_cmd.add_argument("--winetricks", default="winetricks", help="Path or command name for Winetricks")
     dependency_cmd.add_argument("--gptk-wine", help="Optional GPTK Wine executable")

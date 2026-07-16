@@ -105,6 +105,12 @@ struct SettingsSheet: View {
         .onChange(of: model.backendContext.dxvkSource) { _, newValue in
             dxvkSource = newValue
         }
+        .onChange(of: model.backendContext.gptkWinePath) { _, newValue in
+            gptkWinePath = newValue
+        }
+        .onChange(of: model.backendContext.d3dMetalSource) { _, newValue in
+            d3dMetalSource = newValue
+        }
         .alert("Install Dependency?", isPresented: $showDependencyConfirmation) {
             Button("Cancel", role: .cancel) {
                 pendingDependencyInstall = nil
@@ -592,11 +598,23 @@ struct SettingsSheet: View {
                     }
                     Spacer()
                     if isReady {
+                        if profile == .d3dmetal {
+                            Button("Repair") {
+                                model.setupCompatibilityProfile(profile)
+                            }
+                            .disabled(model.isBusy)
+                        }
                         Button(hasSharedLibraries ? "Attached" : "Attach Libraries") {
                             model.attachSteamLibraries(to: profile)
                         }
                         .disabled(hasSharedLibraries || model.isBusy)
                     } else {
+                        if profile == .d3dmetal {
+                            Button("Find GPTK") {
+                                model.discoverD3DMetal()
+                            }
+                            .disabled(model.isBusy)
+                        }
                         Button(profile == .dxvk ? "Unavailable" : "Set Up") {
                             model.setupCompatibilityProfile(profile)
                         }

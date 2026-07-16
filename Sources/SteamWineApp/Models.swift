@@ -308,6 +308,8 @@ struct BackendStructuredResult: Hashable {
     let tail: String?
     let completedSteps: Int?
     let totalSteps: Int?
+    let gptkWinePath: String?
+    let d3dMetalSource: String?
 }
 
 struct BackendStreamUpdate: Hashable {

@@ -8,6 +8,7 @@ import sys
 from typing import Any
 
 from .catalog import list_installed_runtimes
+from .gptk import inspect_gptk_installation
 
 
 def _check(status: str, name: str, detail: str, *, required: bool, fix: str | None = None) -> dict[str, Any]:
@@ -130,15 +131,22 @@ def dependency_status(
         )
     )
 
-    gptk_ok = bool(gptk_wine_path and gptk_wine_path.is_file())
-    d3dmetal_ok = bool(d3dmetal_source and d3dmetal_source.exists())
+    gptk_detail = "Optional; required only for the D3DMetal profile."
+    gptk_ok = False
+    if gptk_wine_path and d3dmetal_source:
+        try:
+            inspected = inspect_gptk_installation(gptk_wine_path, d3dmetal_source)
+            gptk_ok = True
+            gptk_detail = f"Matched {inspected['wine_version']} with D3DMetal at {inspected['payload_path']}."
+        except RuntimeError as exc:
+            gptk_detail = str(exc)
     checks.append(
         _check(
-            "ok" if gptk_ok and d3dmetal_ok else "warn",
+            "ok" if gptk_ok else "warn",
             "Game Porting Toolkit",
-            "GPTK Wine and D3DMetal were found." if gptk_ok and d3dmetal_ok else "Optional; required only for the D3DMetal profile.",
+            gptk_detail,
             required=False,
-            fix="Select a matching GPTK Wine and D3DMetal installation." if not (gptk_ok and d3dmetal_ok) else None,
+            fix="Find or select one Game Porting Toolkit installation containing both Wine and D3DMetal." if not gptk_ok else None,
         )
     )
 

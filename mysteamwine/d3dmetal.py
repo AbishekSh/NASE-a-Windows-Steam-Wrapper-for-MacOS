@@ -167,6 +167,14 @@ def _locate_payload_dir(root: Path) -> Path:
     raise FileNotFoundError(f"Could not find D3DMetal d3d11.dll/dxgi.dll payload under: {root}")
 
 
+def locate_d3dmetal_payload(source: Path) -> Path:
+    """Return the matching 64-bit D3DMetal payload without modifying a bottle."""
+    root = source.expanduser().resolve(strict=False)
+    if not root.is_dir():
+        raise FileNotFoundError(f"D3DMetal source directory was not found: {root}")
+    return _locate_payload_dir(root)
+
+
 def _locate_optional_32bit_dir(root: Path) -> Path | None:
     for candidate in (root / "i386-windows", root / "x32", root / "lib" / "wine" / "i386-windows"):
         if candidate.is_dir() and any(candidate.glob("*.dll")):
@@ -282,3 +290,29 @@ def install_d3dmetal(*, bottle: Bottle, d3dmetal_source: Path, wine64_path: Path
         if code not in (0, 1, 124):
             return code, "\n".join(part for part in tail_parts if part)
     return 0, "\n".join(part for part in tail_parts if part)
+
+
+def verify_d3dmetal_profile(bottle: Bottle) -> list[dict[str, str]]:
+    system32 = bottle.drive_c / "windows" / "system32"
+    required_dlls = ("dxgi.dll", "d3d11.dll", "d3d12.dll")
+    missing = [name for name in required_dlls if not (system32 / name).is_file()]
+    checks = [{
+        "name": "D3DMetal DLLs",
+        "status": "ok" if not missing else "fail",
+        "detail": "Required D3DMetal DLLs are installed." if not missing else f"Missing: {', '.join(missing)}",
+    }]
+    user_reg = bottle.prefix / "user.reg"
+    registry = user_reg.read_text(encoding="utf-8", errors="replace") if user_reg.exists() else ""
+    missing_overrides = [name for name in ("dxgi", "d3d11", "d3d12") if f'"{name}"="native,builtin"' not in registry]
+    checks.append({
+        "name": "D3DMetal overrides",
+        "status": "ok" if not missing_overrides else "fail",
+        "detail": "D3DMetal DLL overrides are enabled." if not missing_overrides else f"Missing overrides: {', '.join(missing_overrides)}",
+    })
+    steam = bottle.drive_c / "Program Files (x86)" / "Steam" / "Steam.exe"
+    checks.append({
+        "name": "Steam",
+        "status": "ok" if steam.is_file() else "fail",
+        "detail": "Steam is installed in the dedicated profile." if steam.is_file() else "Steam.exe is missing from the dedicated profile.",
+    })
+    return checks

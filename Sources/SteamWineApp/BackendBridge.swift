@@ -110,6 +110,8 @@ private struct BackendJSONData: Decodable {
     let executable: String?
     let session: BackendJSONSession?
     let sessions: [BackendJSONSession]?
+    let gptk_wine_path: String?
+    let d3dmetal_source: String?
 }
 
 private struct BackendJSONSession: Decodable {
@@ -277,6 +279,20 @@ struct BackendContext {
         )
     }
 
+    func overridingGPTK(winePath: String, d3dMetalSource: String) -> BackendContext {
+        BackendContext(
+            repoRoot: repoRoot,
+            pythonCommand: pythonCommand,
+            winePath: self.winePath,
+            dxmtSource: dxmtSource,
+            dxvkSource: dxvkSource,
+            d3dMetalSource: d3dMetalSource,
+            gptkWinePath: winePath,
+            bottleName: bottleName,
+            externalPrefix: externalPrefix
+        )
+    }
+
     func overridingRuntimeSources(dxmtSource: String? = nil, dxvkSource: String? = nil) -> BackendContext {
         let cleanedDXMT = (dxmtSource ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanedDXVK = (dxvkSource ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -312,6 +328,7 @@ struct BackendContext {
 
 enum BackendAction {
     case dependencyStatus
+    case discoverD3DMetal
     case installHostDependency(id: String, confirmLicense: Bool)
     case setupCompatibilityProfile(GraphicsBackendOption)
     case attachSteamLibraries(GraphicsBackendOption)
@@ -446,6 +463,8 @@ enum BackendBridge {
         switch action {
         case .dependencyStatus:
             return base + ["dependency-status", "--gptk-wine", context.gptkWinePath, "--d3dmetal-source", context.d3dMetalSource]
+        case .discoverD3DMetal:
+            return base + ["discover-d3dmetal", "--gptk-wine", context.gptkWinePath, "--d3dmetal-source", context.d3dMetalSource]
         case .installHostDependency(let id, let confirmLicense):
             return base + ["install-host-dependency", "--dependency", id] + (confirmLicense ? ["--confirm-rosetta-license"] : [])
         case .setupCompatibilityProfile(let profile):
@@ -821,6 +840,8 @@ enum BackendBridge {
             || payload.data?.root != nil
             || payload.data?.target != nil
             || payload.data?.worst_status != nil
+            || payload.data?.gptk_wine_path != nil
+            || payload.data?.d3dmetal_source != nil
         else {
             return nil
         }
@@ -839,7 +860,9 @@ enum BackendBridge {
             errors: payload.errors,
             tail: payload.data?.tail,
             completedSteps: payload.data?.completed_steps,
-            totalSteps: payload.data?.total_steps
+            totalSteps: payload.data?.total_steps,
+            gptkWinePath: payload.data?.gptk_wine_path,
+            d3dMetalSource: payload.data?.d3dmetal_source
         )
     }
 

@@ -1494,6 +1494,14 @@ final class AppViewModel {
         )
     }
 
+    func discoverD3DMetal() {
+        executeDetached(
+            .discoverD3DMetal,
+            successMessage: "Found and selected a matched Game Porting Toolkit installation.",
+            context: backendContext
+        )
+    }
+
     func attachSteamLibraries(to profile: GraphicsBackendOption) {
         let context = effectiveBackendContext(backendContext.compatibilityContext(for: profile))
         executeDetached(
@@ -2429,7 +2437,9 @@ final class AppViewModel {
             errors: incoming.errors.isEmpty ? current.errors : incoming.errors,
             tail: incoming.tail ?? current.tail,
             completedSteps: incoming.completedSteps ?? current.completedSteps,
-            totalSteps: incoming.totalSteps ?? current.totalSteps
+            totalSteps: incoming.totalSteps ?? current.totalSteps,
+            gptkWinePath: incoming.gptkWinePath ?? current.gptkWinePath,
+            d3dMetalSource: incoming.d3dMetalSource ?? current.d3dMetalSource
         )
         recordStructuredResult(merged, for: action)
     }
@@ -2451,6 +2461,8 @@ final class AppViewModel {
         switch action {
         case .dependencyStatus:
             return "Check Dependencies"
+        case .discoverD3DMetal:
+            return "Find Game Porting Toolkit"
         case .installHostDependency:
             return "Install Host Dependency"
         case .setupCompatibilityProfile:
@@ -2504,6 +2516,8 @@ final class AppViewModel {
         switch action {
         case .dependencyStatus:
             return "Dependency check finished."
+        case .discoverD3DMetal:
+            return "Matched Game Porting Toolkit installation found."
         case .installHostDependency:
             return "Host dependency installed."
         case .setupCompatibilityProfile:
@@ -2655,6 +2669,16 @@ final class AppViewModel {
                     }
                     if response.structured != nil {
                         self.recordStructuredResult(response.structured, for: action)
+                    }
+                    if case .discoverD3DMetal = action,
+                       let winePath = response.structured?.gptkWinePath,
+                       let source = response.structured?.d3dMetalSource {
+                        self.backendContext = self.backendContext.overridingGPTK(
+                            winePath: winePath,
+                            d3dMetalSource: source
+                        )
+                        self.backendContext.persist()
+                        self.refreshDependencyStatus()
                     }
                     self.appendLog(response.output)
                     self.rightPanelMessage = response.job?.message ?? successMessage
