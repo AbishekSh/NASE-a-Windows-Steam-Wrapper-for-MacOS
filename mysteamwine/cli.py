@@ -17,12 +17,12 @@ from .dependencies import dependency_install_command, dependency_status
 from .doctor import apply_doctor_fixes, run_doctor, set_prefix_windows_version
 from .dxmt import install_dxmt
 from .dxvk import install_dxvk
+from .library_activity import acquire_steam_activity, assert_direct_launch_safe, release_steam_activity
 from .profiles import bind_profile, list_profiles, mark_profile_ready
 from .runtime import detect_wine_runtime, is_apple_silicon, resolve_executable, resolve_with_fallback, run_logged
 from .scanner import scan_game_dir
 from .sessions import create_session, mark_steam_opened_by_user, reconcile_sessions, steam_is_running, stop_session, update_session
 from .steam import (
-    find_app,
     guess_game_executable,
     install_steam,
     kill_wine_processes,
@@ -31,7 +31,7 @@ from .steam import (
     run_steam,
     steam_windows_path,
 )
-from .steam_libraries import attach_registered_libraries, installed_games, refresh_registry
+from .steam_libraries import attach_registered_libraries, installed_games, refresh_registry, resolve_registered_app
 from .winetricks import run_winetricks
 
 
@@ -530,6 +530,27 @@ def cmd_install_steam(args: argparse.Namespace) -> None:
 def cmd_run_steam(args: argparse.Namespace) -> None:
     wine64 = _require_wine64(args)
     bottle = _resolve_bottle(args)
+    registry = refresh_registry(bottle)
+    acquired_library_ids: list[str] = []
+    try:
+        for library in registry.get("libraries", []):
+            library_id = str(library.get("library_id") or "")
+            references = library.get("referenced_by") or []
+            attached_here = any(str(reference.get("prefix") or "") == str(bottle.prefix) for reference in references)
+            if not library.get("exists") or not library_id or not attached_here:
+                continue
+            acquire_steam_activity(
+                library_id=library_id,
+                prefix=str(bottle.prefix),
+                bottle=bottle.name,
+                profile_id=f"steam-{bottle.name}",
+                appid="*",
+            )
+            acquired_library_ids.append(library_id)
+    except Exception:
+        # Keep successful reservations: they may belong to a concurrent launch
+        # in this same prefix. Unused reservations expire after the short launch window.
+        raise
     mark_steam_opened_by_user(str(bottle.prefix))
     job_id = _stream_start(action="run-steam", message=f"Launching Steam in {_target_label(args, bottle)}...") if _stream_enabled(args) else None
     if not _json_enabled(args):
@@ -541,8 +562,12 @@ def cmd_run_steam(args: argparse.Namespace) -> None:
         extra_args=["steam://open/main"],
         wait=not args.no_wait,
         graphics_backend=_resolved_graphics_backend(args, for_steam=True),
+        restart_existing=not steam_is_running(str(bottle.prefix)),
     )
     if code != 0:
+        if not steam_is_running(str(bottle.prefix)):
+            for library_id in acquired_library_ids:
+                release_steam_activity(library_id=library_id, prefix=str(bottle.prefix))
         if _stream_enabled(args):
             _stream_result(
                 action="run-steam",
@@ -577,6 +602,8 @@ def cmd_run_steam(args: argparse.Namespace) -> None:
         else:
             print("Steam launched.")
     else:
+        for library_id in acquired_library_ids:
+            release_steam_activity(library_id=library_id, prefix=str(bottle.prefix))
         if _stream_enabled(args):
             _stream_result(
                 action="run-steam",
@@ -1324,7 +1351,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
 def cmd_launch_game(args: argparse.Namespace) -> None:
     wine64 = _require_wine64(args)
     bottle = _resolve_bottle(args)
-    app = find_app(bottle, args.appid)
+    app, library_id = resolve_registered_app(bottle, args.appid)
     graphics_backend = _resolved_graphics_backend(args, for_steam=False)
     profile_id = _bind_launch_profile(
         args, action="launch-game", bottle=bottle, wine_path=wine64, graphics_backend=graphics_backend
@@ -1395,6 +1422,13 @@ def cmd_launch_game(args: argparse.Namespace) -> None:
     except (FileNotFoundError, RuntimeError):
         executable_hint = None
     steam_was_running = steam_is_running(str(bottle.prefix))
+    acquire_steam_activity(
+        library_id=library_id,
+        prefix=str(bottle.prefix),
+        bottle=bottle.name,
+        profile_id=profile_id,
+        appid=app.appid,
+    )
     launch_session = create_session(
         bottle=bottle,
         appid=app.appid,
@@ -1407,6 +1441,7 @@ def cmd_launch_game(args: argparse.Namespace) -> None:
         wine_path=wine64,
         steam_started_by_nase=not steam_was_running,
         steam_was_running=steam_was_running,
+        library_id=library_id,
     )
     code, tail = launch_app(
         bottle=bottle,
@@ -1414,8 +1449,11 @@ def cmd_launch_game(args: argparse.Namespace) -> None:
         appid=args.appid,
         graphics_backend=graphics_backend,
         wait=not args.no_wait,
+        restart_existing=not steam_was_running,
     )
     if code != 0:
+        if not steam_is_running(str(bottle.prefix)):
+            release_steam_activity(library_id=library_id, prefix=str(bottle.prefix))
         update_session(
             launch_session["session_id"],
             status="failed",
@@ -1469,11 +1507,12 @@ def cmd_smart_launch_game(args: argparse.Namespace) -> None:
         args, action="smart-launch-game", bottle=bottle, wine_path=wine64, graphics_backend=graphics_backend
     )
     try:
-        app = find_app(bottle, args.appid)
+        app, library_id = resolve_registered_app(bottle, args.appid)
     except FileNotFoundError:
         if graphics_backend != "d3dmetal":
             raise
         app = None
+        library_id = ""
     app_name = app.name if app else f"Steam App {args.appid}"
     job_id = _stream_start(action="smart-launch-game", message=f"Launching {app_name} ({args.appid})...") if _stream_enabled(args) else None
 
@@ -1606,6 +1645,7 @@ def cmd_smart_launch_game(args: argparse.Namespace) -> None:
         strategy="pending",
         profile_id=profile_id,
         wine_path=wine64,
+        library_id=library_id,
     )
     try:
         if app is None:
@@ -1619,6 +1659,7 @@ def cmd_smart_launch_game(args: argparse.Namespace) -> None:
 
     if skip_direct_reason is None:
         try:
+            assert_direct_launch_safe(library_path=app.library_path, appid=args.appid)
             executable = executable_hint or guess_game_executable(app.install_dir)
             code, tail = run_game_executable(
                 bottle=bottle,
@@ -1675,6 +1716,13 @@ def cmd_smart_launch_game(args: argparse.Namespace) -> None:
         direct_error = skip_direct_reason
 
     steam_was_running = steam_is_running(str(bottle.prefix))
+    acquire_steam_activity(
+        library_id=library_id,
+        prefix=str(bottle.prefix),
+        bottle=bottle.name,
+        profile_id=profile_id,
+        appid=args.appid,
+    )
     update_session(
         launch_session["session_id"],
         steam_was_running=steam_was_running,
@@ -1687,8 +1735,11 @@ def cmd_smart_launch_game(args: argparse.Namespace) -> None:
         appid=args.appid,
         graphics_backend=graphics_backend,
         wait=not args.no_wait,
+        restart_existing=not steam_was_running,
     )
     if code != 0:
+        if not steam_is_running(str(bottle.prefix)):
+            release_steam_activity(library_id=library_id, prefix=str(bottle.prefix))
         update_session(
             launch_session["session_id"],
             status="failed",
@@ -1760,7 +1811,7 @@ def _resolve_debug_executable(args: argparse.Namespace) -> Path:
         return Path(args.exe)
     if args.appid:
         bottle = _resolve_bottle(args)
-        app = find_app(bottle, args.appid)
+        app, _ = resolve_registered_app(bottle, args.appid)
         return guess_game_executable(app.install_dir)
     raise SystemExit("Provide either --appid or --exe")
 
@@ -1844,7 +1895,7 @@ def cmd_debug_game(args: argparse.Namespace) -> None:
                 )
                 raise SystemExit(code)
             _json_error(args, action="debug-game", message=f"D3DMetal restore failed (exit {code}). Tail:\n{tail}", code=code)
-    debug_app = find_app(bottle, args.appid) if args.appid else None
+    debug_app = resolve_registered_app(bottle, args.appid)[0] if args.appid else None
     launch_session = create_session(
         bottle=bottle,
         appid=args.appid,
@@ -1914,7 +1965,7 @@ def _resolve_scan_target(args: argparse.Namespace) -> Path:
         return Path(args.path)
     if args.appid:
         bottle = _resolve_bottle(args)
-        return find_app(bottle, args.appid).install_dir
+        return resolve_registered_app(bottle, args.appid)[0].install_dir
     raise SystemExit("Provide either --path or --appid")
 
 

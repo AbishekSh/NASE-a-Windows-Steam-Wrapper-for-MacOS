@@ -76,6 +76,51 @@ class SteamLibraryRegistryTests(unittest.TestCase):
         self.assertEqual(registry["apps"][0]["state"], "missing-files")
         self.assertEqual(steam_libraries.installed_games(registry), [])
 
+    def test_resolves_registered_game_outside_active_prefix(self) -> None:
+        manifest = write_manifest(self.external, "250", "Profile Independent", "Profile Independent")
+        install_dir = self.external / "common" / "Profile Independent"
+        install_dir.mkdir(parents=True)
+        registry = {
+            "libraries": [{
+                "library_id": "library_external",
+                "path": str(self.external.parent),
+                "steamapps_path": str(self.external),
+            }],
+            "apps": [{
+                "appid": "250",
+                "name": "Profile Independent",
+                "preferred_location": {
+                    "library_id": "library_external",
+                    "manifest_path": str(manifest),
+                    "install_dir": str(install_dir),
+                    "state": "installed",
+                },
+            }],
+        }
+
+        app, library_id = steam_libraries.resolve_registered_app(self.bottle, "250", registry=registry)
+
+        self.assertEqual(app.install_dir, install_dir)
+        self.assertEqual(app.manifest_path, manifest)
+        self.assertEqual(library_id, "library_external")
+
+    def test_registered_library_is_scanned_without_active_prefix_reference(self) -> None:
+        write_manifest(self.external, "275", "Registry Game", "Registry Game")
+        (self.external / "common" / "Registry Game").mkdir(parents=True)
+        registered = {
+            "libraries": [{
+                "library_id": "library_external",
+                "path": str(self.external.parent),
+                "steamapps_path": str(self.external),
+                "referenced_by": [],
+            }],
+        }
+
+        with patch.object(steam_libraries, "list_bottle_roots", return_value=[]):
+            registry = steam_libraries.discover_steam_libraries(self.bottle, registered)
+
+        self.assertEqual([app["appid"] for app in registry["apps"]], ["275"])
+
     def test_registry_write_is_atomic_and_reloadable(self) -> None:
         write_manifest(self.primary, "300", "Saved Game", "Saved Game")
         (self.primary / "common" / "Saved Game").mkdir(parents=True)

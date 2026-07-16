@@ -317,6 +317,7 @@ def launch_app(
     appid: str,
     graphics_backend: str = "dxmt",
     wait: bool = True,
+    restart_existing: bool = True,
 ) -> tuple[int, str]:
     return run_steam(
         bottle=bottle,
@@ -325,7 +326,7 @@ def launch_app(
         extra_args=["-applaunch", appid],
         wait=wait,
         graphics_backend=graphics_backend,
-        restart_existing=graphics_backend != "none",
+        restart_existing=restart_existing and graphics_backend != "none",
     )
 
 

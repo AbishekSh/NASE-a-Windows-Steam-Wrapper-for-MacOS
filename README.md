@@ -109,9 +109,11 @@ Steam library refresh is now bottle-independent. The backend reads `libraryfolde
 ~/Library/Application Support/MySteamWine/steam-libraries.json
 ```
 
-The registry retains stale manifests and duplicate physical locations for diagnostics, while the normal game list exposes one preferred installed location per AppID. Discovery is read-only: it does not edit Steam's `libraryfolders.vdf` or move game files.
+The registry retains stale manifests and duplicate physical locations for diagnostics, while the normal game list exposes one preferred installed location per AppID. Registered paths continue to be scanned even when the active profile did not create them, and launch/debug resolution uses the canonical manifest and install path instead of re-scanning only the selected prefix. Discovery is read-only: it does not edit Steam's `libraryfolders.vdf` or move game files.
 
 Ready compatibility profiles can attach those canonical libraries from Settings → Compatibility Profiles. NASE registers each host library as a Wine `Z:` path in only that profile's `libraryfolders.vdf`; game files remain in their original location while prefixes, renderer DLLs, shader caches, Steam configuration, and logs remain isolated. The target Steam client must be closed. NASE serializes concurrent attachment attempts, creates a timestamped backup, atomically replaces the VDF, and verifies every path afterward.
+
+NASE also keeps a persistent activity owner for each shared library. Only one profile may run Windows Steam against a library at a time, preventing two clients from updating the same files concurrently. The owning profile may launch additional games without restarting Steam; other profiles may still use direct executable launches while the shared files are idle, and a stale owner is replaced automatically after its Steam process exits.
 
 ```bash
 python3 mysteamwine.py --bottle Default-DXMT --json attach-steam-library --all

@@ -91,7 +91,8 @@ The CLI is the compatibility contract. Existing commands should keep working eve
 ### Runtime And Bottles
 
 - `runtime.py`: executable resolution, Wine runtime detection, process execution, detached process spawning, downloads, and sanitized Metal-related environment handling.
-- `steam_libraries.py`: read-only cross-bottle Steam library discovery and the canonical atomic `steam-libraries.json` registry.
+- `steam_libraries.py`: read-only cross-bottle Steam library discovery, profile-independent AppID resolution, and the canonical atomic `steam-libraries.json` registry.
+- `library_activity.py`: locked persistent ownership for shared libraries. It permits one Windows Steam owner per library, supports multiple games under that owner, and replaces stale ownership only after the previous Steam process exits.
 - `catalog.py`: managed runtime catalog for Wine, DXVK, and DXMT. It owns pinned download URLs/checksums, archive extraction, install records, and one-button install helpers that can apply graphics payloads to the selected bottle.
 - `bottle.py`: managed and external-prefix path model.
   - Managed bottles live under `~/Library/Application Support/MySteamWine/bottles/<name>/`.

@@ -159,6 +159,7 @@ def create_session(
     wine_path: Path | None = None,
     steam_started_by_nase: bool = False,
     steam_was_running: bool = False,
+    library_id: str | None = None,
 ) -> dict[str, Any]:
     now = time.time()
     session = {
@@ -173,6 +174,7 @@ def create_session(
         "prefix": str(bottle.prefix),
         "executable": str(executable) if executable else None,
         "install_dir": str(install_dir) if install_dir else None,
+        "library_id": library_id,
         "pids": [],
         "started_at": now,
         "updated_at": now,

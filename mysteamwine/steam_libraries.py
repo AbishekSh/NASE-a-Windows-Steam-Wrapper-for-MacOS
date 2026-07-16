@@ -12,7 +12,7 @@ import uuid
 
 from .bottle import Bottle, app_support_root, bottle_paths, list_bottle_roots
 from .sessions import steam_is_running
-from .steam import parse_vdf_file, steam_prefix_root, steamapps_dirs, wine_path_to_host
+from .steam import SteamApp, parse_vdf_file, steam_prefix_root, steamapps_dirs, wine_path_to_host
 
 
 SCHEMA_VERSION = 1
@@ -66,10 +66,38 @@ def _manifest_location(manifest: Path, steamapps: Path, library_id: str, bottle_
     }
 
 
-def discover_steam_libraries(current: Bottle) -> dict[str, Any]:
+def discover_steam_libraries(current: Bottle, registered: dict[str, Any] | None = None) -> dict[str, Any]:
     libraries: dict[str, dict[str, Any]] = {}
     locations_by_app: dict[str, list[dict[str, Any]]] = {}
     warnings: list[str] = []
+
+    # Registered libraries outlive any one profile. Seed discovery with them so
+    # removing or switching the active bottle cannot make installed games vanish.
+    for stored in (registered or {}).get("libraries", []):
+        steamapps_value = str(stored.get("steamapps_path") or "")
+        path_value = str(stored.get("path") or "")
+        if not steamapps_value and not path_value:
+            continue
+        steamapps = _normalized(Path(steamapps_value) if steamapps_value else Path(path_value) / "steamapps")
+        library_root = steamapps.parent
+        library_id = str(stored.get("library_id") or _library_id(library_root))
+        entry = libraries.setdefault(
+            library_id,
+            {
+                "library_id": library_id,
+                "path": str(library_root),
+                "steamapps_path": str(steamapps),
+                "exists": steamapps.is_dir(),
+                "writable": steamapps.is_dir() and os.access(steamapps, os.W_OK),
+                "referenced_by": list(stored.get("referenced_by") or []),
+            },
+        )
+        if not steamapps.is_dir():
+            continue
+        for manifest in sorted(steamapps.glob("appmanifest_*.acf")):
+            location = _manifest_location(manifest, steamapps, library_id, "registry")
+            if location is not None:
+                locations_by_app.setdefault(location["appid"], []).append(location)
 
     for bottle in _managed_bottles(current):
         try:
@@ -151,7 +179,7 @@ def save_registry(registry: dict[str, Any]) -> Path:
 
 
 def refresh_registry(current: Bottle) -> dict[str, Any]:
-    registry = discover_steam_libraries(current)
+    registry = discover_steam_libraries(current, load_registry())
     save_registry(registry)
     return registry
 
@@ -171,6 +199,32 @@ def installed_games(registry: dict[str, Any]) -> list[dict[str, str]]:
             }
         )
     return games
+
+
+def resolve_registered_app(current: Bottle, appid: str, *, registry: dict[str, Any] | None = None) -> tuple[SteamApp, str]:
+    """Resolve one canonical app independently from the selected profile prefix."""
+    catalog = registry or refresh_registry(current)
+    app = next((item for item in catalog.get("apps", []) if str(item.get("appid")) == str(appid)), None)
+    if app is None:
+        raise FileNotFoundError(f"Steam app not found for AppID {appid} in registered libraries")
+    location = app.get("preferred_location") or {}
+    install_dir = Path(str(location.get("install_dir") or ""))
+    manifest_path = Path(str(location.get("manifest_path") or ""))
+    if location.get("state") != "installed" or not install_dir.is_dir():
+        raise FileNotFoundError(f"Steam app {appid} is registered but its game files are missing")
+    return (
+        SteamApp(
+            appid=str(app.get("appid") or appid),
+            name=str(app.get("name") or appid),
+            install_dir=install_dir,
+            manifest_path=manifest_path,
+            library_path=Path(str(next(
+                (library.get("path") for library in catalog.get("libraries", []) if library.get("library_id") == location.get("library_id")),
+                install_dir.parent.parent,
+            ))),
+        ),
+        str(location.get("library_id") or ""),
+    )
 
 
 def load_registry() -> dict[str, Any]:
