@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -60,6 +61,16 @@ class GPTKTests(unittest.TestCase):
         self.assertEqual(environment["CX_D3DMETALPATH"], str(self.installation.resolve()))
         self.assertEqual(environment["CX_APPLEGPTK_LIBD3DSHARED_PATH"], str((self.installation / "external" / "libd3dshared.dylib").resolve()))
 
+    def test_wrapper_launch_environment_includes_native_frameworks(self) -> None:
+        framework_root = self.root / "Wrapper.app" / "Contents" / "Frameworks"
+        renderer = framework_root / "renderer" / "d3dmetal"
+        shutil.copytree(self.installation / "lib" / "wine", renderer / "wine")
+        shutil.copytree(self.installation / "external", renderer / "external")
+
+        environment = d3dmetal_launch_environment(renderer)
+
+        self.assertIn(str(framework_root.resolve()), environment["DYLD_FALLBACK_LIBRARY_PATH"].split(":"))
+
     def test_profile_verification_reports_dlls_overrides_and_steam(self) -> None:
         bottle_root = self.root / "bottle"
         bottle = Bottle("D3DMetal", bottle_root, bottle_root / "prefix", bottle_root / "logs", bottle_root / "downloads", bottle_root / "cache")
@@ -99,6 +110,31 @@ class GPTKTests(unittest.TestCase):
         self.assertTrue(Path(installed["wine_path"]).is_file())
         self.assertTrue(Path(installed["payload_path"]).is_dir())
         self.assertTrue(str(Path(installed["installation_root"]).resolve()).startswith(str(managed_root.resolve())))
+
+    def test_managed_wrapper_import_preserves_framework_dependencies(self) -> None:
+        contents = self.root / "Wrapper.app" / "Contents"
+        wrapper_wine = contents / "SharedSupport" / "wine" / "bin" / "wine"
+        wrapper_wine.parent.mkdir(parents=True)
+        wrapper_wine.write_text("#!/bin/sh\necho 'wine-9.0 (SikarugirCX 24.0.7)'\n", encoding="utf-8")
+        wrapper_wine.chmod(0o755)
+        renderer = contents / "Frameworks" / "renderer" / "d3dmetal"
+        shutil.copytree(self.installation / "lib" / "wine", renderer / "wine")
+        shutil.copytree(self.installation / "external", renderer / "external")
+        (contents / "Frameworks" / "libinotify.0.dylib").write_text("native", encoding="utf-8")
+
+        with patch.object(gptk, "app_support_root", return_value=self.root / "managed"):
+            installed = gptk.import_managed_gptk(
+                wine_path=wrapper_wine,
+                d3dmetal_source=renderer,
+                confirm_license=True,
+            )
+
+        managed_wine = Path(installed["wine_path"])
+        managed_contents = next(path for path in managed_wine.parents if path.name == "Contents")
+        managed_frameworks = managed_contents / "Frameworks"
+        self.assertTrue((managed_frameworks / "libinotify.0.dylib").is_file())
+        fallback = d3dmetal_launch_environment(Path(installed["d3dmetal_source"]))["DYLD_FALLBACK_LIBRARY_PATH"]
+        self.assertIn(str(managed_frameworks), fallback.split(":"))
 
 
 if __name__ == "__main__":

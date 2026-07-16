@@ -14,6 +14,7 @@ def run_winetricks(
     verbs: Sequence[str],
     log_name: str = "winetricks.log",
     unattended: bool = True,
+    extra_env: dict[str, str] | None = None,
 ) -> tuple[int, str]:
     ensure_bottle_dirs(bottle)
     check_executable(winetricks_path, "winetricks")
@@ -23,8 +24,11 @@ def run_winetricks(
         command.append("-q")
     command.extend(verbs)
 
+    environment = {"WINEPREFIX": str(bottle.prefix), "WINEDEBUG": "-all"}
+    if extra_env:
+        environment.update(extra_env)
     return run_logged(
         cmd=command,
-        env={"WINEPREFIX": str(bottle.prefix), "WINEDEBUG": "-all"},
+        env=environment,
         log_file=bottle.logs / log_name,
     )

@@ -12,7 +12,7 @@ from . import APP_NAME, DEFAULT_BOTTLE_NAME
 from .advisor import recommend_dependencies
 from .bottle import app_support_root, bottle_paths, ensure_bottle_dirs, external_prefix_paths, wipe_all_bottles
 from .catalog import install_runtime, list_installed_runtimes, list_runtime_catalog
-from .d3dmetal import install_d3dmetal, verify_d3dmetal_profile
+from .d3dmetal import d3dmetal_launch_environment, install_d3dmetal, verify_d3dmetal_profile
 from .dependencies import dependency_install_command, dependency_status
 from .doctor import apply_doctor_fixes, run_doctor, set_prefix_windows_version
 from .dxmt import install_dxmt
@@ -414,6 +414,11 @@ def cmd_setup_compatibility_profile(args: argparse.Namespace) -> None:
         "none": None,
     }[graphics_backend]
     graphics_source = Path(source_value) if source_value else None
+    graphics_environment = (
+        d3dmetal_launch_environment(graphics_source)
+        if graphics_backend == "d3dmetal" and graphics_source is not None
+        else {}
+    )
     job_id = _stream_start(action=action, message=f"Preparing {profile_id} in {bottle.name}...") if _stream_enabled(args) else None
     steps: list[dict[str, str]] = []
 
@@ -450,7 +455,7 @@ def cmd_setup_compatibility_profile(args: argparse.Namespace) -> None:
             "Initializing the dedicated bottle...",
             lambda: run_logged(
                 cmd=[str(wine64), "wineboot", "-u"],
-                env={"WINEPREFIX": str(bottle.prefix), "WINEDEBUG": "-all"},
+                env={"WINEPREFIX": str(bottle.prefix), "WINEDEBUG": "-all", **graphics_environment},
                 log_file=bottle.logs / "01_profile_wineboot.log",
                 timeout=120,
             ),
@@ -458,7 +463,7 @@ def cmd_setup_compatibility_profile(args: argparse.Namespace) -> None:
         run_step(
             "set-win10",
             "Setting Windows 10 compatibility...",
-            lambda: set_prefix_windows_version(bottle, wine64, "win10"),
+            lambda: set_prefix_windows_version(bottle, wine64, "win10", extra_env=graphics_environment),
         )
         steam_exe = bottle.drive_c / "Program Files (x86)" / "Steam" / "Steam.exe"
         if steam_exe.exists():
@@ -474,6 +479,7 @@ def cmd_setup_compatibility_profile(args: argparse.Namespace) -> None:
                     verbs=["steam"],
                     log_name="02_profile_steam.log",
                     unattended=not args.interactive,
+                    extra_env=graphics_environment,
                 ),
             )
         if graphics_backend == "dxmt":

@@ -53,6 +53,14 @@ def _installation_root(wine_path: Path, payload_root: Path) -> Path | None:
     return common
 
 
+def _shared_wrapper_contents(wine_path: Path, renderer_root: Path) -> Path | None:
+    wine_contents = next((path for path in wine_path.parents if path.name == "Contents"), None)
+    renderer_contents = next((path for path in renderer_root.parents if path.name == "Contents"), None)
+    if wine_contents is not None and wine_contents == renderer_contents:
+        return wine_contents
+    return None
+
+
 def inspect_gptk_installation(wine_path: Path, d3dmetal_source: Path) -> dict[str, Any]:
     wine = wine_path.expanduser().resolve(strict=False)
     source = d3dmetal_source.expanduser().resolve(strict=False)
@@ -124,6 +132,7 @@ def import_managed_gptk(
     source_wine = Path(inspected["wine_path"])
     source_wine_root = source_wine.parent.parent
     source_bundle = inspect_d3dmetal_bundle(Path(inspected["d3dmetal_source"]))
+    wrapper_contents = _shared_wrapper_contents(source_wine, source_bundle.root)
     identity = hashlib.sha256(
         f"{source_wine_root}|{inspected['wine_version']}|{source_bundle.root}".encode("utf-8")
     ).hexdigest()[:12]
@@ -134,11 +143,22 @@ def import_managed_gptk(
         if temporary.exists():
             shutil.rmtree(temporary)
         temporary.mkdir(parents=True)
-        shutil.copytree(source_wine_root, temporary / "wine", symlinks=True)
-        shutil.copytree(source_bundle.root, temporary / "d3dmetal", symlinks=True)
+        if wrapper_contents is not None:
+            managed_contents = temporary / "Contents"
+            (managed_contents / "SharedSupport").mkdir(parents=True)
+            shutil.copytree(source_wine_root, managed_contents / "SharedSupport" / "wine", symlinks=True)
+            shutil.copytree(wrapper_contents / "Frameworks", managed_contents / "Frameworks", symlinks=True)
+        else:
+            shutil.copytree(source_wine_root, temporary / "wine", symlinks=True)
+            shutil.copytree(source_bundle.root, temporary / "d3dmetal", symlinks=True)
         temporary.replace(destination)
-    managed_wine = destination / "wine" / "bin" / source_wine.name
-    managed_bundle = destination / "d3dmetal"
+    if wrapper_contents is not None:
+        managed_contents = destination / "Contents"
+        managed_wine = managed_contents / "SharedSupport" / "wine" / "bin" / source_wine.name
+        managed_bundle = managed_contents / source_bundle.root.relative_to(wrapper_contents)
+    else:
+        managed_wine = destination / "wine" / "bin" / source_wine.name
+        managed_bundle = destination / "d3dmetal"
     managed = inspect_gptk_installation(managed_wine, managed_bundle)
     managed["managed"] = True
     managed["source_root"] = str(Path(inspected["installation_root"]))

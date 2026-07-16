@@ -94,12 +94,17 @@ def inspect_d3dmetal_bundle(source: Path) -> D3DMetalBundle:
 
 def d3dmetal_launch_environment(source: Path) -> dict[str, str]:
     bundle = inspect_d3dmetal_bundle(source)
+    native_library_dirs = [bundle.external_dir]
+    for candidate in (bundle.root, *bundle.root.parents):
+        if candidate.name == "Frameworks":
+            native_library_dirs.append(candidate)
+            break
     return {
         "WINEDLLPATH_PREPEND": str(bundle.wine_root),
         "CX_D3DMETALPATH": str(bundle.root),
         "CX_APPLEGPT_LIBD3DSHARED_PATH": str(bundle.shared_library),
         "CX_APPLEGPTK_LIBD3DSHARED_PATH": str(bundle.shared_library),
-        "DYLD_FALLBACK_LIBRARY_PATH": str(bundle.external_dir),
+        "DYLD_FALLBACK_LIBRARY_PATH": ":".join(str(path) for path in native_library_dirs),
     }
 
 
@@ -295,9 +300,11 @@ def install_d3dmetal(*, bottle: Bottle, d3dmetal_source: Path, wine64_path: Path
     tail_parts = [f"Using preserved D3DMetal bundle at {bundle.root}"]
     if wine64_path is not None:
         wineserver = _wineserver_path(wine64_path)
+        environment = {"WINEPREFIX": str(bottle.prefix), "WINEDEBUG": "-all"}
+        environment.update(d3dmetal_launch_environment(d3dmetal_root))
         code, tail = run_logged(
             cmd=[str(wineserver), "-k"],
-            env={"WINEPREFIX": str(bottle.prefix), "WINEDEBUG": "-all"},
+            env=environment,
             log_file=bottle.logs / "d3dmetal_install.log",
             timeout=20,
         )

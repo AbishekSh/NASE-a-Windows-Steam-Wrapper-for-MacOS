@@ -157,10 +157,18 @@ def _check_prefix_windows_version(bottle: Bottle) -> CheckResult:
     return _result("fail", "Prefix Windows version", f"{detail} (Steam expects Windows 10+)")
 
 
-def set_prefix_windows_version(bottle: Bottle, wine_path: Path, version: str = "win10") -> tuple[int, str]:
+def set_prefix_windows_version(
+    bottle: Bottle,
+    wine_path: Path,
+    version: str = "win10",
+    extra_env: dict[str, str] | None = None,
+) -> tuple[int, str]:
+    environment = {"WINEPREFIX": str(bottle.prefix), "WINEDEBUG": "-all"}
+    if extra_env:
+        environment.update(extra_env)
     return run_logged(
         cmd=[str(wine_path), "winecfg", "-v", version],
-        env={"WINEPREFIX": str(bottle.prefix), "WINEDEBUG": "-all"},
+        env=environment,
         log_file=bottle.logs / "01_winecfg_winver.log",
         timeout=60,
     )
