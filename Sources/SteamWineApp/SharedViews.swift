@@ -8,15 +8,21 @@ struct EmptyLibraryState: View {
     let message: String
     let showsActions: Bool
     let isBusy: Bool
+    let isLoading: Bool
     let onOpenSettings: () -> Void
     let onRefresh: () -> Void
 
     var body: some View {
         VStack(spacing: 16) {
-            Image(systemName: "square.stack.3d.up.slash")
-                .font(.system(size: 42, weight: .semibold))
-                .foregroundStyle(themeMutedForeground)
-            Text("No \(title) items yet")
+            if isLoading {
+                ProgressView()
+                    .controlSize(.large)
+            } else {
+                Image(systemName: "square.stack.3d.up.slash")
+                    .font(.system(size: 42, weight: .semibold))
+                    .foregroundStyle(themeMutedForeground)
+            }
+            Text(isLoading ? "Refreshing \(title) library" : "No \(title) items yet")
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(themeForeground)
             Text(message)

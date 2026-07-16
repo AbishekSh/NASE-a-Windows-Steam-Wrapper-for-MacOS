@@ -225,6 +225,7 @@ struct ContentView: View {
                             message: model.libraryEmptyMessage,
                             showsActions: model.shouldShowSteamEmptyStateActions,
                             isBusy: model.isBusy,
+                            isLoading: model.isRefreshingSteamGames,
                             onOpenSettings: {
                                 model.openSettings()
                             },

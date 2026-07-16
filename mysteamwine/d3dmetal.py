@@ -267,7 +267,7 @@ def install_d3dmetal(*, bottle: Bottle, d3dmetal_source: Path, wine64_path: Path
     if not copied:
         raise FileNotFoundError(f"No D3DMetal DLLs found under: {d3dmetal_root}")
 
-    clear_graphics_overrides(bottle)
+    enable_d3dmetal_overrides(bottle)
     tail_parts = ["\n".join(copied)]
     if wine64_path is not None:
         wineserver = _wineserver_path(wine64_path)

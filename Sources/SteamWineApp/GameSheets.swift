@@ -154,6 +154,12 @@ struct GameSettingsSheet: View {
                                 effectiveOverrides.launchOverrides ?? "No extra launch-time WINEDLLOVERRIDES for this app.",
                                 monospaced: true
                             )
+                            if !effectiveOverrides.compatibilityWarnings.isEmpty {
+                                overrideRow(
+                                    "Warning",
+                                    effectiveOverrides.compatibilityWarnings.joined(separator: "\n")
+                                )
+                            }
                             if !effectiveOverrides.environmentWarnings.isEmpty {
                                 overrideRow(
                                     "Custom Env",

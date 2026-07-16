@@ -1028,6 +1028,25 @@ def cmd_launch_game(args: argparse.Namespace) -> None:
                 )
                 raise SystemExit(code)
             _json_error(args, action="launch-game", message=f"DXMT restore failed (exit {code}). Tail:\n{tail}", code=code)
+    elif graphics_backend == "dxvk" and args.dxvk_source:
+        code, tail = install_dxvk(
+            bottle=bottle,
+            dxvk_source=Path(args.dxvk_source),
+            dxvk_flavor=args.dxvk_flavor,
+        )
+        if code != 0:
+            if _stream_enabled(args):
+                _stream_result(
+                    action="launch-game",
+                    job_id=job_id or uuid.uuid4().hex,
+                    ok=False,
+                    status="failed",
+                    message=f"DXVK restore failed (exit {code}). Tail:\n{tail}",
+                    data={"appid": app.appid, "name": app.name, "tail": tail},
+                    errors=[f"DXVK restore failed (exit {code})."],
+                )
+                raise SystemExit(code)
+            _json_error(args, action="launch-game", message=f"DXVK restore failed (exit {code}). Tail:\n{tail}", code=code)
     elif graphics_backend == "d3dmetal" and args.d3dmetal_source:
         code, tail = install_d3dmetal(
             bottle=bottle,
@@ -1179,6 +1198,7 @@ def cmd_smart_launch_game(args: argparse.Namespace) -> None:
         code, tail = install_dxvk(
             bottle=bottle,
             dxvk_source=Path(args.dxvk_source),
+            dxvk_flavor=args.dxvk_flavor,
         )
         if code != 0:
             if _stream_enabled(args):
@@ -1389,6 +1409,7 @@ def cmd_debug_game(args: argparse.Namespace) -> None:
         code, tail = install_dxvk(
             bottle=bottle,
             dxvk_source=Path(args.dxvk_source),
+            dxvk_flavor=args.dxvk_flavor,
         )
         if code != 0:
             if _stream_enabled(args):
@@ -1668,6 +1689,8 @@ def build_parser() -> argparse.ArgumentParser:
     launch_cmd = sub.add_parser("launch-game", help="Launch a Steam game by AppID")
     launch_cmd.add_argument("--appid", required=True, help="Steam AppID")
     launch_cmd.add_argument("--dxmt-source", help="Optional DXMT directory or tar.gz archive to restore DXMT before launch")
+    launch_cmd.add_argument("--dxvk-source", help="Optional DXVK directory or tar.gz archive to restore DXVK before launch")
+    launch_cmd.add_argument("--dxvk-flavor", choices=("upstream", "macos"), default="upstream")
     launch_cmd.add_argument(
         "--allow-unrecommended-dxmt",
         action="store_true",
@@ -1686,6 +1709,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Allow DXMT versions outside the validated 0.70/0.71 path before launch",
     )
     smart_launch_cmd.add_argument("--dxvk-source", help="Optional DXVK directory or tar.gz archive to restore DXVK before launch")
+    smart_launch_cmd.add_argument("--dxvk-flavor", choices=("upstream", "macos"), default="upstream")
     smart_launch_cmd.add_argument("--d3dmetal-source", help="Optional D3DMetal directory or tar.gz archive to restore D3DMetal before launch")
     smart_launch_cmd.add_argument("--winetricks", default="winetricks", help="Path to winetricks for first-time hidden D3DMetal setup")
     smart_launch_cmd.add_argument("--probe-seconds", type=int, default=8, help="Seconds to watch the direct launch before considering it healthy")
@@ -1704,6 +1728,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Allow DXMT versions outside the validated 0.70/0.71 path before launch",
     )
     debug_cmd.add_argument("--dxvk-source", help="Optional DXVK directory or tar.gz archive to restore DXVK before launch")
+    debug_cmd.add_argument("--dxvk-flavor", choices=("upstream", "macos"), default="upstream")
     debug_cmd.add_argument("--d3dmetal-source", help="Optional D3DMetal directory or tar.gz archive to restore D3DMetal before launch")
     debug_cmd.add_argument("--wine-debug", default="+timestamp,+seh,+loaddll", help="WINEDEBUG value for the direct launch")
     debug_cmd.add_argument("--no-wait", action="store_true", help="Return immediately after launching the executable")

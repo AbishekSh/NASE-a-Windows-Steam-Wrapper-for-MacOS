@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
+import signal
+import subprocess
+import time
 from typing import Any, Iterator
 
 from . import DEFAULT_STEAM_WINDOWS_PATH, STEAM_SETUP_URL
@@ -35,6 +39,103 @@ def _wineserver_path(wine_path: Path) -> Path:
     if candidate.exists():
         return candidate
     raise FileNotFoundError(f"wineserver not found next to Wine binary: {candidate}")
+
+
+def _terminate_stale_macos_wineserver(prefix: Path) -> tuple[bool, str]:
+    """Terminate only the wineserver that has this prefix's server directory open."""
+    if os.name != "posix" or not Path("/usr/sbin/lsof").exists():
+        return False, ""
+
+    prefix_stat = prefix.stat()
+    server_dir = Path("/tmp") / f".wine-{os.getuid()}" / f"server-{prefix_stat.st_dev:x}-{prefix_stat.st_ino:x}"
+    if not server_dir.is_dir():
+        return False, ""
+
+    result = subprocess.run(
+        ["/usr/sbin/lsof", "-t", "+D", str(server_dir)],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+    candidate_pids = {int(line) for line in result.stdout.splitlines() if line.strip().isdigit()}
+    wineserver_pids: list[int] = []
+    for pid in sorted(candidate_pids):
+        command = subprocess.run(
+            ["/bin/ps", "-p", str(pid), "-o", "comm="],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        ).stdout.strip()
+        if Path(command).name == "wineserver":
+            wineserver_pids.append(pid)
+
+    if not wineserver_pids:
+        return False, ""
+
+    for pid in wineserver_pids:
+        os.kill(pid, signal.SIGTERM)
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        remaining = []
+        for pid in wineserver_pids:
+            try:
+                os.kill(pid, 0)
+                remaining.append(pid)
+            except ProcessLookupError:
+                pass
+        if not remaining:
+            break
+        time.sleep(0.1)
+    else:
+        remaining = wineserver_pids
+
+    for pid in remaining:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    return True, f"Recovered stale Wine server for this prefix (PID {', '.join(map(str, wineserver_pids))})."
+
+
+def _terminate_orphaned_prefix_processes(prefix: Path) -> list[int]:
+    """Clean up Wine child processes still holding files in one target prefix."""
+    if os.name != "posix" or not Path("/usr/sbin/lsof").exists():
+        return []
+    result = subprocess.run(
+        ["/usr/sbin/lsof", "-t", "+D", str(prefix)],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    stopped: list[int] = []
+    for line in result.stdout.splitlines():
+        if not line.strip().isdigit():
+            continue
+        pid = int(line)
+        if pid == os.getpid():
+            continue
+        process = subprocess.run(
+            ["/bin/ps", "-p", str(pid), "-o", "uid=,command="],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        ).stdout.strip()
+        parts = process.split(maxsplit=1)
+        if len(parts) != 2 or not parts[0].isdigit() or int(parts[0]) != os.getuid():
+            continue
+        command = parts[1]
+        if "wine" not in command.lower() and ".exe" not in command.lower():
+            continue
+        try:
+            os.kill(pid, signal.SIGTERM)
+            stopped.append(pid)
+        except ProcessLookupError:
+            pass
+    return stopped
 
 
 def _graphics_launch_env(bottle: Bottle, wine_debug: str, graphics_backend: str) -> dict[str, str]:
@@ -185,6 +286,13 @@ def kill_wine_processes(
         log_file=bottle.logs / "05_kill_wine.log",
         timeout=8,
     )
+    # Wine Stable returns 1 without output both when no server exists and when
+    # a stale macOS Mach endpoint prevents it from reaching an existing server.
+    if kill_code == 1 and not kill_tail.strip():
+        recovered, recovery_message = _terminate_stale_macos_wineserver(bottle.prefix)
+        if recovered:
+            return 0, recovery_message
+        return 0, "No Wine processes were running."
     if kill_code not in (0, 124):
         return kill_code, kill_tail
 
@@ -194,7 +302,11 @@ def kill_wine_processes(
         log_file=bottle.logs / "05_kill_wine.log",
         timeout=8,
     )
-    combined_tail = "\n".join(part for part in (kill_tail, wait_tail) if part)
+    orphaned_pids = _terminate_orphaned_prefix_processes(bottle.prefix)
+    orphaned_tail = ""
+    if orphaned_pids:
+        orphaned_tail = f"Stopped orphaned Wine processes for this prefix: {', '.join(map(str, orphaned_pids))}."
+    combined_tail = "\n".join(part for part in (kill_tail, wait_tail, orphaned_tail) if part)
     return wait_code, combined_tail
 
 

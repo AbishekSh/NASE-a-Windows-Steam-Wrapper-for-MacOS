@@ -198,7 +198,7 @@ struct SetupWizardSheet: View {
                                 dxvkSource = path
                             }
                         }
-                        Text("DXVK is not part of the core Steam + Metal setup flow, but it is still useful later for per-game compatibility. This gives non-technical users a place to prepare it without going back to the terminal.")
+                        Text("Experimental on macOS. DXVK also needs a compatible Wine Vulkan and MoltenVK host stack; downloading these DLLs alone does not enable Vulkan. The app keeps DXMT as the safe default.")
                             .foregroundStyle(themeMutedForeground)
                         HStack(spacing: 10) {
                             Button {
@@ -206,7 +206,7 @@ struct SetupWizardSheet: View {
                                     await downloadDXVK()
                                 }
                             } label: {
-                                Label("Download DXVK 2.3", systemImage: "arrow.down.circle")
+                                Label("Download DXVK 2.7.1", systemImage: "arrow.down.circle")
                             }
                             .buttonStyle(.bordered)
                             .disabled(isDownloadingDXMT)
@@ -521,17 +521,17 @@ struct SetupWizardSheet: View {
 
     private func downloadDXVK() async {
         isDownloadingDXMT = true
-        downloadStatusMessage = "Downloading DXVK 2.3..."
+        downloadStatusMessage = "Downloading DXVK 2.7.1..."
         do {
             let cacheURL = appCacheURL().appendingPathComponent("downloads", isDirectory: true)
             try FileManager.default.createDirectory(at: cacheURL, withIntermediateDirectories: true)
-            let destinationURL = cacheURL.appendingPathComponent("dxvk-2.3.tar.gz")
-            let remoteURL = URL(string: "https://github.com/doitsujin/dxvk/releases/download/v2.3/dxvk-2.3.tar.gz")!
+            let destinationURL = cacheURL.appendingPathComponent("dxvk-2.7.1.tar.gz")
+            let remoteURL = URL(string: "https://github.com/doitsujin/dxvk/releases/download/v2.7.1/dxvk-2.7.1.tar.gz")!
             let (temporaryURL, _) = try await URLSession.shared.download(from: remoteURL)
             _ = try? FileManager.default.removeItem(at: destinationURL)
             try FileManager.default.moveItem(at: temporaryURL, to: destinationURL)
             dxvkSource = destinationURL.path
-            downloadStatusMessage = "DXVK 2.3 downloaded to \(destinationURL.path)"
+            downloadStatusMessage = "DXVK 2.7.1 downloaded to \(destinationURL.path)"
         } catch {
             downloadStatusMessage = "Could not download DXVK automatically. You can still point the wizard at a local archive or folder.\n\(error.localizedDescription)"
         }

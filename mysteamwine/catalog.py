@@ -57,7 +57,10 @@ CATALOG: tuple[RuntimeCatalogEntry, ...] = (
         archive_type="tar.gz",
         install_layout="dxvk",
         license="zlib",
-        notes="Direct3D 8/9/10/11 to Vulkan. Useful for games that prefer Vulkan over Metal-native paths.",
+        notes=(
+            "Experimental on macOS. Requires a compatible Wine Vulkan and MoltenVK host stack; "
+            "installing these DLLs alone does not provide Vulkan support."
+        ),
     ),
     RuntimeCatalogEntry(
         id="dxmt-0.71",

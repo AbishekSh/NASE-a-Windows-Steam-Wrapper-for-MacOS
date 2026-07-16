@@ -119,6 +119,8 @@ Current Steam launch modes are:
 
 Graphics-specific modules should own file layout detection, copying, and registry override edits. Launch modules should only choose the graphics backend and pass launch environment values.
 
+Treat each graphics choice as a runtime profile, not only a DLL selection. DXMT uses the validated Wine Stable context, D3DMetal uses GPTK Wine plus an isolated `-D3DMetal` bottle, and DXVK requires a separately validated Wine Vulkan/MoltenVK host stack. A successful DLL copy does not prove that the host graphics runtime can launch a game.
+
 ### Health, Dependencies, And Advice
 
 - `doctor.py`: environment and prefix checks plus safe repairs.

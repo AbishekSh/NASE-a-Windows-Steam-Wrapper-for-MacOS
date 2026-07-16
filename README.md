@@ -80,6 +80,8 @@ The native SwiftUI app can:
 - View bounded log tails in-app
 - Run Winetricks from the UI
 
+Graphics runtimes are not interchangeable DLL packs. DXMT is the validated default with Wine Stable 11. D3DMetal uses a separate Game Porting Toolkit Wine context and bottle. DXVK remains experimental on macOS because it additionally requires a compatible Wine Vulkan and MoltenVK host stack; installing the upstream DXVK DLL archive alone is not sufficient.
+
 The current Steam experience still uses Windows Steam as the reliable baseline. Direct launch and hidden-Steam style work should build on the existing backend boundaries described in the architecture docs.
 
 ## Architecture

@@ -92,6 +92,9 @@ final class AppViewModel {
             || isActionRunning(.installDXVK)
             || isActionRunning(.installD3DMetal)
     }
+    var isRefreshingSteamGames: Bool {
+        isActionRunning(.listGames)
+    }
     var isShowingSettings: Bool = false
     var isShowingGameSettings: Bool = false
     var isShowingGameDetails: Bool = false
@@ -233,6 +236,9 @@ final class AppViewModel {
                 ? "Pin apps from Steam, macOS, or Wine so your favorites show up here."
                 : "Pinned apps from every source show up here."
         case .steam:
+            if isRefreshingSteamGames {
+                return "Refreshing installed Steam games..."
+            }
             if !hasAttemptedSteamDetection {
                 return "Detecting installed Steam games..."
             }
@@ -293,7 +299,7 @@ final class AppViewModel {
     }
 
     var shouldShowSteamEmptyStateActions: Bool {
-        (selectedRunner ?? .home) == .steam
+        (selectedRunner ?? .home) == .steam && !isRefreshingSteamGames
     }
 
     var shouldShowAddButton: Bool {
@@ -1207,6 +1213,8 @@ final class AppViewModel {
     }
 
     func applySettings(winePath: String, dxmtSource: String, dxvkSource: String, d3dMetalSource: String, gptkWinePath: String? = nil, bottleName: String, externalPrefix: String?, useExternalPrefix: Bool) {
+        let previousBottle = backendContext.bottleName
+        let previousPrefix = backendContext.externalPrefix ?? ""
         let cleanedBottle = bottleName.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanedPrefix = (externalPrefix ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanedWine = winePath.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1227,9 +1235,16 @@ final class AppViewModel {
             externalPrefix: useExternalPrefix ? cleanedPrefix : nil
         )
         backendContext.persist()
-        hasAttemptedSteamDetection = false
-        discoveredSteamGames = []
-        selectedGame = nil
+
+        let targetChanged = previousBottle != backendContext.bottleName || previousPrefix != (backendContext.externalPrefix ?? "")
+        if targetChanged {
+            hasAttemptedSteamDetection = false
+            discoveredSteamGames = []
+            selectedGame = nil
+            if selectedRunner == .steam {
+                refreshSteamGames(announce: false)
+            }
+        }
 
         rightPanelMessage = "Backend settings updated. \(settingsSummary)"
         appendLog("Settings updated.\nWine: \(backendContext.winePath)\nGPTK Wine: \(backendContext.gptkWinePath)\nDXMT: \(backendContext.dxmtSource)\nDXVK: \(backendContext.dxvkSource)\nD3DMetal: \(backendContext.d3dMetalSource)\nTarget: \(settingsSummary)")
@@ -2795,6 +2810,11 @@ final class AppViewModel {
 
         let warnings = parseEnvironmentOverrides(environmentText)
             .filter { $0.uppercased().hasPrefix("WINEDLLOVERRIDES=") || $0.uppercased().hasPrefix("DXVK_") || $0.uppercased().hasPrefix("D3DMETAL_") || $0.uppercased().hasPrefix("MESA_") }
+        let compatibilityWarnings: [String] = if graphicsBackend == .dxvk {
+            ["DXVK is not recommended on Apple Silicon with MoltenVK for this setup. If launch fails with no window, switch this game back to DXMT."]
+        } else {
+            []
+        }
 
         let targetLabel: String
         if let externalPrefix = context.externalPrefix, !externalPrefix.isEmpty {
@@ -2809,6 +2829,7 @@ final class AppViewModel {
             graphicsBackend: graphicsBackend,
             registryOverrides: registryOverrides,
             launchOverrides: launchOverrides,
+            compatibilityWarnings: compatibilityWarnings,
             environmentWarnings: warnings
         )
     }

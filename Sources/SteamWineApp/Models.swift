@@ -263,6 +263,7 @@ struct EffectiveGraphicsOverrides: Hashable {
     let graphicsBackend: GraphicsBackendOption
     let registryOverrides: [String]
     let launchOverrides: String?
+    let compatibilityWarnings: [String]
     let environmentWarnings: [String]
 }
 
