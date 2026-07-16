@@ -64,7 +64,6 @@ private actor BackendStreamAccumulator {
     }
 
     func appendTrailing(_ data: Data) -> String? {
-        guard data.isEmpty == false else { return nil }
         buffer.append(data)
         guard buffer.isEmpty == false, let trailing = String(data: buffer, encoding: .utf8) else { return nil }
         buffer = Data()
@@ -566,11 +565,13 @@ enum BackendBridge {
         onUpdate: @escaping @Sendable (BackendStreamUpdate) async -> Void
     ) async throws -> BackendResponse {
         let state = BackendStreamAccumulator()
-
-        output.fileHandleForReading.readabilityHandler = { handle in
-            let chunk = handle.availableData
-            guard chunk.isEmpty == false else { return }
-            Task {
+        let handle = output.fileHandleForReading
+        // Await one serialized reader so a fast backend process cannot terminate
+        // before detached readability-handler work stores its final JSON result.
+        let reader = Task.detached(priority: .utility) {
+            while true {
+                let chunk = handle.availableData
+                guard chunk.isEmpty == false else { break }
                 await state.append(chunk)
                 let lines = await state.popReadyLines()
                 for trimmed in lines {
@@ -598,9 +599,8 @@ enum BackendBridge {
             }
         }
 
-        output.fileHandleForReading.readabilityHandler = nil
-        let remaining = output.fileHandleForReading.readDataToEndOfFile()
-        if let trimmed = await state.appendTrailing(remaining) {
+        await reader.value
+        if let trimmed = await state.appendTrailing(Data()) {
             if trimmed.isEmpty == false {
                 if let payload = parseJSONLine(trimmed) {
                     let response = makeResponse(from: payload)
