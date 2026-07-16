@@ -298,6 +298,7 @@ struct BackendContext {
 
 enum BackendAction {
     case dependencyStatus
+    case installHostDependency(id: String, confirmLicense: Bool)
     case setupCompatibilityProfile(GraphicsBackendOption)
     case setupMetal
     case doctor
@@ -430,6 +431,8 @@ enum BackendBridge {
         switch action {
         case .dependencyStatus:
             return base + ["dependency-status", "--gptk-wine", context.gptkWinePath, "--d3dmetal-source", context.d3dMetalSource]
+        case .installHostDependency(let id, let confirmLicense):
+            return base + ["install-host-dependency", "--dependency", id] + (confirmLicense ? ["--confirm-rosetta-license"] : [])
         case .setupCompatibilityProfile(let profile):
             var args = base + ["setup-compatibility-profile", "--profile", profile.compatibilityProfileID]
             if profile == .dxmt {

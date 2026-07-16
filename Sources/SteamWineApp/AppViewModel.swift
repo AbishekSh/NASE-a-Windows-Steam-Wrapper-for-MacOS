@@ -546,6 +546,23 @@ final class AppViewModel {
         }
     }
 
+    func installHostDependency(id: String, confirmLicense: Bool = false) {
+        executeDetached(
+            .installHostDependency(id: id, confirmLicense: confirmLicense),
+            successMessage: "Installed \(id).",
+            context: effectiveBackendContext()
+        )
+    }
+
+    func installRecommendedDXMT() {
+        guard let runtime = runtimeCatalog.first(where: { $0.id == "dxmt-0.71" }) else {
+            rightPanelMessage = "Refresh Runtime Center before installing DXMT."
+            refreshRuntimeCenter()
+            return
+        }
+        installManagedRuntime(runtime)
+    }
+
     func installManagedRuntime(_ runtime: ManagedRuntime) {
         let action = BackendAction.installRuntime(id: runtime.id)
         guard !isActionRunning(action) else { return }
@@ -572,6 +589,7 @@ final class AppViewModel {
                     self.rightPanelMessage = "Installed \(runtime.displayName)."
                     self.refreshRuntimeCenter()
                     self.refreshWineRuntimes()
+                    self.refreshDependencyStatus()
                 }
             } catch {
                 await MainActor.run {
@@ -2209,6 +2227,8 @@ final class AppViewModel {
         switch action {
         case .dependencyStatus:
             return "Check Dependencies"
+        case .installHostDependency:
+            return "Install Host Dependency"
         case .setupCompatibilityProfile:
             return "Set Up Compatibility Profile"
         case .setupMetal:
@@ -2258,6 +2278,8 @@ final class AppViewModel {
         switch action {
         case .dependencyStatus:
             return "Dependency check finished."
+        case .installHostDependency:
+            return "Host dependency installed."
         case .setupCompatibilityProfile:
             return "Compatibility profile is ready."
         case .setupMetal:
@@ -2408,6 +2430,10 @@ final class AppViewModel {
                     }
                     self.appendLog(response.output)
                     self.rightPanelMessage = response.job?.message ?? successMessage
+                    if case .installHostDependency = action {
+                        self.refreshWineRuntimes()
+                        self.refreshDependencyStatus()
+                    }
                     if let game {
                         if response.sessions.isEmpty {
                             self.setLaunchStatus(.launching, for: game, message: "Waiting for the game process...")

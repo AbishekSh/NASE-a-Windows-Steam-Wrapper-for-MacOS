@@ -48,6 +48,8 @@ Install these on the Mac side before first setup:
 
 Settings → System Readiness checks these dependencies using structured backend results. Required DXMT components are separated from optional GPTK support, and every missing required component includes a suggested fix.
 
+Missing dependencies now expose explicit **Fix** actions. Wine Stable and Winetricks installations show the exact Homebrew-backed operation before running, Rosetta requires a separate confirmation that accepts Apple's software license, and DXMT continues through the checksum-verified Runtime Center installer. Readiness checks themselves remain read-only.
+
 The app now includes an early Runtime Center in Settings for managed Wine, DXVK, and DXMT installs. The first catalog includes pinned upstream releases with checksums, so the launcher can download, verify, extract, and register/install them without manual linking.
 
 Graphics choices are compatibility profiles rather than DLL toggles. DXMT uses Wine Stable 11 and DXMT 0.71 in a dedicated `-DXMT` bottle; D3DMetal uses GPTK Wine and its matching D3DMetal payload in a dedicated `-D3DMetal` bottle. DXVK-macOS remains visibly unavailable until NASE has a complete pinned Wine/winevulkan/MoltenVK/DXVK-macOS bundle. Each profile bottle stores `compatibility-profile.json` and refuses silent runtime or graphics-source drift.

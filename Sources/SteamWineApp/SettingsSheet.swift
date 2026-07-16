@@ -17,6 +17,8 @@ struct SettingsSheet: View {
     @State private var useExternalPrefix: Bool = false
     @State private var validationMessage: String = ""
     @State private var showAdvancedSettings: Bool = false
+    @State private var pendingDependencyInstall: String?
+    @State private var showDependencyConfirmation: Bool = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -98,6 +100,18 @@ struct SettingsSheet: View {
         }
         .onChange(of: model.backendContext.dxvkSource) { _, newValue in
             dxvkSource = newValue
+        }
+        .alert("Install Dependency?", isPresented: $showDependencyConfirmation) {
+            Button("Cancel", role: .cancel) {
+                pendingDependencyInstall = nil
+            }
+            Button("Install") {
+                guard let dependency = pendingDependencyInstall else { return }
+                model.installHostDependency(id: dependency, confirmLicense: dependency == "rosetta")
+                pendingDependencyInstall = nil
+            }
+        } message: {
+            Text(dependencyConfirmationMessage)
         }
     }
 
@@ -418,6 +432,13 @@ struct SettingsSheet: View {
                                 Text(fix).font(.caption.weight(.medium))
                             }
                         }
+                        Spacer()
+                        if check.status == "fail" {
+                            Button("Fix") {
+                                beginDependencyInstall(for: check.name)
+                            }
+                            .disabled(model.isBusy)
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -429,6 +450,37 @@ struct SettingsSheet: View {
         .padding(16)
         .background(themePanelRaised)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private var dependencyConfirmationMessage: String {
+        switch pendingDependencyInstall {
+        case "rosetta":
+            return "NASE will run Apple's Rosetta installer. Continuing explicitly accepts Apple's software license agreement."
+        case "wine-stable":
+            return "NASE will ask Homebrew to install the Wine Stable cask and its dependencies. Homebrew currently marks this cask as deprecated because it does not pass Gatekeeper checks."
+        case "winetricks":
+            return "NASE will ask Homebrew to install Winetricks and its required packages."
+        default:
+            return "NASE will install the selected dependency."
+        }
+    }
+
+    private func beginDependencyInstall(for checkName: String) {
+        switch checkName {
+        case "DXMT 0.71":
+            model.installRecommendedDXMT()
+        case "Rosetta 2":
+            pendingDependencyInstall = "rosetta"
+            showDependencyConfirmation = true
+        case "Wine Stable 11":
+            pendingDependencyInstall = "wine-stable"
+            showDependencyConfirmation = true
+        case "Winetricks":
+            pendingDependencyInstall = "winetricks"
+            showDependencyConfirmation = true
+        default:
+            break
+        }
     }
 
     private var settingsCompatibilityProfilesPanel: some View {

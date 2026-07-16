@@ -149,3 +149,29 @@ def dependency_status(
         "ready": not required_failures,
         "missing_required": [check["name"] for check in required_failures],
     }
+
+
+def homebrew_path() -> Path | None:
+    resolved = shutil.which("brew")
+    if resolved:
+        return Path(resolved)
+    for candidate in (Path("/opt/homebrew/bin/brew"), Path("/usr/local/bin/brew")):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def dependency_install_command(dependency: str, *, confirm_rosetta_license: bool = False) -> list[str]:
+    if dependency == "rosetta":
+        if not confirm_rosetta_license:
+            raise RuntimeError("Rosetta installation requires explicit acceptance of Apple's software license.")
+        return ["/usr/sbin/softwareupdate", "--install-rosetta", "--agree-to-license"]
+
+    brew = homebrew_path()
+    if brew is None:
+        raise RuntimeError("Homebrew is required for automatic installation. Install Homebrew or import the dependency manually.")
+    if dependency == "wine-stable":
+        return [str(brew), "install", "--cask", "wine-stable"]
+    if dependency == "winetricks":
+        return [str(brew), "install", "winetricks"]
+    raise RuntimeError(f"Unsupported host dependency: {dependency}")

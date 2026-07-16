@@ -49,6 +49,25 @@ class DependencyStatusTests(unittest.TestCase):
         failed = [check for check in result["checks"] if check["status"] == "fail"]
         self.assertTrue(all(check["fix"] for check in failed))
 
+    def test_rosetta_requires_explicit_license_confirmation(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "explicit acceptance"):
+            dependencies.dependency_install_command("rosetta")
+        self.assertEqual(
+            dependencies.dependency_install_command("rosetta", confirm_rosetta_license=True),
+            ["/usr/sbin/softwareupdate", "--install-rosetta", "--agree-to-license"],
+        )
+
+    def test_homebrew_install_commands_do_not_use_a_shell(self) -> None:
+        with patch.object(dependencies, "homebrew_path", return_value=Path("/opt/homebrew/bin/brew")):
+            self.assertEqual(
+                dependencies.dependency_install_command("wine-stable"),
+                ["/opt/homebrew/bin/brew", "install", "--cask", "wine-stable"],
+            )
+            self.assertEqual(
+                dependencies.dependency_install_command("winetricks"),
+                ["/opt/homebrew/bin/brew", "install", "winetricks"],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import textwrap
 import time
 import uuid
@@ -12,7 +13,7 @@ from .advisor import recommend_dependencies
 from .bottle import app_support_root, bottle_paths, ensure_bottle_dirs, external_prefix_paths, wipe_all_bottles
 from .catalog import install_runtime, list_installed_runtimes, list_runtime_catalog
 from .d3dmetal import install_d3dmetal
-from .dependencies import dependency_status
+from .dependencies import dependency_install_command, dependency_status
 from .doctor import apply_doctor_fixes, run_doctor, set_prefix_windows_version
 from .dxmt import install_dxmt
 from .dxvk import install_dxvk
@@ -304,6 +305,42 @@ def cmd_dependency_status(args: argparse.Namespace) -> None:
         return
     for check in result["checks"]:
         print(f"[{check['status'].upper():4}] {check['name']}: {check['detail']}")
+
+
+def cmd_install_host_dependency(args: argparse.Namespace) -> None:
+    action = "install-host-dependency"
+    try:
+        command = dependency_install_command(
+            args.dependency,
+            confirm_rosetta_license=args.confirm_rosetta_license,
+        )
+    except RuntimeError as exc:
+        _json_error(args, action=action, message=str(exc))
+    job_id = _stream_start(action=action, message=f"Installing {args.dependency}...") if _stream_enabled(args) else None
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=1800, check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        message = f"Could not install {args.dependency}: {exc}"
+        if _stream_enabled(args):
+            _stream_result(action=action, job_id=job_id or uuid.uuid4().hex, ok=False, status="failed", message=message, errors=[message])
+            raise SystemExit(1)
+        _json_error(args, action=action, message=message, code=1)
+    output = "\n".join(part for part in (result.stdout.strip(), result.stderr.strip()) if part)
+    tail = "\n".join(output.splitlines()[-80:])
+    if result.returncode != 0:
+        message = f"{args.dependency} installation failed (exit {result.returncode})."
+        if _stream_enabled(args):
+            _stream_result(action=action, job_id=job_id or uuid.uuid4().hex, ok=False, status="failed", message=message, data={"dependency": args.dependency, "tail": tail}, errors=[message])
+            raise SystemExit(result.returncode)
+        _json_error(args, action=action, message=f"{message}\n{tail}", code=result.returncode)
+    message = f"Installed {args.dependency}."
+    data = {"dependency": args.dependency, "command": command, "tail": tail}
+    if _stream_enabled(args):
+        _stream_result(action=action, job_id=job_id or uuid.uuid4().hex, ok=True, status="completed", message=message, data=data)
+    elif _json_enabled(args):
+        _emit_json(action=action, ok=True, message=message, data=data)
+    else:
+        print(message)
 
 
 def cmd_setup_compatibility_profile(args: argparse.Namespace) -> None:
@@ -1946,6 +1983,10 @@ def build_parser() -> argparse.ArgumentParser:
     dependency_cmd.add_argument("--gptk-wine", help="Optional GPTK Wine executable")
     dependency_cmd.add_argument("--d3dmetal-source", help="Optional D3DMetal source directory")
     dependency_cmd.set_defaults(func=cmd_dependency_status)
+    install_dependency_cmd = sub.add_parser("install-host-dependency", help="Install one confirmed host dependency")
+    install_dependency_cmd.add_argument("--dependency", choices=("rosetta", "wine-stable", "winetricks"), required=True)
+    install_dependency_cmd.add_argument("--confirm-rosetta-license", action="store_true", help="Confirm acceptance of Apple's Rosetta software license")
+    install_dependency_cmd.set_defaults(func=cmd_install_host_dependency)
     profile_setup = sub.add_parser("setup-compatibility-profile", help="Prepare a dedicated bottle for a pinned graphics profile")
     profile_setup.add_argument("--profile", required=True, help="Profile id from list-compatibility-profiles")
     profile_setup.add_argument("--dxmt-source", help="Verified DXMT source directory")
