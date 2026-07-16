@@ -264,6 +264,16 @@ struct BackendCheckSummary: Identifiable, Hashable {
     let fix: String?
 }
 
+enum DependencyBootstrapPhase: String, Hashable {
+    case idle
+    case checking
+    case installing
+    case configuring
+    case profileSetup
+    case ready
+    case failed
+}
+
 struct BackendStepSummary: Identifiable, Hashable {
     let id: String
     let name: String

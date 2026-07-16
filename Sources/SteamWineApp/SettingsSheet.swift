@@ -19,6 +19,7 @@ struct SettingsSheet: View {
     @State private var showAdvancedSettings: Bool = false
     @State private var pendingDependencyInstall: String?
     @State private var showDependencyConfirmation: Bool = false
+    @State private var showRecommendedBootstrapConfirmation: Bool = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -98,6 +99,9 @@ struct SettingsSheet: View {
         .onChange(of: model.backendContext.dxmtSource) { _, newValue in
             dxmtSource = newValue
         }
+        .onChange(of: model.backendContext.winePath) { _, newValue in
+            winePath = newValue
+        }
         .onChange(of: model.backendContext.dxvkSource) { _, newValue in
             dxvkSource = newValue
         }
@@ -112,6 +116,14 @@ struct SettingsSheet: View {
             }
         } message: {
             Text(dependencyConfirmationMessage)
+        }
+        .alert("Set Up Recommended Environment?", isPresented: $showRecommendedBootstrapConfirmation) {
+            Button("Cancel", role: .cancel) {}
+            Button("Continue") {
+                model.startRecommendedBootstrap(confirmRosettaLicense: true)
+            }
+        } message: {
+            Text(recommendedBootstrapConfirmationMessage)
         }
     }
 
@@ -415,6 +427,52 @@ struct SettingsSheet: View {
                 .help("Check dependencies again")
             }
 
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Recommended Gaming Environment")
+                            .font(.subheadline.weight(.semibold))
+                        Text(
+                            model.compatibilityProfileIsReady(.dxmt) && model.dependencyBootstrapPhase == .idle
+                                ? "Recommended DXMT environment is ready."
+                                : model.dependencyBootstrapMessage
+                        )
+                            .font(.caption)
+                            .foregroundStyle(model.dependencyBootstrapPhase == .failed ? .red : themeMutedForeground)
+                    }
+                    Spacer()
+                    if model.isDependencyBootstrapRunning {
+                        ProgressView().controlSize(.small)
+                    } else if model.dependencyBootstrapPhase == .ready || model.compatibilityProfileIsReady(.dxmt) {
+                        Label("Ready", systemImage: "checkmark.seal.fill")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.green)
+                    } else {
+                        Button(model.dependencyBootstrapPhase == .failed ? "Retry" : "Set Up") {
+                            showRecommendedBootstrapConfirmation = true
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                }
+                if model.isDependencyBootstrapRunning || model.dependencyBootstrapProgress > 0 {
+                    ProgressView(value: model.dependencyBootstrapProgress)
+                }
+                if model.dependencyBootstrapPhase == .failed {
+                    HStack(spacing: 12) {
+                        Button("Open Logs") {
+                            model.openRecommendedBootstrapLogs()
+                        }
+                        Button("Choose Existing Installation") {
+                            showAdvancedSettings = true
+                        }
+                    }
+                    .buttonStyle(.borderless)
+                }
+            }
+            .padding(12)
+            .background(themePanel)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+
             if let result = model.latestDependencyResult {
                 ForEach(result.checks) { check in
                     HStack(alignment: .top, spacing: 10) {
@@ -463,6 +521,17 @@ struct SettingsSheet: View {
         default:
             return "NASE will install the selected dependency."
         }
+    }
+
+    private var recommendedBootstrapConfirmationMessage: String {
+        let missing = model.latestDependencyResult?.checks
+            .filter { $0.required && $0.status == "fail" }
+            .map(\.name) ?? []
+        let summary = missing.isEmpty ? "All host dependencies are already present." : "NASE will install: \(missing.joined(separator: ", "))."
+        let rosetta = missing.contains("Rosetta 2")
+            ? " Continuing explicitly accepts Apple's Rosetta software license."
+            : ""
+        return "\(summary) It will then select Wine Stable and DXMT automatically, create the dedicated DXMT bottle, and install Steam.\(rosetta)"
     }
 
     private func beginDependencyInstall(for checkName: String) {

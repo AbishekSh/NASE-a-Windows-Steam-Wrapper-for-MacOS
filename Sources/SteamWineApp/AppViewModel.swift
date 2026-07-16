@@ -86,7 +86,8 @@ final class AppViewModel {
     var rightPanelMessage: String = "Select a runner to see setup state and actions."
     var activityLog: String = "SwiftUI shell ready.\n"
     var isBusy: Bool {
-        isActionRunning(.setupMetal)
+        isDependencyBootstrapRunning
+            || isActionRunning(.setupMetal)
             || isActionRunning(.doctorFix)
             || isActionRunning(.installDXMT)
             || isActionRunning(.installDXVK)
@@ -116,6 +117,9 @@ final class AppViewModel {
     private(set) var recentBackendJobs: [BackendJob] = []
     private(set) var latestDoctorResult: BackendStructuredResult?
     private(set) var latestDependencyResult: BackendStructuredResult?
+    private(set) var dependencyBootstrapPhase: DependencyBootstrapPhase = .idle
+    private(set) var dependencyBootstrapMessage: String = "Ready to prepare the recommended environment."
+    private(set) var dependencyBootstrapProgress: Double = 0
     private(set) var latestSetupResult: BackendStructuredResult?
     private(set) var latestScanResult: BackendStructuredResult?
     private(set) var latestAdviceResult: BackendStructuredResult?
@@ -561,6 +565,182 @@ final class AppViewModel {
             return
         }
         installManagedRuntime(runtime)
+    }
+
+    func startRecommendedBootstrap(confirmRosettaLicense: Bool) {
+        guard !isDependencyBootstrapRunning else { return }
+        dependencyBootstrapPhase = .checking
+        dependencyBootstrapMessage = "Checking required components..."
+        dependencyBootstrapProgress = 0.05
+        let initialContext = effectiveBackendContext()
+
+        Task.detached(priority: .userInitiated) {
+            do {
+                let initial = try await BackendBridge.execute(.dependencyStatus, context: initialContext)
+                let checks = initial.structured?.checks ?? []
+                let missing = Set(checks.filter { $0.required && $0.status == "fail" }.map(\.name))
+                let unsupported = missing.intersection(["macOS", "Python"])
+                if !unsupported.isEmpty {
+                    throw NSError(
+                        domain: "SteamWineApp.DependencyBootstrap",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "Update \(unsupported.sorted().joined(separator: " and ")) before continuing."]
+                    )
+                }
+                if missing.contains("Rosetta 2") && !confirmRosettaLicense {
+                    throw NSError(
+                        domain: "SteamWineApp.DependencyBootstrap",
+                        code: 2,
+                        userInfo: [NSLocalizedDescriptionKey: "Rosetta installation requires explicit acceptance of Apple's software license."]
+                    )
+                }
+
+                var completed = 0
+                let installCount = ["Rosetta 2", "Winetricks", "Wine Stable 11", "DXMT 0.71"].filter(missing.contains).count
+                func report(_ message: String, completedSteps: Int) async {
+                    await MainActor.run {
+                        self.dependencyBootstrapPhase = .installing
+                        self.dependencyBootstrapMessage = message
+                        self.dependencyBootstrapProgress = 0.1 + (Double(completedSteps) / Double(max(installCount, 1))) * 0.55
+                    }
+                }
+
+                if missing.contains("Rosetta 2") {
+                    await report("Installing Rosetta 2...", completedSteps: completed)
+                    _ = try await BackendBridge.execute(.installHostDependency(id: "rosetta", confirmLicense: true), context: initialContext)
+                    completed += 1
+                }
+                if missing.contains("Winetricks") {
+                    await report("Installing Winetricks...", completedSteps: completed)
+                    _ = try await BackendBridge.execute(.installHostDependency(id: "winetricks", confirmLicense: false), context: initialContext)
+                    completed += 1
+                }
+                if missing.contains("Wine Stable 11") {
+                    await report("Installing Wine Stable 11...", completedSteps: completed)
+                    _ = try await BackendBridge.execute(.installHostDependency(id: "wine-stable", confirmLicense: false), context: initialContext)
+                    completed += 1
+                }
+
+                let winePath = await MainActor.run { self.detectInstalledWineStablePath() }
+                guard let winePath else {
+                    throw NSError(
+                        domain: "SteamWineApp.DependencyBootstrap",
+                        code: 3,
+                        userInfo: [NSLocalizedDescriptionKey: "Wine Stable was not found after installation. Choose an existing Wine Stable app in Settings."]
+                    )
+                }
+                var configuredContext = await MainActor.run { self.contextAdoptingWineStable(winePath) }
+
+                if missing.contains("DXMT 0.71") {
+                    await report("Downloading and verifying DXMT 0.71...", completedSteps: completed)
+                    let installed = try await BackendBridge.execute(.installRuntime(id: "dxmt-0.71"), context: configuredContext)
+                    if let source = installed.runtimes.first(where: { $0.id == "dxmt-0.71" })?.path {
+                        configuredContext = configuredContext.overridingRuntimeSources(dxmtSource: source)
+                    }
+                    completed += 1
+                }
+
+                let adoptedContext = configuredContext
+                await MainActor.run {
+                    self.dependencyBootstrapPhase = .configuring
+                    self.dependencyBootstrapMessage = "Saving verified runtime selections..."
+                    self.dependencyBootstrapProgress = 0.72
+                    self.backendContext = adoptedContext
+                    self.backendContext.persist()
+                    self.refreshWineRuntimes()
+                }
+
+                let verified = try await BackendBridge.execute(.dependencyStatus, context: configuredContext)
+                let remaining = verified.structured?.checks.filter { $0.required && $0.status == "fail" } ?? []
+                guard remaining.isEmpty else {
+                    throw NSError(
+                        domain: "SteamWineApp.DependencyBootstrap",
+                        code: 4,
+                        userInfo: [NSLocalizedDescriptionKey: "Still missing: \(remaining.map(\.name).joined(separator: ", "))."]
+                    )
+                }
+
+                await MainActor.run {
+                    self.latestDependencyResult = verified.structured
+                    self.dependencyBootstrapPhase = .profileSetup
+                    self.dependencyBootstrapMessage = "Preparing the dedicated DXMT bottle and Steam..."
+                    self.dependencyBootstrapProgress = 0.8
+                }
+                let profileContext = configuredContext.compatibilityContext(for: .dxmt)
+                _ = try await BackendBridge.executeStreaming(.setupCompatibilityProfile(.dxmt), context: profileContext) { update in
+                    if let message = update.job?.message {
+                        await MainActor.run { self.dependencyBootstrapMessage = message }
+                    }
+                }
+                _ = try await BackendBridge.execute(.openSteam, context: profileContext)
+
+                await MainActor.run {
+                    self.dependencyBootstrapPhase = .ready
+                    self.dependencyBootstrapMessage = "Recommended DXMT environment is ready. Steam is opening for sign-in."
+                    self.dependencyBootstrapProgress = 1
+                    self.refreshRuntimeCenter()
+                    self.refreshDependencyStatus()
+                    self.rightPanelMessage = "Recommended gaming environment is ready."
+                }
+            } catch {
+                await MainActor.run {
+                    self.dependencyBootstrapPhase = .failed
+                    self.dependencyBootstrapMessage = error.localizedDescription
+                    self.appendLog("Recommended environment setup failed:\n\(error.localizedDescription)")
+                    self.rightPanelMessage = "Recommended environment setup needs attention."
+                }
+            }
+        }
+    }
+
+    var isDependencyBootstrapRunning: Bool {
+        [.checking, .installing, .configuring, .profileSetup].contains(dependencyBootstrapPhase)
+    }
+
+    private func detectInstalledWineStablePath() -> String? {
+        let candidates = [
+            "/Applications/Wine Stable.app/Contents/Resources/wine/bin/wine",
+            "/opt/homebrew/bin/wine",
+            "/usr/local/bin/wine",
+            backendContext.winePath,
+        ]
+        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+
+    private func contextAdoptingWineStable(_ winePath: String) -> BackendContext {
+        let managedDXMT = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/MySteamWine/runtimes/dxmt/dxmt-0.71", isDirectory: true)
+        let detectedDXMT = FileManager.default.fileExists(atPath: managedDXMT.path) ? managedDXMT.path : nil
+        return BackendContext(
+            repoRoot: backendContext.repoRoot,
+            pythonCommand: backendContext.pythonCommand,
+            winePath: winePath,
+            dxmtSource: managedRuntimeSource(kind: "dxmt") ?? detectedDXMT ?? backendContext.dxmtSource,
+            dxvkSource: backendContext.dxvkSource,
+            d3dMetalSource: backendContext.d3dMetalSource,
+            gptkWinePath: backendContext.gptkWinePath,
+            bottleName: backendContext.bottleName,
+            externalPrefix: nil
+        )
+    }
+
+    func openRecommendedBootstrapLogs() {
+        let context = backendContext.compatibilityContext(for: .dxmt)
+        let logsURL = logsDirectoryURL(for: .steam, context: context)
+        let names = ["01_profile_wineboot.log", "02_profile_steam.log", "dxmt_install.log", "03_run_steam.log"]
+        let entries = names.compactMap { name -> DisplayedLogEntry? in
+            let url = logsURL.appendingPathComponent(name)
+            guard
+                FileManager.default.fileExists(atPath: url.path),
+                let text = Self.readTailText(from: url, maxBytes: MemoryLimit.displayedLogBytes)
+            else { return nil }
+            return DisplayedLogEntry(id: name, title: name, text: text)
+        }
+        selectedLogTitle = "Recommended Environment Logs"
+        selectedLogEntries = entries
+        selectedLogEntryID = entries.first?.id
+        selectedLogText = entries.first?.text ?? activityLog
+        isShowingLogViewer = true
     }
 
     func installManagedRuntime(_ runtime: ManagedRuntime) {
