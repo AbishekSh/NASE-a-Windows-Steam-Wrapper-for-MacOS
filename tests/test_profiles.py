@@ -97,6 +97,21 @@ class CompatibilityProfileTests(unittest.TestCase):
             )
             self.assertEqual(ready["setup_status"], "ready")
 
+    def test_d3dmetal_profile_explains_deleted_runtime(self) -> None:
+        missing_source = self.bottle.root / "deleted-wrapper" / "d3dmetal"
+        with (
+            patch.object(profiles, "_wine_version", return_value="wine-10.0 (Sikarugir)"),
+            self.assertRaisesRegex(RuntimeError, "moved or deleted"),
+        ):
+            profiles.bind_profile(
+                bottle=self.bottle,
+                profile_id="d3dmetal-gptk-v1",
+                graphics_backend="d3dmetal",
+                wine_path=Path("/runtime/wine"),
+                graphics_source=missing_source,
+                require_ready=False,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

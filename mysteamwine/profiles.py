@@ -154,9 +154,24 @@ def bind_profile(
                 "DXMT Recommended requires the verified DXMT 0.71 package from Runtime Center."
             )
     if profile.id == "d3dmetal-gptk-v1" and graphics_source is None:
-        raise RuntimeError("D3DMetal requires the payload shipped with the selected Game Porting Toolkit installation.")
+        raise RuntimeError(
+            "D3DMetal requires a complete managed runtime. Open Runtime Center, choose Find Runtime, "
+            "then import and repair the D3DMetal profile."
+        )
     if profile.id == "d3dmetal-gptk-v1":
-        d3dmetal_inspection = inspect_gptk_installation(wine_path, graphics_source)
+        if not graphics_source.expanduser().is_dir():
+            raise RuntimeError(
+                f"The saved D3DMetal runtime was moved or deleted: {graphics_source}. "
+                "Open Runtime Center, choose Find Runtime, then import and repair the D3DMetal profile. "
+                "NASE will not substitute a different D3DMetal build because it may not match the pinned Wine engine."
+            )
+        try:
+            d3dmetal_inspection = inspect_gptk_installation(wine_path, graphics_source)
+        except OSError as exc:
+            raise RuntimeError(
+                f"The saved D3DMetal runtime is incomplete or unavailable: {exc}. "
+                "Open Runtime Center, choose Find Runtime, then import and repair the D3DMetal profile."
+            ) from exc
     dxvk_inspection: dict | None = None
     if profile.id == "dxvk-macos-pinned-v1":
         if graphics_source is None or moltenvk_source is None:

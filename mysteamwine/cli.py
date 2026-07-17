@@ -260,7 +260,7 @@ def _bind_launch_profile(args: argparse.Namespace, *, action: str, bottle, wine_
             graphics_source=Path(source_value) if source_value else None,
             moltenvk_source=discover_moltenvk_source() if graphics_backend == "dxvk" else None,
         )
-    except RuntimeError as exc:
+    except (RuntimeError, OSError) as exc:
         _json_error(args, action=action, message=f"Compatibility profile is not ready: {exc}")
     return profile_id
 
@@ -434,11 +434,6 @@ def cmd_setup_compatibility_profile(args: argparse.Namespace) -> None:
     moltenvk_source = Path(args.moltenvk_source) if args.moltenvk_source else None
     if graphics_backend == "dxvk" and moltenvk_source is None:
         moltenvk_source = discover_moltenvk_source()
-    graphics_environment = (
-        d3dmetal_launch_environment(graphics_source)
-        if graphics_backend == "d3dmetal" and graphics_source is not None
-        else {}
-    )
     job_id = _stream_start(action=action, message=f"Preparing {profile_id} in {bottle.name}...") if _stream_enabled(args) else None
     steps: list[dict[str, str]] = []
 
@@ -461,6 +456,11 @@ def cmd_setup_compatibility_profile(args: argparse.Namespace) -> None:
             )
 
     try:
+        graphics_environment = (
+            d3dmetal_launch_environment(graphics_source)
+            if graphics_backend == "d3dmetal" and graphics_source is not None
+            else {}
+        )
         if graphics_backend == "dxvk":
             free_bytes = shutil.disk_usage(bottle.root.parent).free
             minimum_bytes = 4 * 1024**3
