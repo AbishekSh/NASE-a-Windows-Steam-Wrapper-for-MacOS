@@ -608,6 +608,30 @@ struct SettingsSheet: View {
                         Text(profile.profileSummary)
                             .font(.caption)
                             .foregroundStyle(themeMutedForeground)
+                        if profile == .d3dmetal {
+                            if model.isD3DMetalDiscoveryRunning {
+                                HStack(spacing: 7) {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                    Text("Searching mounted volumes...")
+                                }
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(themeMutedForeground)
+                            } else if model.hasDetectedD3DMetalRuntime {
+                                Label("Compatible runtime found", systemImage: "checkmark.circle.fill")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(.green)
+                                Text(model.d3DMetalRuntimeLocation)
+                                    .font(.caption2.monospaced())
+                                    .foregroundStyle(themeMutedForeground)
+                                    .lineLimit(2)
+                                    .textSelection(.enabled)
+                            } else {
+                                Label("No compatible runtime selected", systemImage: "exclamationmark.triangle.fill")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(.orange)
+                            }
+                        }
                         if hasSharedLibraries {
                             Label("Shared game files attached", systemImage: "externaldrive.connected.to.line.below")
                                 .font(.caption2.weight(.semibold))
@@ -640,7 +664,7 @@ struct SettingsSheet: View {
                             Button("Find Runtime") {
                                 model.discoverD3DMetal()
                             }
-                            .disabled(model.isBusy)
+                            .disabled(model.isBusy || model.isD3DMetalDiscoveryRunning)
                             Button("Install") {
                                 showGPTKImportConfirmation = true
                             }

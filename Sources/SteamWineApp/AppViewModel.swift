@@ -97,6 +97,21 @@ final class AppViewModel {
     var isRefreshingSteamGames: Bool {
         isActionRunning(.listGames)
     }
+    var isD3DMetalDiscoveryRunning: Bool {
+        isActionRunning(.discoverD3DMetal)
+    }
+    var hasDetectedD3DMetalRuntime: Bool {
+        let source = URL(fileURLWithPath: backendContext.d3dMetalSource)
+        let framework = source.appendingPathComponent("external/D3DMetal.framework")
+        let sharedLibrary = source.appendingPathComponent("external/libd3dshared.dylib")
+        let windowsModules = source.appendingPathComponent("wine/x86_64-windows")
+        return FileManager.default.fileExists(atPath: framework.path)
+            && FileManager.default.fileExists(atPath: sharedLibrary.path)
+            && FileManager.default.fileExists(atPath: windowsModules.path)
+    }
+    var d3DMetalRuntimeLocation: String {
+        backendContext.d3dMetalSource
+    }
     var isShowingSettings: Bool = false
     var isShowingGameSettings: Bool = false
     var isShowingGameDetails: Bool = false
@@ -1500,6 +1515,8 @@ final class AppViewModel {
     }
 
     func discoverD3DMetal() {
+        guard !isD3DMetalDiscoveryRunning else { return }
+        rightPanelMessage = "Searching mounted volumes for a compatible D3DMetal runtime..."
         executeDetached(
             .discoverD3DMetal,
             successMessage: "Found and selected a matched Game Porting Toolkit installation.",
