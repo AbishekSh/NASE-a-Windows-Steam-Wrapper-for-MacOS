@@ -25,6 +25,11 @@ def _candidate_roots() -> list[Path]:
     volumes = Path("/Volumes")
     try:
         roots.extend(path for path in volumes.glob("Game Porting Toolkit*") if path.is_dir())
+        roots.extend(
+            path / "redist" / "lib"
+            for path in volumes.glob("Evaluation environment for Windows games*")
+            if (path / "redist" / "lib").is_dir()
+        )
     except OSError:
         pass
     return roots
@@ -91,9 +96,18 @@ def prepare_sikarugir_native_dependencies(wine_path: Path, d3dmetal_source: Path
     frameworks = next((parent for parent in (source, *source.parents) if parent.name == "Frameworks"), None)
     dependency_source = frameworks / SIKARUGIR_NATIVE_DEPENDENCY if frameworks else None
     if dependency_source is None or not dependency_source.is_file():
+        installed_dependency = wine_root / "lib" / SIKARUGIR_NATIVE_DEPENDENCY
+        if installed_dependency.is_file():
+            return {
+                "dependency": SIKARUGIR_NATIVE_DEPENDENCY,
+                "source": str(installed_dependency),
+                "installed_path": str(installed_dependency),
+                "sha256": _sha256(installed_dependency),
+                "verified_library_count": 1,
+            }
         raise RuntimeError(
-            f"The paired D3DMetal bundle is missing {SIKARUGIR_NATIVE_DEPENDENCY}. "
-            "Select the complete Sikarugir wrapper runtime, not only its renderer directory."
+            f"The selected Wine engine and D3DMetal bundle are missing {SIKARUGIR_NATIVE_DEPENDENCY}. "
+            "Repair the pinned Sikarugir Wine 10 runtime, then retry."
         )
 
     dependency_dir = wine_root / "lib"
@@ -168,6 +182,8 @@ def discover_gptk_installations(
     for root in _candidate_roots():
         if not root.exists():
             continue
+        if configured_wine:
+            pairs.append((configured_wine, root))
         for wine in _wine_candidates(root):
             if wine.is_file():
                 pairs.append((wine, root))

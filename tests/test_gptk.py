@@ -39,6 +39,17 @@ class GPTKTests(unittest.TestCase):
         self.assertEqual(result["wine_version"], "wine-10.0 (Sikarugir)")
         self.assertEqual(Path(result["payload_path"]), self.payload.resolve())
 
+    def test_discovers_apple_evaluation_payload_with_configured_wine(self) -> None:
+        mounted_payload = self.root / "Evaluation environment for Windows games 2.1" / "redist" / "lib"
+        shutil.copytree(self.installation / "lib" / "wine", mounted_payload / "wine")
+        shutil.copytree(self.installation / "external", mounted_payload / "external")
+
+        with patch.object(gptk, "_candidate_roots", return_value=[mounted_payload]):
+            found = gptk.discover_gptk_installations(configured_wine=self.wine)
+
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["d3dmetal_source"], str(mounted_payload.resolve()))
+
     def test_inspection_rejects_incomplete_payload(self) -> None:
         unrelated = self.root / "Downloads" / "d3dmetal" / "x86_64-windows"
         unrelated.mkdir(parents=True)
