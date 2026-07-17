@@ -258,6 +258,7 @@ def _bind_launch_profile(args: argparse.Namespace, *, action: str, bottle, wine_
             graphics_backend=graphics_backend,
             wine_path=wine_path,
             graphics_source=Path(source_value) if source_value else None,
+            moltenvk_source=discover_moltenvk_source() if graphics_backend == "dxvk" else None,
         )
     except RuntimeError as exc:
         _json_error(args, action=action, message=f"Compatibility profile is not ready: {exc}")
