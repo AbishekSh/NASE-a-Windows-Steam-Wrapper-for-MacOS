@@ -21,11 +21,12 @@ from .dxvk import install_dxvk
 from .dxvk_macos import (
     discover_moltenvk_source,
     install_dxvk_macos_native_runtime,
+    probe_dxvk_macos_graphics,
     verify_dxvk_macos_profile,
 )
 from .gptk import discover_gptk_installations, import_managed_gptk, prepare_sikarugir_native_dependencies
 from .library_activity import acquire_steam_activity, assert_direct_launch_safe, release_steam_activity
-from .profiles import bind_profile, list_profiles, mark_profile_ready
+from .profiles import PROFILES, bind_profile, list_profiles, mark_profile_ready
 from .runtime import detect_wine_runtime, is_apple_silicon, resolve_executable, resolve_with_fallback, run_logged
 from .scanner import scan_game_dir
 from .sessions import create_session, mark_steam_opened_by_user, reconcile_sessions, steam_is_running, stop_session, update_session
@@ -577,6 +578,11 @@ def cmd_setup_compatibility_profile(args: argparse.Namespace) -> None:
             if failed:
                 raise RuntimeError("DXVK-macOS verification failed: " + "; ".join(check["detail"] for check in failed))
             steps.append({"name": "verify-graphics", "status": "ok"})
+            run_step(
+                "probe-vulkan-d3d11",
+                "Creating Vulkan and D3D11 devices and confirming the selected GPU...",
+                lambda: probe_dxvk_macos_graphics(bottle=bottle, wine_path=wine64),
+            )
         else:
             steps.append({"name": "install-graphics", "status": "ok"})
         if _stream_enabled(args):
@@ -624,6 +630,40 @@ def cmd_setup_compatibility_profile(args: argparse.Namespace) -> None:
     data = {"profile": manifest["profile"], "bottle": bottle.name, "manifest": manifest, "steps": steps, "library_attachment": attachment}
     if _stream_enabled(args):
         _stream_result(action=action, job_id=job_id or uuid.uuid4().hex, ok=True, status="completed", message=message, data=data)
+    elif _json_enabled(args):
+        _emit_json(action=action, ok=True, message=message, data=data)
+    else:
+        print(message)
+
+
+def cmd_reset_compatibility_profile(args: argparse.Namespace) -> None:
+    action = "reset-compatibility-profile"
+    bottle = _resolve_bottle(args)
+    if _is_external_prefix(args):
+        _json_error(args, action=action, message="Only managed profile bottles can be reset.")
+    profile = PROFILES.get(args.profile)
+    if profile is None:
+        _json_error(args, action=action, message=f"Unknown compatibility profile: {args.profile}")
+    expected_suffix = f"-{profile.bottle_suffix}"
+    if not bottle.name.endswith(expected_suffix):
+        _json_error(
+            args,
+            action=action,
+            message=f"Refusing to reset {bottle.name}; the {profile.name} bottle must end in {expected_suffix}.",
+        )
+    if not args.confirm:
+        _json_error(args, action=action, message="Reset requires explicit confirmation.")
+    if not bottle.root.exists():
+        message = f"{profile.name} is already reset."
+    else:
+        wine64 = _require_wine64(args)
+        kill_wine_processes(bottle=bottle, wine64_path=wine64)
+        shutil.rmtree(bottle.root)
+        message = f"Removed the dedicated {profile.name} bottle. Shared Steam game files were not removed."
+    data = {"profile": args.profile, "bottle": bottle.name, "removed": not bottle.root.exists()}
+    if _stream_enabled(args):
+        job_id = _stream_start(action=action, message=message)
+        _stream_result(action=action, job_id=job_id, ok=True, status="completed", message=message, data=data)
     elif _json_enabled(args):
         _emit_json(action=action, ok=True, message=message, data=data)
     else:
@@ -2251,6 +2291,10 @@ def build_parser() -> argparse.ArgumentParser:
     profile_setup.add_argument("--winetricks", default="winetricks", help="Path to winetricks")
     profile_setup.add_argument("--interactive", action="store_true", help="Allow interactive Steam installation")
     profile_setup.set_defaults(func=cmd_setup_compatibility_profile)
+    profile_reset = sub.add_parser("reset-compatibility-profile", help="Remove one dedicated profile bottle without deleting shared games")
+    profile_reset.add_argument("--profile", required=True, help="Profile id from list-compatibility-profiles")
+    profile_reset.add_argument("--confirm", action="store_true", help="Confirm removal of the dedicated bottle")
+    profile_reset.set_defaults(func=cmd_reset_compatibility_profile)
     attach_library = sub.add_parser("attach-steam-library", help="Attach canonical shared Steam libraries to one managed profile bottle")
     attach_library.add_argument("--all", action="store_true", help="Attach every discovered Steam library")
     attach_library.add_argument("--library-id", action="append", help="Attach one stable library id; may be repeated")

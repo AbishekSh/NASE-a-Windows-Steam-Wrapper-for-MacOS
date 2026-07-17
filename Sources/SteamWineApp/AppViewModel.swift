@@ -1490,6 +1490,15 @@ final class AppViewModel {
         )
     }
 
+    func resetCompatibilityProfile(_ profile: GraphicsBackendOption) {
+        let context = effectiveBackendContext(backendContext.compatibilityContext(for: profile))
+        executeDetached(
+            .resetCompatibilityProfile(profile),
+            successMessage: "The dedicated \(profile.rawValue) bottle was removed. Shared games were kept.",
+            context: context
+        )
+    }
+
     func discoverD3DMetal() {
         executeDetached(
             .discoverD3DMetal,
@@ -2479,6 +2488,8 @@ final class AppViewModel {
             return "Install Host Dependency"
         case .setupCompatibilityProfile:
             return "Set Up Compatibility Profile"
+        case .resetCompatibilityProfile:
+            return "Reset Compatibility Profile"
         case .attachSteamLibraries:
             return "Attach Shared Steam Libraries"
         case .setupMetal:
@@ -2536,6 +2547,8 @@ final class AppViewModel {
             return "Host dependency installed."
         case .setupCompatibilityProfile:
             return "Compatibility profile is ready."
+        case .resetCompatibilityProfile:
+            return "Compatibility profile was reset."
         case .attachSteamLibraries:
             return "Shared Steam libraries attached."
         case .setupMetal:

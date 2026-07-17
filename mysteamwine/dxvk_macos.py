@@ -6,16 +6,19 @@ import os
 import shutil
 import struct
 import subprocess
+import re
 from pathlib import Path
 
 from .bottle import Bottle
+from .runtime import run_logged
 
 
 PINNED_WINE_VERSION = "wine-10.0 (Sikarugir)"
 PINNED_DXVK_RUNTIME_ID = "dxvk-macos-1.10.3-20230507-repack"
 PINNED_DXVK_VERSION = "1.10.3-20230507-repack"
-PINNED_MOLTENVK_VERSION = "1.2.10-cx"
+PINNED_MOLTENVK_VERSION = "1.4.1-cx"
 PINNED_MOLTENVK_SHA256 = "e9de8aa6053e1347c82aff01c6d7964556f306b2f7c63db88eb54a05e4f8b980"
+PROBE_SHA256 = "4e5e75469dccfe63eabced92b00d05cdb265ab822154988fdabc1b1b4462081a"
 
 
 def discover_moltenvk_source() -> Path | None:
@@ -126,7 +129,7 @@ def inspect_dxvk_macos_stack(wine_path: Path, dxvk_source: Path, moltenvk_source
     moltenvk_sha = _sha256(moltenvk)
     if moltenvk_sha != PINNED_MOLTENVK_SHA256:
         raise RuntimeError(
-            "MoltenVK does not match the pinned CodeWeavers 1.2.10 build "
+            "MoltenVK does not match the pinned CodeWeavers 1.4.1 build "
             f"(expected {PINNED_MOLTENVK_SHA256}, got {moltenvk_sha})."
         )
     file_result = subprocess.run(["/usr/bin/file", str(moltenvk)], capture_output=True, text=True, check=False)
@@ -174,6 +177,7 @@ def dxvk_macos_launch_environment(bottle: Bottle) -> dict[str, str]:
     return {
         "DYLD_FALLBACK_LIBRARY_PATH": fallback,
         "MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS": "0",
+        "MVK_CONFIG_LOG_LEVEL": "1",
         "DXVK_LOG_LEVEL": "info",
     }
 
@@ -209,3 +213,69 @@ def verify_dxvk_macos_profile(bottle: Bottle) -> list[dict[str, str]]:
     except RuntimeError as exc:
         checks.append({"name": "native-moltenvk", "status": "error", "detail": str(exc)})
     return checks
+
+
+def _probe_executable() -> Path:
+    executable = Path(__file__).resolve().parent.parent / "Tools" / "DXVKProbe" / "nase_graphics_probe.exe"
+    if not executable.is_file() or _sha256(executable) != PROBE_SHA256:
+        raise RuntimeError("The bundled DXVK graphics probe is missing or failed its checksum.")
+    return executable
+
+
+def _gpu_from_dxvk_log(text: str) -> str | None:
+    patterns = (
+        r"(?:Found device|Device name|Adapter)\s*:\s*([^\r\n]+)",
+        r"Using device\s*:\s*([^\r\n]+)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+    return None
+
+
+def probe_dxvk_macos_graphics(*, bottle: Bottle, wine_path: Path) -> tuple[int, str]:
+    probe = _probe_executable()
+    bottle.logs.mkdir(parents=True, exist_ok=True)
+    probe_log = bottle.logs / "05_dxvk_graphics_probe.log"
+    if probe_log.exists():
+        probe_log.unlink()
+    for old_log in bottle.logs.glob("nase_graphics_probe*.log"):
+        old_log.unlink()
+    environment = {
+        "WINEPREFIX": str(bottle.prefix),
+        "WINEDEBUG": "-all",
+        "WINEDLLOVERRIDES": "d3d11=n;d3d10core=n",
+        "DXVK_LOG_LEVEL": "info",
+        **dxvk_macos_launch_environment(bottle),
+    }
+    code, output = run_logged(
+        cmd=[str(wine_path), str(probe)],
+        env=environment,
+        log_file=probe_log,
+        cwd=bottle.logs,
+        timeout=60,
+    )
+    if code != 0:
+        return code, output or "DXVK graphics probe did not complete."
+    persisted_output = probe_log.read_text(encoding="utf-8", errors="replace") if probe_log.is_file() else output
+    required = ("VULKAN_DEVICE_CREATED: yes", "D3D11_DEVICE_CREATED: yes", "VULKAN_GPU:")
+    missing = [marker for marker in required if marker not in persisted_output]
+    if missing:
+        return 1, "Graphics probe output is incomplete: " + ", ".join(missing)
+    dxvk_logs = sorted(bottle.logs.glob("nase_graphics_probe*.log"))
+    combined_log = "\n".join(
+        [persisted_output, *(path.read_text(encoding="utf-8", errors="replace") for path in dxvk_logs)]
+    )
+    if "DXVK: v1.10.3-20230507-async (macOS)" not in combined_log:
+        return 1, "D3D11 succeeded, but the pinned DXVK-macOS version was not identified in its log."
+    gpu = _gpu_from_dxvk_log(combined_log)
+    if not gpu:
+        return 1, "DXVK ran but its log did not identify the selected GPU."
+    gpu = gpu.lstrip(": ")
+    probe_summary = "\n".join(
+        line for line in persisted_output.splitlines()
+        if any(marker in line for marker in ("DXVK: v", "Device name", "VULKAN_", "D3D11_"))
+    )
+    summary = "\n".join(part for part in (probe_summary, f"DXVK_GPU: {gpu}") if part)
+    return 0, summary

@@ -59,7 +59,7 @@ CATALOG: tuple[RuntimeCatalogEntry, ...] = (
         install_layout="dxvk-macos",
         license="zlib",
         notes=(
-            "Pinned macOS DXVK build for Sikarugir Wine 10 r6. The paired CodeWeavers MoltenVK 1.2.10 "
+            "Pinned macOS DXVK build for Sikarugir Wine 10 r6. The paired CodeWeavers MoltenVK 1.4.1 "
             "library must be imported from a compatible Sikarugir wrapper and is checksum verified."
         ),
     ),

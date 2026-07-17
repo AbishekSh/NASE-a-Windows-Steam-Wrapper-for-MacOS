@@ -21,6 +21,8 @@ struct SettingsSheet: View {
     @State private var showDependencyConfirmation: Bool = false
     @State private var showRecommendedBootstrapConfirmation: Bool = false
     @State private var showGPTKImportConfirmation: Bool = false
+    @State private var pendingProfileReset: GraphicsBackendOption?
+    @State private var showProfileResetConfirmation: Bool = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -139,6 +141,16 @@ struct SettingsSheet: View {
             }
         } message: {
             Text("NASE will copy the detected Game Porting Toolkit installation into its managed runtime folder. Continue only if you have read and accept Apple’s license included with the Toolkit.")
+        }
+        .alert("Reset Compatibility Profile?", isPresented: $showProfileResetConfirmation) {
+            Button("Cancel", role: .cancel) { pendingProfileReset = nil }
+            Button("Reset Bottle", role: .destructive) {
+                guard let profile = pendingProfileReset else { return }
+                model.resetCompatibilityProfile(profile)
+                pendingProfileReset = nil
+            }
+        } message: {
+            Text("This removes the profile's Windows prefix, Steam configuration, renderer files, caches, and logs. Shared Steam game files are kept.")
         }
     }
 
@@ -609,6 +621,11 @@ struct SettingsSheet: View {
                     if isReady {
                         Button("Repair") {
                             model.setupCompatibilityProfile(profile)
+                        }
+                        .disabled(model.isBusy)
+                        Button("Reset", role: .destructive) {
+                            pendingProfileReset = profile
+                            showProfileResetConfirmation = true
                         }
                         .disabled(model.isBusy)
                         Button(hasSharedLibraries ? "Attached" : "Attach Libraries") {

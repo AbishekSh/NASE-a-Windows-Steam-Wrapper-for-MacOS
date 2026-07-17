@@ -120,7 +120,7 @@ enum GraphicsBackendOption: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .dxmt: "Wine Stable 11 + DXMT 0.71"
         case .d3dmetal: "Sikarugir Wine 10 r6 + complete D3DMetal runtime bundle"
-        case .dxvk: "Sikarugir Wine 10 r6 + matching winevulkan + DXVK-macOS 1.10.3 + MoltenVK 1.2.10"
+        case .dxvk: "Sikarugir Wine 10 r6 + matching winevulkan + DXVK-macOS 1.10.3 + MoltenVK 1.4.1"
         case .none: "Selected Wine runtime with built-in graphics"
         }
     }

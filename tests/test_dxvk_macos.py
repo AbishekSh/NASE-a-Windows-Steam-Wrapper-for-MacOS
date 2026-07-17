@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from mysteamwine.bottle import Bottle
-from mysteamwine.dxvk_macos import verify_dxvk_macos_profile
+from mysteamwine.dxvk_macos import _gpu_from_dxvk_log, verify_dxvk_macos_profile
 
 
 def write_pe(path: Path, machine: int) -> None:
@@ -19,6 +19,10 @@ def write_pe(path: Path, machine: int) -> None:
 
 
 class DXVKMacOSProfileTests(unittest.TestCase):
+    def test_dxvk_log_gpu_parser_accepts_macos_device_format(self) -> None:
+        text = "info:    Device name:     : Apple M2\n"
+        self.assertEqual(_gpu_from_dxvk_log(text).lstrip(": "), "Apple M2")
+
     def test_verifier_rejects_renderer_override_conflicts(self) -> None:
         root = Path(tempfile.mkdtemp(prefix="nase-dxvk-macos-test-"))
         bottle = Bottle("Test", root, root / "prefix", root / "logs", root / "downloads", root / "cache")

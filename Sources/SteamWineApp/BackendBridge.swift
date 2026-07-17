@@ -337,6 +337,7 @@ enum BackendAction {
     case importGPTK(confirmLicense: Bool)
     case installHostDependency(id: String, confirmLicense: Bool)
     case setupCompatibilityProfile(GraphicsBackendOption)
+    case resetCompatibilityProfile(GraphicsBackendOption)
     case attachSteamLibraries(GraphicsBackendOption)
     case setupMetal
     case doctor
@@ -486,6 +487,8 @@ enum BackendBridge {
                 args += ["--d3dmetal-source", context.d3dMetalSource]
             }
             return args
+        case .resetCompatibilityProfile(let profile):
+            return base + ["reset-compatibility-profile", "--profile", profile.compatibilityProfileID, "--confirm"]
         case .attachSteamLibraries:
             return base + ["attach-steam-library", "--all"]
         case .setupMetal:
