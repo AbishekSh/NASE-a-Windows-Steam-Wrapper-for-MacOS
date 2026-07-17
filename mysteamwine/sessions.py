@@ -252,8 +252,14 @@ def reconcile_sessions() -> list[dict[str, Any]]:
             session["pids"] = []
             session["status"] = "exited"
             session["updated_at"] = now
-            session["message"] = "Game process exited."
-            if session.get("steam_started_by_nase"):
+            if session.get("last_seen_at") is None:
+                session["message"] = "Game process was not detected; Steam was left open for sign-in or setup."
+                session["steam_cleanup_after"] = None
+                if session.get("steam_started_by_nase"):
+                    session["steam_cleanup_status"] = "launch-not-observed"
+            else:
+                session["message"] = "Game process exited."
+            if session.get("last_seen_at") is not None and session.get("steam_started_by_nase"):
                 session["steam_cleanup_after"] = now + STEAM_CLEANUP_GRACE_SECONDS
             changed = True
 

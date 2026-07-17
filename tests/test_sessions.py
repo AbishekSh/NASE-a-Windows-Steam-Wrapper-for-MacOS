@@ -101,6 +101,36 @@ class LaunchSessionTests(unittest.TestCase):
             self.assertEqual(owned["steam_cleanup_status"], "shutdown-requested")
             shutdown.assert_called_once()
 
+    def test_unobserved_game_leaves_owned_steam_open(self) -> None:
+        with (
+            patch.object(sessions, "_registry_path", return_value=self.registry),
+            patch.object(sessions, "_processes", return_value={}),
+            patch.object(sessions, "_prefix_pids", return_value=set()),
+            patch.object(sessions, "steam_is_running", return_value=True),
+            patch.object(sessions, "_request_steam_shutdown", return_value=True) as shutdown,
+        ):
+            session = sessions.create_session(
+                bottle=self.bottle,
+                appid="not-started",
+                game="Needs Sign In",
+                executable=Path("/games/test.exe"),
+                install_dir=Path("/games"),
+                graphics_backend="d3dmetal",
+                strategy="steam",
+                wine_path=Path("/usr/local/bin/wine64"),
+                steam_started_by_nase=True,
+            )
+            sessions.update_session(session["session_id"], started_at=time.time() - sessions.LAUNCH_GRACE_SECONDS - 1)
+
+            reconciled = sessions.reconcile_sessions()
+
+            updated = next(item for item in reconciled if item["session_id"] == session["session_id"])
+            self.assertEqual(updated["status"], "exited")
+            self.assertEqual(updated["steam_cleanup_status"], "launch-not-observed")
+            self.assertIsNone(updated["steam_cleanup_after"])
+            self.assertIn("left open", updated["message"])
+            shutdown.assert_not_called()
+
     def test_explicit_open_relinquishes_owned_steam(self) -> None:
         with patch.object(sessions, "_registry_path", return_value=self.registry):
             session = sessions.create_session(
