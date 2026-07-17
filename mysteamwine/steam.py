@@ -139,6 +139,23 @@ def _terminate_orphaned_prefix_processes(prefix: Path) -> list[int]:
     return stopped
 
 
+def native_macos_steam_is_running() -> bool:
+    try:
+        result = subprocess.run(
+            ["/bin/ps", "ax", "-o", "command="],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except OSError:
+        return False
+    return any(
+        "/Steam/Steam.AppBundle/Steam/Contents/MacOS/steam_osx" in command
+        for command in result.stdout.splitlines()
+    )
+
+
 def _graphics_launch_env(
     bottle: Bottle,
     wine_debug: str,
@@ -186,6 +203,12 @@ def run_steam(
     graphics_source: Path | None = None,
 ) -> tuple[int, str]:
     ensure_bottle_dirs(bottle)
+    if native_macos_steam_is_running():
+        return 1, (
+            "macOS Steam is currently running and owns Steam's local communication port. "
+            "Choose Steam > Quit Steam in the macOS Steam menu, wait for it to close, then try again. "
+            "Closing only the Steam window is not enough."
+        )
     wineserver = _wineserver_path(wine64_path)
     env = _graphics_launch_env(bottle, "-all", graphics_backend, graphics_source)
     if extra_env:
