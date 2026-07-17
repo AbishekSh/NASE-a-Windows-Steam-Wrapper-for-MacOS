@@ -1482,10 +1482,6 @@ final class AppViewModel {
     }
 
     func setupCompatibilityProfile(_ profile: GraphicsBackendOption) {
-        guard profile != .dxvk else {
-            rightPanelMessage = "DXVK-macOS needs a complete pinned Vulkan stack before setup can be enabled."
-            return
-        }
         let context = effectiveBackendContext(backendContext.compatibilityContext(for: profile))
         executeDetached(
             .setupCompatibilityProfile(profile),
@@ -2934,13 +2930,15 @@ final class AppViewModel {
         case "dxmt":
             ["dxmt-0.71", "dxmt-0.70"]
         case "dxvk":
-            ["dxvk-2.7.1"]
+            ["dxvk-macos-1.10.3-20230507-repack"]
         default:
             []
         }
 
         for runtimeID in preferredIDs {
-            if let runtime = installedManagedRuntimes.first(where: { $0.id == runtimeID && $0.kind == kind }),
+            if let runtime = installedManagedRuntimes.first(where: {
+                $0.id == runtimeID && ($0.kind == kind || (kind == "dxvk" && $0.kind == "dxvk-macos"))
+            }),
                let path = runtime.path,
                fileManager.fileExists(atPath: path) {
                 return path
@@ -3261,7 +3259,7 @@ final class AppViewModel {
 
         let launchOverrides: String? = switch graphicsBackend {
         case .dxvk:
-            "d3d11=n;dxgi=n;d3d10core=n;d3d9=n"
+            "d3d11=n;d3d10core=n"
         case .dxmt:
             "dxgi=n,b;d3d11=n,b;d3d10core=n,b;winemetal=n,b"
         case .d3dmetal:
@@ -3273,7 +3271,7 @@ final class AppViewModel {
         let warnings = parseEnvironmentOverrides(environmentText)
             .filter { $0.uppercased().hasPrefix("WINEDLLOVERRIDES=") || $0.uppercased().hasPrefix("DXVK_") || $0.uppercased().hasPrefix("D3DMETAL_") || $0.uppercased().hasPrefix("MESA_") }
         let compatibilityWarnings: [String] = if graphicsBackend == .dxvk {
-            ["DXVK is not recommended on Apple Silicon with MoltenVK for this setup. If launch fails with no window, switch this game back to DXMT."]
+            ["DXVK-macOS is best for Vulkan-friendly D3D10/11 games. It intentionally does not replace DXGI or D3D9; use DXMT when a title behaves better with Metal translation."]
         } else {
             []
         }

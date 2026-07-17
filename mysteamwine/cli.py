@@ -18,6 +18,11 @@ from .dependencies import dependency_install_command, dependency_status
 from .doctor import apply_doctor_fixes, run_doctor, set_prefix_windows_version
 from .dxmt import install_dxmt
 from .dxvk import install_dxvk
+from .dxvk_macos import (
+    discover_moltenvk_source,
+    install_dxvk_macos_native_runtime,
+    verify_dxvk_macos_profile,
+)
 from .gptk import discover_gptk_installations, import_managed_gptk, prepare_sikarugir_native_dependencies
 from .library_activity import acquire_steam_activity, assert_direct_launch_safe, release_steam_activity
 from .profiles import bind_profile, list_profiles, mark_profile_ready
@@ -424,6 +429,9 @@ def cmd_setup_compatibility_profile(args: argparse.Namespace) -> None:
         "none": None,
     }[graphics_backend]
     graphics_source = Path(source_value) if source_value else None
+    moltenvk_source = Path(args.moltenvk_source) if args.moltenvk_source else None
+    if graphics_backend == "dxvk" and moltenvk_source is None:
+        moltenvk_source = discover_moltenvk_source()
     graphics_environment = (
         d3dmetal_launch_environment(graphics_source)
         if graphics_backend == "d3dmetal" and graphics_source is not None
@@ -451,14 +459,29 @@ def cmd_setup_compatibility_profile(args: argparse.Namespace) -> None:
             )
 
     try:
+        if graphics_backend == "dxvk":
+            free_bytes = shutil.disk_usage(bottle.root.parent).free
+            minimum_bytes = 4 * 1024**3
+            if free_bytes < minimum_bytes:
+                raise RuntimeError(
+                    f"DXVK-macOS setup needs at least 4 GiB free for its fresh bottle and Steam update; "
+                    f"only {free_bytes // (1024**2)} MiB is available."
+                )
+            steps.append({"name": "disk-space", "status": "ok"})
         bind_profile(
             bottle=bottle,
             profile_id=profile_id,
             graphics_backend=graphics_backend,
             wine_path=wine64,
             graphics_source=graphics_source,
+            moltenvk_source=moltenvk_source,
             require_ready=False,
         )
+        if graphics_backend == "dxvk":
+            manifest_path = bottle.root / "compatibility-profile.json"
+            bound_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            install_dxvk_macos_native_runtime(bottle, bound_manifest["dxvk_macos_stack"])
+            steps.append({"name": "install-native-runtime", "status": "ok"})
         if graphics_backend == "d3dmetal" and graphics_source is not None:
             native_dependency = prepare_sikarugir_native_dependencies(wine64, graphics_source)
             steps.append({"name": "verify-native-dependencies", "status": "ok"})
@@ -538,6 +561,22 @@ def cmd_setup_compatibility_profile(args: argparse.Namespace) -> None:
             if failed:
                 raise RuntimeError("D3DMetal verification failed: " + "; ".join(check["detail"] for check in failed))
             steps.append({"name": "verify-graphics", "status": "ok"})
+        elif graphics_backend == "dxvk":
+            run_step(
+                "install-graphics",
+                "Installing pinned DXVK-macOS DLLs...",
+                lambda: install_dxvk(
+                    bottle=bottle,
+                    dxvk_source=graphics_source,
+                    dxvk_flavor="macos",
+                    without_dxgi=True,
+                ),
+            )
+            verification = verify_dxvk_macos_profile(bottle)
+            failed = [check for check in verification if check["status"] != "ok"]
+            if failed:
+                raise RuntimeError("DXVK-macOS verification failed: " + "; ".join(check["detail"] for check in failed))
+            steps.append({"name": "verify-graphics", "status": "ok"})
         else:
             steps.append({"name": "install-graphics", "status": "ok"})
         if _stream_enabled(args):
@@ -552,6 +591,17 @@ def cmd_setup_compatibility_profile(args: argparse.Namespace) -> None:
                     bottle=bottle,
                     wine64_path=wine64,
                     graphics_source=graphics_source,
+                ),
+            )
+        elif graphics_backend == "dxvk":
+            run_step(
+                "verify-steam-stability",
+                "Updating Steam and verifying continuous DXVK-macOS stability...",
+                lambda: probe_steam_stability(
+                    bottle=bottle,
+                    wine64_path=wine64,
+                    graphics_source=graphics_source,
+                    graphics_backend="dxvk",
                 ),
             )
         manifest = mark_profile_ready(bottle)
@@ -2196,6 +2246,7 @@ def build_parser() -> argparse.ArgumentParser:
     profile_setup.add_argument("--profile", required=True, help="Profile id from list-compatibility-profiles")
     profile_setup.add_argument("--dxmt-source", help="Verified DXMT source directory")
     profile_setup.add_argument("--dxvk-source", help="Pinned DXVK-macOS bundle directory")
+    profile_setup.add_argument("--moltenvk-source", help="Compatible Sikarugir wrapper or moltenvkcx directory")
     profile_setup.add_argument("--d3dmetal-source", help="D3DMetal directory from the selected GPTK installation")
     profile_setup.add_argument("--winetricks", default="winetricks", help="Path to winetricks")
     profile_setup.add_argument("--interactive", action="store_true", help="Allow interactive Steam installation")

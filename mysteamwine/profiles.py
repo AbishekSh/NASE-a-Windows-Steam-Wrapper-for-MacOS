@@ -10,6 +10,7 @@ import time
 from .bottle import Bottle
 from .catalog import list_installed_runtimes
 from .gptk import inspect_gptk_installation
+from .dxvk_macos import inspect_dxvk_macos_stack
 
 
 @dataclass(frozen=True)
@@ -50,11 +51,7 @@ PROFILES: dict[str, CompatibilityProfile] = {
         bottle_suffix="DXVK-macOS",
         wine_requirement="Pinned supported Wine build with matching winevulkan",
         graphics_requirement="Pinned DXVK-macOS and MoltenVK bundle",
-        ready=False,
-        unavailable_reason=(
-            "The complete DXVK-macOS bundle is not pinned yet. Install a matched Wine, winevulkan, "
-            "MoltenVK, and DXVK-macOS stack before enabling this profile."
-        ),
+        ready=True,
     ),
     "plain-wine-v1": CompatibilityProfile(
         id="plain-wine-v1",
@@ -141,6 +138,7 @@ def bind_profile(
     graphics_backend: str,
     wine_path: Path,
     graphics_source: Path | None,
+    moltenvk_source: Path | None = None,
     require_ready: bool = True,
 ) -> dict:
     profile = profile_for(profile_id, graphics_backend)
@@ -159,6 +157,13 @@ def bind_profile(
         raise RuntimeError("D3DMetal requires the payload shipped with the selected Game Porting Toolkit installation.")
     if profile.id == "d3dmetal-gptk-v1":
         d3dmetal_inspection = inspect_gptk_installation(wine_path, graphics_source)
+    dxvk_inspection: dict | None = None
+    if profile.id == "dxvk-macos-pinned-v1":
+        if graphics_source is None or moltenvk_source is None:
+            raise RuntimeError("DXVK-macOS requires its pinned DXVK package and a compatible MoltenVK source.")
+        if _runtime_id_for_source(graphics_source) != "dxvk-macos-1.10.3-20230507-repack":
+            raise RuntimeError("DXVK-macOS requires the verified pinned package from Runtime Center.")
+        dxvk_inspection = inspect_dxvk_macos_stack(wine_path, graphics_source, moltenvk_source)
 
     fingerprint_source = Path(d3dmetal_inspection["payload_path"]) if d3dmetal_inspection else graphics_source
 
@@ -171,6 +176,8 @@ def bind_profile(
         "graphics_source_fingerprint": _source_fingerprint(fingerprint_source),
         "graphics_runtime_id": _runtime_id_for_source(graphics_source) if graphics_source else None,
         "gptk_installation_root": d3dmetal_inspection["installation_root"] if d3dmetal_inspection else None,
+        "dxvk_macos_stack": dxvk_inspection,
+        "moltenvk_source_fingerprint": _source_fingerprint(moltenvk_source) if moltenvk_source else None,
     }
     manifest_path = bottle.root / "compatibility-profile.json"
     if manifest_path.exists():
@@ -178,7 +185,7 @@ def bind_profile(
             existing = json.loads(manifest_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise RuntimeError(f"Compatibility manifest is damaged: {manifest_path}") from exc
-        comparable_keys = ("profile", "wine_path", "wine_version", "graphics_source_fingerprint")
+        comparable_keys = ("profile", "wine_path", "wine_version", "graphics_source_fingerprint", "moltenvk_source_fingerprint")
         if any(existing.get(key) != fingerprint.get(key) for key in comparable_keys):
             raise RuntimeError(
                 f"Bottle '{bottle.name}' is already bound to a different compatibility stack. "

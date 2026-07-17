@@ -11,6 +11,7 @@ from .runtime import find_wine_module_root, run_logged
 UPSTREAM_DXVK_DLL_OVERRIDES = ("d3d9", "d3d10core", "d3d11", "dxgi")
 MACOS_DXVK_DLL_OVERRIDES = ("d3d10core", "d3d11")
 BUILTIN_GRAPHICS_DLLS = ("d3d9", "d3d10core", "d3d11", "dxgi", "winemetal")
+FOREIGN_RENDERER_OVERRIDES = ("d3d9", "d3d10core", "d3d11", "d3d12", "dxgi", "winemetal", "atidxx64", "nvapi64", "nvngx")
 
 
 def _extract_archive(archive: Path, target_dir: Path) -> Path:
@@ -135,6 +136,12 @@ def _select_overrides(dxvk_flavor: str, without_dxgi: bool) -> tuple[str, ...]:
 
 
 def _enable_dxvk_overrides(bottle: Bottle, *, dxvk_flavor: str, without_dxgi: bool) -> None:
+    if dxvk_flavor == "macos":
+        _remove_user_reg_entries(
+            bottle.prefix / "user.reg",
+            r"Software\\Wine\\DllOverrides",
+            FOREIGN_RENDERER_OVERRIDES,
+        )
     overrides = {name: "native" for name in _select_overrides(dxvk_flavor, without_dxgi)}
     _upsert_user_reg_section(
         bottle.prefix / "user.reg",

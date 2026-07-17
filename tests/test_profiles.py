@@ -16,9 +16,9 @@ class CompatibilityProfileTests(unittest.TestCase):
         self.source = root / "dxmt"
         self.source.mkdir()
 
-    def test_dxvk_macos_stays_unavailable_without_complete_stack(self) -> None:
-        with self.assertRaisesRegex(RuntimeError, "complete DXVK-macOS bundle"):
-            profiles.profile_for("dxvk-macos-pinned-v1", "dxvk")
+    def test_dxvk_macos_profile_is_available_for_verified_setup(self) -> None:
+        profile = profiles.profile_for("dxvk-macos-pinned-v1", "dxvk")
+        self.assertTrue(profile.ready)
 
     def test_profile_manifest_rejects_runtime_drift(self) -> None:
         with (

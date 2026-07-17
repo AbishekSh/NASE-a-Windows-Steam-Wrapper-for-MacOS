@@ -320,7 +320,7 @@ struct BackendContext {
         return BackendContext(
             repoRoot: repoRoot,
             pythonCommand: pythonCommand,
-            winePath: graphicsBackend == .d3dmetal ? gptkWinePath : winePath,
+            winePath: (graphicsBackend == .d3dmetal || graphicsBackend == .dxvk) ? gptkWinePath : winePath,
             dxmtSource: dxmtSource,
             dxvkSource: dxvkSource,
             d3dMetalSource: d3dMetalSource,

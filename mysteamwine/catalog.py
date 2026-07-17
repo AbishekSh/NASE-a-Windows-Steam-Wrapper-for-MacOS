@@ -48,6 +48,22 @@ StepCallback = Callable[[str, str, str], None]
 
 CATALOG: tuple[RuntimeCatalogEntry, ...] = (
     RuntimeCatalogEntry(
+        id="dxvk-macos-1.10.3-20230507-repack",
+        name="DXVK-macOS Async",
+        version="1.10.3-20230507 repack",
+        kind="dxvk-macos",
+        source="Gcenx/DXVK-macOS",
+        download_url="https://github.com/Gcenx/DXVK-macOS/releases/download/v1.10.3-20230507-repack/dxvk-macOS-async-v1.10.3-20230507-repack.tar.gz",
+        sha256="acd1520ad105d8ef124a09c8e11a259a5dc8bdc565ad18e0e52693f9807b2477",
+        archive_type="tar.gz",
+        install_layout="dxvk-macos",
+        license="zlib",
+        notes=(
+            "Pinned macOS DXVK build for Sikarugir Wine 10 r6. The paired CodeWeavers MoltenVK 1.2.10 "
+            "library must be imported from a compatible Sikarugir wrapper and is checksum verified."
+        ),
+    ),
+    RuntimeCatalogEntry(
         id="wine-sikarugir-10.0-r6",
         name="Sikarugir Wine",
         version="10.0 revision 6",

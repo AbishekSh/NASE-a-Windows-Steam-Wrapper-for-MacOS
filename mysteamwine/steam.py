@@ -166,7 +166,10 @@ def _graphics_launch_env(
 ) -> dict[str, str]:
     env = {"WINEPREFIX": str(bottle.prefix), "WINEDEBUG": wine_debug}
     if graphics_backend == "dxvk":
-        env["WINEDLLOVERRIDES"] = "d3d11=n;dxgi=n;d3d10core=n;d3d9=n"
+        from .dxvk_macos import dxvk_macos_launch_environment
+
+        env["WINEDLLOVERRIDES"] = "d3d11=n;d3d10core=n"
+        env.update(dxvk_macos_launch_environment(bottle))
     elif graphics_backend == "dxmt":
         env["WINEDLLOVERRIDES"] = "dxgi=n,b;d3d11=n,b;d3d10core=n,b;winemetal=n,b"
     elif graphics_backend == "d3dmetal":
@@ -316,6 +319,7 @@ def probe_steam_stability(
     wine64_path: Path,
     graphics_source: Path,
     duration_seconds: int = 45,
+    graphics_backend: str = "d3dmetal",
 ) -> tuple[int, str]:
     dumps = steam_prefix_root(bottle) / "dumps"
     bootstrap_log = steam_prefix_root(bottle) / "logs" / "bootstrap_log.txt"
@@ -326,7 +330,7 @@ def probe_steam_stability(
         wine64_path=wine64_path,
         extra_args=["-silent"],
         wait=False,
-        graphics_backend="d3dmetal",
+        graphics_backend=graphics_backend,
         restart_existing=True,
         graphics_source=graphics_source,
     )
@@ -375,11 +379,11 @@ def probe_steam_stability(
     if not observed or consecutive_running_seconds < duration_seconds or not steam_is_running(str(bottle.prefix)):
         return 1, "Steam did not remain continuously running after its updater restarts."
 
-    environment = _graphics_launch_env(bottle, "-all", "d3dmetal", graphics_source)
+    environment = _graphics_launch_env(bottle, "-all", graphics_backend, graphics_source)
     shutdown_code, shutdown_tail = run_logged(
         cmd=[str(wine64_path), steam_windows_path(), "-shutdown"],
         env=environment,
-        log_file=bottle.logs / "04_d3dmetal_steam_probe.log",
+        log_file=bottle.logs / f"04_{graphics_backend}_steam_probe.log",
         timeout=15,
     )
     combined = "\n".join(

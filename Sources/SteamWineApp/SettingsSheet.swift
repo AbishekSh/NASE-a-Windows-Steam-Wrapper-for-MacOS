@@ -587,9 +587,9 @@ struct SettingsSheet: View {
                 let isReady = model.compatibilityProfileIsReady(profile)
                 let hasSharedLibraries = model.compatibilityProfileHasSharedLibraries(profile)
                 HStack(alignment: .top, spacing: 12) {
-                    Image(systemName: profile == .dxvk ? "exclamationmark.triangle.fill" : (isReady ? "checkmark.seal.fill" : "checkmark.shield"))
+                    Image(systemName: isReady ? "checkmark.seal.fill" : "checkmark.shield")
                         .frame(width: 24)
-                        .foregroundStyle(profile == .dxvk ? .orange : themeForeground)
+                        .foregroundStyle(themeForeground)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(profile.rawValue)
                             .font(.subheadline.weight(.semibold))
@@ -607,12 +607,10 @@ struct SettingsSheet: View {
                     }
                     Spacer()
                     if isReady {
-                        if profile == .d3dmetal {
-                            Button("Repair") {
-                                model.setupCompatibilityProfile(profile)
-                            }
-                            .disabled(model.isBusy)
+                        Button("Repair") {
+                            model.setupCompatibilityProfile(profile)
                         }
+                        .disabled(model.isBusy)
                         Button(hasSharedLibraries ? "Attached" : "Attach Libraries") {
                             model.attachSteamLibraries(to: profile)
                         }
@@ -631,10 +629,10 @@ struct SettingsSheet: View {
                             }
                             .disabled(model.isBusy)
                         }
-                        Button(profile == .dxvk ? "Unavailable" : "Set Up") {
+                        Button("Set Up") {
                             model.setupCompatibilityProfile(profile)
                         }
-                        .disabled(profile == .dxvk || model.isBusy)
+                        .disabled(model.isBusy)
                     }
                 }
                 .padding(12)

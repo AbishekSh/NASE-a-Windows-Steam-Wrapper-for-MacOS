@@ -521,17 +521,17 @@ struct SetupWizardSheet: View {
 
     private func downloadDXVK() async {
         isDownloadingDXMT = true
-        downloadStatusMessage = "Downloading DXVK 2.7.1..."
+        downloadStatusMessage = "Downloading pinned DXVK-macOS 1.10.3..."
         do {
             let cacheURL = appCacheURL().appendingPathComponent("downloads", isDirectory: true)
             try FileManager.default.createDirectory(at: cacheURL, withIntermediateDirectories: true)
-            let destinationURL = cacheURL.appendingPathComponent("dxvk-2.7.1.tar.gz")
-            let remoteURL = URL(string: "https://github.com/doitsujin/dxvk/releases/download/v2.7.1/dxvk-2.7.1.tar.gz")!
+            let destinationURL = cacheURL.appendingPathComponent("dxvk-macOS-async-v1.10.3-20230507-repack.tar.gz")
+            let remoteURL = URL(string: "https://github.com/Gcenx/DXVK-macOS/releases/download/v1.10.3-20230507-repack/dxvk-macOS-async-v1.10.3-20230507-repack.tar.gz")!
             let (temporaryURL, _) = try await URLSession.shared.download(from: remoteURL)
             _ = try? FileManager.default.removeItem(at: destinationURL)
             try FileManager.default.moveItem(at: temporaryURL, to: destinationURL)
             dxvkSource = destinationURL.path
-            downloadStatusMessage = "DXVK 2.7.1 downloaded to \(destinationURL.path)"
+            downloadStatusMessage = "Pinned DXVK-macOS downloaded to \(destinationURL.path). Runtime Center setup will verify its checksum and paired MoltenVK."
         } catch {
             downloadStatusMessage = "Could not download DXVK automatically. You can still point the wizard at a local archive or folder.\n\(error.localizedDescription)"
         }
