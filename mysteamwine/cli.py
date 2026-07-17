@@ -37,6 +37,7 @@ from .steam import (
     launch_app,
     probe_steam_stability,
     run_game_executable,
+    validate_executable_compatibility,
     run_steam,
     steam_windows_path,
 )
@@ -1639,6 +1640,13 @@ def cmd_launch_game(args: argparse.Namespace) -> None:
         executable_hint = guess_game_executable(app.install_dir)
     except (FileNotFoundError, RuntimeError):
         executable_hint = None
+    if executable_hint is not None:
+        try:
+            validate_executable_compatibility(
+                executable=executable_hint, wine_path=wine64, graphics_backend=graphics_backend
+            )
+        except RuntimeError as exc:
+            _json_error(args, action="launch-game", message=str(exc))
     steam_was_running = steam_is_running(str(bottle.prefix))
     _acquire_library_or_error(
         args,
@@ -1856,6 +1864,13 @@ def cmd_smart_launch_game(args: argparse.Namespace) -> None:
             executable_hint = guess_game_executable(app.install_dir)
         except (FileNotFoundError, RuntimeError):
             executable_hint = None
+        if executable_hint is not None:
+            try:
+                validate_executable_compatibility(
+                    executable=executable_hint, wine_path=wine64, graphics_backend=graphics_backend
+                )
+            except RuntimeError as exc:
+                _json_error(args, action="smart-launch-game", message=str(exc))
     launch_session = create_session(
         bottle=bottle,
         appid=args.appid,
@@ -2121,6 +2136,12 @@ def cmd_debug_game(args: argparse.Namespace) -> None:
                 raise SystemExit(code)
             _json_error(args, action="debug-game", message=f"D3DMetal restore failed (exit {code}). Tail:\n{tail}", code=code)
     debug_app = resolve_registered_app(bottle, args.appid)[0] if args.appid else None
+    try:
+        validate_executable_compatibility(
+            executable=executable, wine_path=wine64, graphics_backend=graphics_backend
+        )
+    except RuntimeError as exc:
+        _json_error(args, action="debug-game", message=str(exc))
     launch_session = create_session(
         bottle=bottle,
         appid=args.appid,

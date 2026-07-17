@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from .pe import executable_architecture
+
 
 @dataclass(frozen=True)
 class ScanSignal:
@@ -45,6 +47,16 @@ def scan_game_dir(root: Path, max_files: int = 4000) -> GameScan:
             continue
         scanned += 1
         name = path.name.lower()
+        if path.suffix.lower() == ".exe":
+            architecture = executable_architecture(path)
+            if architecture in {"x86", "x86_64"}:
+                signals.append(
+                    ScanSignal(
+                        key=f"executable-{architecture}",
+                        detail=f"{path.name} is a {architecture} Windows executable",
+                        path=path,
+                    )
+                )
         for key, markers in _FILE_RULES.items():
             if any(marker in name for marker in markers):
                 signals.append(ScanSignal(key=key, detail=path.name, path=path))

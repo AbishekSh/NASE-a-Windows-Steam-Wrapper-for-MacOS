@@ -121,6 +121,9 @@ struct GameSettingsSheet: View {
                     }
 
                     settingsSection("Rendering", subtitle: "Choose the graphics path this title should prefer.") {
+                        let detectedArchitecture = model.windowsExecutableArchitecture(
+                            atPath: launchExecutablePath.trimmingCharacters(in: .whitespacesAndNewlines)
+                        )
                         Picker("Graphics Backend", selection: $graphicsBackend) {
                             ForEach(GraphicsBackendOption.allCases) { backend in
                                 Text(backend.rawValue).tag(backend)
@@ -141,6 +144,16 @@ struct GameSettingsSheet: View {
                                     Text("Unavailable until the complete matched Vulkan stack is installed.")
                                         .font(.caption)
                                         .foregroundStyle(.orange)
+                                }
+                                if detectedArchitecture == "32-bit x86 (WoW64)" {
+                                    Text("32-bit application detected. Wine will use WoW64.")
+                                        .font(.caption)
+                                        .foregroundStyle(.green)
+                                    if graphicsBackend == .d3dmetal {
+                                        Text("D3DMetal is 64-bit only. Choose DXMT or None for this application.")
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundStyle(.orange)
+                                    }
                                 }
                             }
                         }

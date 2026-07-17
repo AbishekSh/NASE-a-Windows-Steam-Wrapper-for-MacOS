@@ -3345,6 +3345,11 @@ final class AppViewModel {
             rows.append(("Override Executable", settingsExecutable))
         }
 
+        let architecturePath = settingsExecutable.isEmpty ? game.launchURL?.path : settingsExecutable
+        if let architecturePath, let architecture = windowsExecutableArchitecture(atPath: architecturePath) {
+            rows.append(("Executable Architecture", architecture))
+        }
+
         let workingDirectory = settings.workingDirectoryPath.trimmingCharacters(in: .whitespacesAndNewlines)
         if !workingDirectory.isEmpty {
             rows.append(("Working Directory", workingDirectory))
@@ -3365,6 +3370,31 @@ final class AppViewModel {
         }
 
         return rows
+    }
+
+    func windowsExecutableArchitecture(atPath path: String) -> String? {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path), options: [.mappedIfSafe]), data.count >= 64 else {
+            return nil
+        }
+        guard data[0] == 0x4d, data[1] == 0x5a else { return nil }
+        let peOffset = Int(data[0x3c])
+            | (Int(data[0x3d]) << 8)
+            | (Int(data[0x3e]) << 16)
+            | (Int(data[0x3f]) << 24)
+        guard peOffset >= 0, peOffset + 6 <= data.count,
+              data[peOffset] == 0x50, data[peOffset + 1] == 0x45,
+              data[peOffset + 2] == 0, data[peOffset + 3] == 0 else {
+            return nil
+        }
+        let machine = UInt16(data[peOffset + 4]) | (UInt16(data[peOffset + 5]) << 8)
+        switch machine {
+        case 0x014c:
+            return "32-bit x86 (WoW64)"
+        case 0x8664:
+            return "64-bit x86-64"
+        default:
+            return "Unsupported or unknown PE architecture"
+        }
     }
 
     var selectedLogEntry: DisplayedLogEntry? {

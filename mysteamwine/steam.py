@@ -11,7 +11,8 @@ from typing import Any, Iterator
 
 from . import DEFAULT_STEAM_WINDOWS_PATH, STEAM_SETUP_URL
 from .bottle import Bottle, ensure_bottle_dirs
-from .runtime import download, run_logged, run_logged_detached
+from .runtime import download, run_logged, run_logged_detached, supports_wow64
+from .pe import executable_architecture
 from .d3dmetal import d3dmetal_launch_environment
 from .sessions import steam_is_running
 
@@ -491,11 +492,19 @@ def run_game_executable(
     if not exe_path.exists():
         raise FileNotFoundError(f"Game executable not found: {exe_path}")
 
+    architecture = validate_executable_compatibility(
+        executable=exe_path,
+        wine_path=wine64_path,
+        graphics_backend=graphics_backend,
+    )
+
     command = [str(wine64_path), str(exe_path)]
     if extra_args:
         command.extend(extra_args)
 
     env = _graphics_launch_env(bottle, wine_debug, graphics_backend, graphics_source)
+    if architecture == "x86":
+        env["NASE_EXECUTABLE_ARCH"] = "x86"
     if extra_env:
         env.update(extra_env)
 
@@ -518,6 +527,22 @@ def run_game_executable(
     )
     combined_tail = "\n".join(part for part in (tail, wait_tail) if part)
     return wait_code, combined_tail
+
+
+def validate_executable_compatibility(*, executable: Path, wine_path: Path, graphics_backend: str) -> str:
+    architecture = executable_architecture(executable)
+    if architecture == "x86":
+        if not supports_wow64(wine_path):
+            raise RuntimeError(
+                "This is a 32-bit Windows application, but the selected Wine runtime does not include WoW64 support. "
+                "Choose Wine Stable 11 or repair the selected managed Wine runtime."
+            )
+        if graphics_backend == "d3dmetal":
+            raise RuntimeError(
+                "This is a 32-bit Windows application. D3DMetal supports 64-bit Direct3D applications only; "
+                "choose DXMT or Plain Wine for this title."
+            )
+    return architecture
 
 
 def _tokenize_vdf(text: str) -> Iterator[str]:

@@ -300,6 +300,10 @@ Graphics backend defaults are intentionally split:
 
 Games may use DXMT, DXVK, D3DMetal, or no override depending on compatibility.
 
+### 32-bit Windows applications
+
+NASE detects PE32 executables and runs them through Wine's WoW64 support inside the same isolated 64-bit profile bottles. Wine Stable 11 and managed Wine engines are checked for both `i386-windows` and `x86_64-windows` modules before launch. DXMT and Plain Wine are the recommended choices for 32-bit titles. D3DMetal is limited to 64-bit Direct3D applications, so NASE blocks that unsafe combination with a friendly recommendation instead of attempting a broken launch. A bundled PE32 probe under `Tools/WoW64Probe` provides a repeatable live runtime test.
+
 ## Development Direction
 
 Near-term priorities:

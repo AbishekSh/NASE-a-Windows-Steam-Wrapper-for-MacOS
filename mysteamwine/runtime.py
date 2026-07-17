@@ -134,6 +134,15 @@ def find_wine_module_root(wine_path: Path) -> Path | None:
     return None
 
 
+def supports_wow64(wine_path: Path) -> bool:
+    module_root = find_wine_module_root(wine_path)
+    return bool(
+        module_root
+        and (module_root / "i386-windows" / "ntdll.dll").is_file()
+        and (module_root / "x86_64-windows" / "ntdll.dll").is_file()
+    )
+
+
 def run_logged(
     *,
     cmd: Iterable[str],

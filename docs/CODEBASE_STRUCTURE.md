@@ -119,6 +119,7 @@ Current Steam launch modes are:
 - `dxvk.py`: DXVK install from upstream or DXVK-macOS layouts.
 - `gptk.py`: bounded compatible-runtime discovery, explicit Wine/D3DMetal version pairing, and confirmed import into persistent NASE-managed runtime storage without flattening the renderer bundle.
 - `d3dmetal.py`: complete D3DMetal bundle inspection, mutually exclusive overrides, per-launch native search-path injection, and post-install profile verification.
+- `pe.py`: lightweight PE machine detection used to distinguish 32-bit x86 applications from 64-bit executables before launch.
 
 Graphics-specific modules own file-layout validation and registry override edits. D3DMetal keeps its `wine`, `external`, and framework directories intact; launch modules obtain the complete environment from `d3dmetal.py` and inject it for every Steam and direct-game process.
 
