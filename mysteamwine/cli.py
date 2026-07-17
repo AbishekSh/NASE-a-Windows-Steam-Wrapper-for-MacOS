@@ -26,7 +26,7 @@ from .dxvk_macos import (
 )
 from .gptk import discover_gptk_installations, import_managed_gptk, prepare_sikarugir_native_dependencies
 from .library_activity import acquire_steam_activity, assert_direct_launch_safe, release_steam_activity
-from .profiles import PROFILES, bind_profile, list_profiles, mark_profile_ready
+from .profiles import PROFILES, bind_profile, list_profiles, mark_profile_ready, migrate_imported_d3dmetal_profiles
 from .runtime import detect_wine_runtime, is_apple_silicon, resolve_executable, resolve_with_fallback, run_logged
 from .scanner import scan_game_dir
 from .sessions import create_session, mark_steam_opened_by_user, reconcile_sessions, steam_is_running, stop_session, update_session
@@ -338,10 +338,16 @@ def cmd_import_gptk(args: argparse.Namespace) -> None:
     except Exception as exc:
         _json_error(args, action=action, message=str(exc), code=1)
         return
+    migrated_profiles = migrate_imported_d3dmetal_profiles(
+        old_source=Path(args.d3dmetal_source),
+        new_source=Path(installed["d3dmetal_source"]),
+        bottles_root=app_support_root() / "bottles",
+    )
     data = {
         "gptk_wine_path": installed["wine_path"],
-        "d3dmetal_source": installed["installation_root"],
+        "d3dmetal_source": installed["d3dmetal_source"],
         "installation": installed,
+        "migrated_profiles": migrated_profiles,
     }
     message = f"Installed a managed Game Porting Toolkit runtime at {installed['installation_root']}."
     if _json_enabled(args) or _stream_enabled(args):

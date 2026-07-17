@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from mysteamwine.bottle import Bottle
@@ -111,6 +113,31 @@ class CompatibilityProfileTests(unittest.TestCase):
                 graphics_source=missing_source,
                 require_ready=False,
             )
+
+    def test_import_migration_ignores_profiles_without_graphics_source(self) -> None:
+        bottles_root = self.bottle.root / "bottles"
+        plain_manifest = bottles_root / "Plain" / "compatibility-profile.json"
+        plain_manifest.parent.mkdir(parents=True)
+        plain_manifest.write_text(json.dumps({"graphics_source": None, "profile": {"id": "plain-wine-v1"}}))
+        new_source = self.bottle.root / "managed-d3dmetal"
+        windows = new_source / "wine" / "x86_64-windows"
+        windows.mkdir(parents=True)
+
+        with (
+            patch.object(
+                profiles,
+                "inspect_d3dmetal_bundle",
+                return_value=SimpleNamespace(root=new_source, windows_dir=windows),
+            ),
+            patch.object(profiles, "_source_fingerprint", return_value="managed"),
+        ):
+            migrated = profiles.migrate_imported_d3dmetal_profiles(
+                old_source=self.bottle.root / "mounted",
+                new_source=new_source,
+                bottles_root=bottles_root,
+            )
+
+        self.assertEqual(migrated, 0)
 
 
 if __name__ == "__main__":

@@ -122,6 +122,7 @@ class GPTKTests(unittest.TestCase):
         self.assertTrue(installed["managed"])
         self.assertTrue(Path(installed["wine_path"]).is_file())
         self.assertTrue(Path(installed["payload_path"]).is_dir())
+        self.assertEqual(Path(installed["d3dmetal_source"]).name, "d3dmetal")
         self.assertTrue(str(Path(installed["installation_root"]).resolve()).startswith(str(managed_root.resolve())))
 
     def test_managed_wrapper_import_preserves_framework_dependencies(self) -> None:

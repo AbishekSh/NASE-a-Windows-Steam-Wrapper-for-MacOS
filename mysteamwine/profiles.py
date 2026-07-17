@@ -9,6 +9,7 @@ import time
 
 from .bottle import Bottle
 from .catalog import list_installed_runtimes
+from .d3dmetal import inspect_d3dmetal_bundle
 from .gptk import inspect_gptk_installation
 from .dxvk_macos import inspect_dxvk_macos_stack
 
@@ -206,6 +207,12 @@ def bind_profile(
                 f"Bottle '{bottle.name}' is already bound to a different compatibility stack. "
                 "Choose its original profile or create a new profile bottle."
             )
+        if profile.id == "d3dmetal-gptk-v1" and existing.get("graphics_source") != fingerprint.get("graphics_source"):
+            existing["graphics_source"] = fingerprint["graphics_source"]
+            existing["gptk_installation_root"] = fingerprint["gptk_installation_root"]
+            temporary = manifest_path.with_suffix(".tmp")
+            temporary.write_text(json.dumps(existing, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            temporary.replace(manifest_path)
         if require_ready and existing.get("setup_status") != "ready":
             raise RuntimeError(f"Profile bottle '{bottle.name}' needs profile setup before launching a game.")
         return existing
@@ -233,3 +240,31 @@ def mark_profile_ready(bottle: Bottle) -> dict:
     temporary.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     temporary.replace(manifest_path)
     return manifest
+
+
+def migrate_imported_d3dmetal_profiles(*, old_source: Path, new_source: Path, bottles_root: Path) -> int:
+    """Rebind profiles only after an explicit import copied their exact configured source."""
+    old_resolved = old_source.expanduser().resolve()
+    new_bundle = inspect_d3dmetal_bundle(new_source)
+    new_resolved = new_bundle.root.resolve()
+    new_fingerprint = _source_fingerprint(new_bundle.windows_dir)
+    migrated = 0
+    for manifest_path in bottles_root.glob("*/compatibility-profile.json"):
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+        configured_value = manifest.get("graphics_source")
+        if not isinstance(configured_value, str) or not configured_value:
+            continue
+        configured = Path(configured_value).expanduser().resolve()
+        if manifest.get("profile", {}).get("id") != "d3dmetal-gptk-v1" or configured != old_resolved:
+            continue
+        manifest["graphics_source"] = str(new_resolved)
+        manifest["graphics_source_fingerprint"] = new_fingerprint
+        manifest["gptk_installation_root"] = str(new_resolved.parent)
+        temporary = manifest_path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        temporary.replace(manifest_path)
+        migrated += 1
+    return migrated
