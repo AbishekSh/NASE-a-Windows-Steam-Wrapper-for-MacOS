@@ -229,6 +229,17 @@ def _resolved_graphics_backend(args: argparse.Namespace, *, for_steam: bool) -> 
     return args.graphics_backend
 
 
+def _acquire_library_or_error(args: argparse.Namespace, *, action: str, **activity) -> dict:
+    try:
+        return acquire_steam_activity(**activity)
+    except RuntimeError as exc:
+        message = (
+            f"{exc} Close Steam from NASE's current bottle, or use Kill Wine for that bottle if Steam will not exit, "
+            "then try again. NASE keeps shared game files locked to one Windows Steam instance during updates."
+        )
+        _json_error(args, action=action, message=message)
+
+
 def _bind_launch_profile(args: argparse.Namespace, *, action: str, bottle, wine_path: Path, graphics_backend: str) -> str:
     defaults = {
         "dxmt": "dxmt-wine-stable-11-v1",
@@ -744,7 +755,9 @@ def cmd_run_steam(args: argparse.Namespace) -> None:
             attached_here = any(str(reference.get("prefix") or "") == str(bottle.prefix) for reference in references)
             if not library.get("exists") or not library_id or not attached_here:
                 continue
-            acquire_steam_activity(
+            _acquire_library_or_error(
+                args,
+                action="run-steam",
                 library_id=library_id,
                 prefix=str(bottle.prefix),
                 bottle=bottle.name,
@@ -1627,7 +1640,9 @@ def cmd_launch_game(args: argparse.Namespace) -> None:
     except (FileNotFoundError, RuntimeError):
         executable_hint = None
     steam_was_running = steam_is_running(str(bottle.prefix))
-    acquire_steam_activity(
+    _acquire_library_or_error(
+        args,
+        action="launch-game",
         library_id=library_id,
         prefix=str(bottle.prefix),
         bottle=bottle.name,
@@ -1923,7 +1938,9 @@ def cmd_smart_launch_game(args: argparse.Namespace) -> None:
         direct_error = skip_direct_reason
 
     steam_was_running = steam_is_running(str(bottle.prefix))
-    acquire_steam_activity(
+    _acquire_library_or_error(
+        args,
+        action="smart-launch-game",
         library_id=library_id,
         prefix=str(bottle.prefix),
         bottle=bottle.name,
