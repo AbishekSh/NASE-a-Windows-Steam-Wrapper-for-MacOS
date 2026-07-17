@@ -100,6 +100,8 @@ def d3dmetal_launch_environment(source: Path) -> dict[str, str]:
             native_library_dirs.append(candidate)
             break
     return {
+        "WINEESYNC": "1",
+        "WINEMSYNC": "1",
         "WINEDLLPATH_PREPEND": str(bundle.wine_root),
         "CX_D3DMETALPATH": str(bundle.root),
         "CX_APPLEGPT_LIBD3DSHARED_PATH": str(bundle.shared_library),

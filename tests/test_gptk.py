@@ -58,6 +58,8 @@ class GPTKTests(unittest.TestCase):
         environment = d3dmetal_launch_environment(self.installation)
 
         self.assertEqual(environment["WINEDLLPATH_PREPEND"], str((self.installation / "lib" / "wine").resolve()))
+        self.assertEqual(environment["WINEESYNC"], "1")
+        self.assertEqual(environment["WINEMSYNC"], "1")
         self.assertEqual(environment["CX_D3DMETALPATH"], str(self.installation.resolve()))
         self.assertEqual(environment["CX_APPLEGPTK_LIBD3DSHARED_PATH"], str((self.installation / "external" / "libd3dshared.dylib").resolve()))
 
