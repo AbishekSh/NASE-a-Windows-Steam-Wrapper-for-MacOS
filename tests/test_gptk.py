@@ -18,7 +18,7 @@ class GPTKTests(unittest.TestCase):
         self.installation = self.root / "Game Porting Toolkit 2"
         self.wine = self.installation / "bin" / "wine"
         self.wine.parent.mkdir(parents=True)
-        self.wine.write_text("#!/bin/sh\necho 'wine-9.0 (SikarugirCX 24.0.7)'\n", encoding="utf-8")
+        self.wine.write_text("#!/bin/sh\necho 'wine-10.0 (Sikarugir)'\n", encoding="utf-8")
         self.wine.chmod(0o755)
         self.payload = self.installation / "lib" / "wine" / "x86_64-windows"
         self.payload.mkdir(parents=True)
@@ -36,7 +36,7 @@ class GPTKTests(unittest.TestCase):
     def test_inspection_pairs_wine_and_payload_from_one_installation(self) -> None:
         result = inspect_gptk_installation(self.wine, self.installation)
 
-        self.assertEqual(result["wine_version"], "wine-9.0 (SikarugirCX 24.0.7)")
+        self.assertEqual(result["wine_version"], "wine-10.0 (Sikarugir)")
         self.assertEqual(Path(result["payload_path"]), self.payload.resolve())
 
     def test_inspection_rejects_incomplete_payload(self) -> None:
@@ -117,7 +117,7 @@ class GPTKTests(unittest.TestCase):
         contents = self.root / "Wrapper.app" / "Contents"
         wrapper_wine = contents / "SharedSupport" / "wine" / "bin" / "wine"
         wrapper_wine.parent.mkdir(parents=True)
-        wrapper_wine.write_text("#!/bin/sh\necho 'wine-9.0 (SikarugirCX 24.0.7)'\n", encoding="utf-8")
+        wrapper_wine.write_text("#!/bin/sh\necho 'wine-10.0 (Sikarugir)'\n", encoding="utf-8")
         wrapper_wine.chmod(0o755)
         renderer = contents / "Frameworks" / "renderer" / "d3dmetal"
         shutil.copytree(self.installation / "lib" / "wine", renderer / "wine")
@@ -137,6 +137,35 @@ class GPTKTests(unittest.TestCase):
         self.assertTrue((managed_frameworks / "libinotify.0.dylib").is_file())
         fallback = d3dmetal_launch_environment(Path(installed["d3dmetal_source"]))["DYLD_FALLBACK_LIBRARY_PATH"]
         self.assertIn(str(managed_frameworks), fallback.split(":"))
+
+    def test_prepare_sikarugir_native_dependencies_copies_and_verifies_dependency(self) -> None:
+        contents = self.root / "Wrapper.app" / "Contents"
+        renderer = contents / "Frameworks" / "renderer" / "d3dmetal"
+        renderer.mkdir(parents=True)
+        dependency = contents / "Frameworks" / "libinotify.0.dylib"
+        dependency.write_bytes(b"paired native dependency")
+        freetype = contents / "Frameworks" / "libfreetype.6.dylib"
+        freetype.write_bytes(b"paired freetype dependency")
+        (contents / "Frameworks" / "libfreetype.dylib").symlink_to(freetype.name)
+        wine = self.root / "engine" / "bin" / "wine"
+        wineserver = wine.with_name("wineserver")
+        wine.parent.mkdir(parents=True)
+        wine.write_text("wine", encoding="utf-8")
+        wineserver.write_text("wineserver", encoding="utf-8")
+
+        with patch.object(gptk.subprocess, "run") as run:
+            run.return_value.returncode = 0
+            run.return_value.stdout = "@rpath/libinotify.0.dylib"
+            run.return_value.stderr = ""
+            installed = gptk.prepare_sikarugir_native_dependencies(wine, renderer)
+
+        destination = self.root / "engine" / "lib" / "libinotify.0.dylib"
+        self.assertEqual(destination.read_bytes(), dependency.read_bytes())
+        self.assertEqual(Path(installed["installed_path"]), destination.resolve())
+        self.assertEqual(installed["sha256"], gptk._sha256(dependency))
+        self.assertEqual(installed["verified_library_count"], 2)
+        self.assertEqual((destination.parent / "libfreetype.6.dylib").read_bytes(), freetype.read_bytes())
+        self.assertEqual((destination.parent / "libfreetype.dylib").readlink(), Path(freetype.name))
 
 
 if __name__ == "__main__":

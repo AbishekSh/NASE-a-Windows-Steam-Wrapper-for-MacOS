@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass
 import hashlib
 import json
 import shutil
+import subprocess
 import tarfile
 import time
 import urllib.request
@@ -46,6 +47,19 @@ StepCallback = Callable[[str, str, str], None]
 
 
 CATALOG: tuple[RuntimeCatalogEntry, ...] = (
+    RuntimeCatalogEntry(
+        id="wine-sikarugir-10.0-r6",
+        name="Sikarugir Wine",
+        version="10.0 revision 6",
+        kind="wine",
+        source="Sikarugir-App/Engines",
+        download_url="https://github.com/Sikarugir-App/Engines/releases/download/v1.0/WS12WineSikarugir10.0_6.tar.xz",
+        sha256="9da7ee0cbf386522f3a9906943726d9c3c125dbbd9ab120e3cde80e88d6091b2",
+        archive_type="tar.xz",
+        install_layout="sikarugir-wine",
+        license="LGPL-2.1",
+        notes="Pinned Wine engine for the D3DMetal profile. Requires the paired Sikarugir D3DMetal framework bundle.",
+    ),
     RuntimeCatalogEntry(
         id="dxvk-2.7.1",
         name="DXVK",
@@ -320,6 +334,15 @@ def install_runtime(
 
     notes: list[str] = []
     executable = _find_wine_executable(extracted) if entry.kind == "wine" else None
+    if entry.id == "wine-sikarugir-10.0-r6":
+        if executable is None or not (extracted / "bin" / "wineserver").is_file():
+            raise RuntimeError("Sikarugir Wine archive is missing bin/wine or bin/wineserver.")
+        result = subprocess.run([executable, "--version"], capture_output=True, text=True, timeout=10, check=False)
+        version = (result.stdout or result.stderr).strip()
+        if result.returncode != 0 or version != "wine-10.0 (Sikarugir)":
+            raise RuntimeError(f"Unexpected Sikarugir Wine engine version: {version or 'unknown'}")
+        if not (extracted / "lib" / "wine").is_dir() or not (extracted / "share" / "wine").is_dir():
+            raise RuntimeError("Sikarugir Wine archive is missing its lib/wine or share/wine runtime layout.")
     installed = _record_install(entry, extracted, executable)
 
     if install_into_bottle and entry.kind in {"dxvk", "dxmt"}:

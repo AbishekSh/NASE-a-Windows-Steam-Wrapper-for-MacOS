@@ -39,7 +39,7 @@ PROFILES: dict[str, CompatibilityProfile] = {
         name="D3DMetal (GPTK)",
         graphics_backend="d3dmetal",
         bottle_suffix="D3DMetal",
-        wine_requirement="wine-9.0 (SikarugirCX 24.0.7)",
+        wine_requirement="wine-10.0 (Sikarugir), revision 6",
         graphics_requirement="Complete D3DMetal bundle with Wine modules and native framework",
         ready=True,
     ),

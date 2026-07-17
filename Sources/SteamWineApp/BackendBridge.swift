@@ -293,9 +293,14 @@ struct BackendContext {
         )
     }
 
-    func overridingRuntimeSources(dxmtSource: String? = nil, dxvkSource: String? = nil) -> BackendContext {
+    func overridingRuntimeSources(
+        dxmtSource: String? = nil,
+        dxvkSource: String? = nil,
+        d3dMetalWinePath: String? = nil
+    ) -> BackendContext {
         let cleanedDXMT = (dxmtSource ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanedDXVK = (dxvkSource ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanedD3DMetalWine = (d3dMetalWinePath ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         return BackendContext(
             repoRoot: repoRoot,
             pythonCommand: pythonCommand,
@@ -303,7 +308,7 @@ struct BackendContext {
             dxmtSource: cleanedDXMT.isEmpty ? self.dxmtSource : cleanedDXMT,
             dxvkSource: cleanedDXVK.isEmpty ? self.dxvkSource : cleanedDXVK,
             d3dMetalSource: d3dMetalSource,
-            gptkWinePath: gptkWinePath,
+            gptkWinePath: cleanedD3DMetalWine.isEmpty ? gptkWinePath : cleanedD3DMetalWine,
             bottleName: bottleName,
             externalPrefix: externalPrefix
         )

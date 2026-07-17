@@ -2887,7 +2887,8 @@ final class AppViewModel {
         let baseContext = context ?? backendContext
         return baseContext.overridingRuntimeSources(
             dxmtSource: managedRuntimeSource(kind: "dxmt"),
-            dxvkSource: managedRuntimeSource(kind: "dxvk")
+            dxvkSource: managedRuntimeSource(kind: "dxvk"),
+            d3dMetalWinePath: managedRuntimeExecutable(id: "wine-sikarugir-10.0-r6")
         )
     }
 
@@ -2895,13 +2896,16 @@ final class AppViewModel {
     private func applyManagedRuntimeSourceDefaults() -> Bool {
         let managedDXMT = managedRuntimeSource(kind: "dxmt")
         let managedDXVK = managedRuntimeSource(kind: "dxvk")
+        let managedD3DMetalWine = managedRuntimeExecutable(id: "wine-sikarugir-10.0-r6")
         let nextContext = backendContext.overridingRuntimeSources(
             dxmtSource: managedDXMT,
-            dxvkSource: managedDXVK
+            dxvkSource: managedDXVK,
+            d3dMetalWinePath: managedD3DMetalWine
         )
 
         guard nextContext.dxmtSource != backendContext.dxmtSource
-            || nextContext.dxvkSource != backendContext.dxvkSource else {
+            || nextContext.dxvkSource != backendContext.dxvkSource
+            || nextContext.gptkWinePath != backendContext.gptkWinePath else {
             return false
         }
 
@@ -2914,6 +2918,9 @@ final class AppViewModel {
         }
         if let managedDXVK, managedDXVK == backendContext.dxvkSource {
             changes.append("DXVK: \(managedDXVK)")
+        }
+        if let managedD3DMetalWine, managedD3DMetalWine == backendContext.gptkWinePath {
+            changes.append("D3DMetal Wine: \(managedD3DMetalWine)")
         }
         if changes.isEmpty == false {
             appendLog("Runtime Center defaults updated.\n\(changes.joined(separator: "\n"))")
@@ -2961,6 +2968,16 @@ final class AppViewModel {
             return path
         }
 
+        return nil
+    }
+
+    private func managedRuntimeExecutable(id: String) -> String? {
+        let fileManager = FileManager.default
+        if let runtime = installedManagedRuntimes.first(where: { $0.id == id }),
+           let executable = runtime.executable,
+           fileManager.isExecutableFile(atPath: executable) {
+            return executable
+        }
         return nil
     }
 

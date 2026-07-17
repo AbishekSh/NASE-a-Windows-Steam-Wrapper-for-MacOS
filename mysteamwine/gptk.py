@@ -11,7 +11,8 @@ from .d3dmetal import inspect_d3dmetal_bundle
 from .bottle import app_support_root
 
 
-SUPPORTED_D3DMETAL_WINE_VERSIONS = ("wine-9.0 (SikarugirCX 24.0.7)",)
+SUPPORTED_D3DMETAL_WINE_VERSIONS = ("wine-10.0 (Sikarugir)",)
+SIKARUGIR_NATIVE_DEPENDENCY = "libinotify.0.dylib"
 
 
 def _candidate_roots() -> list[Path]:
@@ -59,6 +60,75 @@ def _shared_wrapper_contents(wine_path: Path, renderer_root: Path) -> Path | Non
     if wine_contents is not None and wine_contents == renderer_contents:
         return wine_contents
     return None
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def prepare_sikarugir_native_dependencies(wine_path: Path, d3dmetal_source: Path) -> dict[str, Any]:
+    """Make the pinned Sikarugir engine self-contained before any Wine process starts."""
+    wine = wine_path.expanduser().resolve(strict=False)
+    wine_root = wine.parent.parent
+    wineserver = wine_root / "bin" / "wineserver"
+    if not wineserver.is_file():
+        raise RuntimeError(f"Sikarugir Wine is missing wineserver: {wineserver}")
+
+    result = subprocess.run(["otool", "-L", str(wineserver)], capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        raise RuntimeError(f"Could not inspect Sikarugir Wine native dependencies: {(result.stderr or '').strip()}")
+    if SIKARUGIR_NATIVE_DEPENDENCY not in result.stdout:
+        raise RuntimeError(
+            f"The selected Sikarugir wineserver does not declare {SIKARUGIR_NATIVE_DEPENDENCY}; "
+            "the engine does not match the supported Wine 10 revision 6 build."
+        )
+
+    source = d3dmetal_source.expanduser().resolve(strict=False)
+    frameworks = next((parent for parent in (source, *source.parents) if parent.name == "Frameworks"), None)
+    dependency_source = frameworks / SIKARUGIR_NATIVE_DEPENDENCY if frameworks else None
+    if dependency_source is None or not dependency_source.is_file():
+        raise RuntimeError(
+            f"The paired D3DMetal bundle is missing {SIKARUGIR_NATIVE_DEPENDENCY}. "
+            "Select the complete Sikarugir wrapper runtime, not only its renderer directory."
+        )
+
+    dependency_dir = wine_root / "lib"
+    dependency_dir.mkdir(parents=True, exist_ok=True)
+    verified: dict[str, str] = {}
+    for native_source in sorted(frameworks.glob("*.dylib")):
+        native_destination = dependency_dir / native_source.name
+        if native_source.is_symlink():
+            link_target = os.readlink(native_source)
+            if native_destination.is_symlink() and os.readlink(native_destination) == link_target:
+                continue
+            native_destination.unlink(missing_ok=True)
+            native_destination.symlink_to(link_target)
+            continue
+        source_checksum = _sha256(native_source)
+        if not native_destination.is_file() or native_destination.is_symlink() or _sha256(native_destination) != source_checksum:
+            native_destination.unlink(missing_ok=True)
+            shutil.copy2(native_source, native_destination)
+        installed_checksum = _sha256(native_destination)
+        if installed_checksum != source_checksum:
+            raise RuntimeError(f"Checksum verification failed while installing {native_source.name}.")
+        verified[native_source.name] = installed_checksum
+
+    dependency_destination = dependency_dir / SIKARUGIR_NATIVE_DEPENDENCY
+    installed_checksum = verified.get(SIKARUGIR_NATIVE_DEPENDENCY)
+    if installed_checksum is None or not dependency_destination.is_file():
+        raise RuntimeError(f"Failed to install required native dependency {SIKARUGIR_NATIVE_DEPENDENCY}.")
+
+    return {
+        "dependency": SIKARUGIR_NATIVE_DEPENDENCY,
+        "source": str(dependency_source),
+        "installed_path": str(dependency_destination),
+        "sha256": installed_checksum,
+        "verified_library_count": len(verified),
+    }
 
 
 def inspect_gptk_installation(wine_path: Path, d3dmetal_source: Path) -> dict[str, Any]:

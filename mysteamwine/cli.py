@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 import textwrap
 import time
@@ -17,7 +18,7 @@ from .dependencies import dependency_install_command, dependency_status
 from .doctor import apply_doctor_fixes, run_doctor, set_prefix_windows_version
 from .dxmt import install_dxmt
 from .dxvk import install_dxvk
-from .gptk import discover_gptk_installations, import_managed_gptk
+from .gptk import discover_gptk_installations, import_managed_gptk, prepare_sikarugir_native_dependencies
 from .library_activity import acquire_steam_activity, assert_direct_launch_safe, release_steam_activity
 from .profiles import bind_profile, list_profiles, mark_profile_ready
 from .runtime import detect_wine_runtime, is_apple_silicon, resolve_executable, resolve_with_fallback, run_logged
@@ -28,6 +29,7 @@ from .steam import (
     install_steam,
     kill_wine_processes,
     launch_app,
+    probe_steam_stability,
     run_game_executable,
     run_steam,
     steam_windows_path,
@@ -236,6 +238,14 @@ def _bind_launch_profile(args: argparse.Namespace, *, action: str, bottle, wine_
         "none": None,
     }[graphics_backend]
     try:
+        if graphics_backend == "d3dmetal":
+            free_bytes = shutil.disk_usage(bottle.root.parent).free
+            if free_bytes < 2 * 1024**3:
+                free_mib = free_bytes // (1024 * 1024)
+                raise RuntimeError(
+                    f"D3DMetal setup needs at least 2 GiB of free disk space for Wine, Steam updates, and temporary files; "
+                    f"only {free_mib} MiB is available. Free some space, then retry Set Up."
+                )
         bind_profile(
             bottle=bottle,
             profile_id=profile_id,
@@ -449,23 +459,51 @@ def cmd_setup_compatibility_profile(args: argparse.Namespace) -> None:
             graphics_source=graphics_source,
             require_ready=False,
         )
+        if graphics_backend == "d3dmetal" and graphics_source is not None:
+            native_dependency = prepare_sikarugir_native_dependencies(wine64, graphics_source)
+            steps.append({"name": "verify-native-dependencies", "status": "ok"})
+            if _stream_enabled(args):
+                _stream_progress(
+                    action=action,
+                    job_id=job_id or uuid.uuid4().hex,
+                    name="verify-native-dependencies",
+                    status="ok",
+                    message=(
+                        f"Verified {native_dependency['verified_library_count']} native libraries, including "
+                        f"{native_dependency['dependency']} ({native_dependency['sha256'][:12]}...)."
+                    ),
+                    completed_steps=len(steps),
+                    total_steps=6,
+                )
         ensure_bottle_dirs(bottle)
-        run_step(
-            "wineboot",
-            "Initializing the dedicated bottle...",
-            lambda: run_logged(
-                cmd=[str(wine64), "wineboot", "-u"],
-                env={"WINEPREFIX": str(bottle.prefix), "WINEDEBUG": "-all", **graphics_environment},
-                log_file=bottle.logs / "01_profile_wineboot.log",
-                timeout=120,
-            ),
-        )
-        run_step(
-            "set-win10",
-            "Setting Windows 10 compatibility...",
-            lambda: set_prefix_windows_version(bottle, wine64, "win10", extra_env=graphics_environment),
-        )
         steam_exe = bottle.drive_c / "Program Files (x86)" / "Steam" / "Steam.exe"
+        initialized_prefix = (bottle.prefix / "system.reg").is_file() and steam_exe.is_file()
+        if initialized_prefix:
+            # A Wine update pass can launch Steam through its registry startup entry
+            # and then wait forever for the client to exit. Profile setup retries only
+            # need to resume graphics/library verification once Steam is installed.
+            steps.extend(
+                [
+                    {"name": "wineboot", "status": "ok"},
+                    {"name": "set-win10", "status": "ok"},
+                ]
+            )
+        else:
+            run_step(
+                "wineboot",
+                "Initializing the dedicated bottle...",
+                lambda: run_logged(
+                    cmd=[str(wine64), "wineboot", "-u"],
+                    env={"WINEPREFIX": str(bottle.prefix), "WINEDEBUG": "-all", **graphics_environment},
+                    log_file=bottle.logs / "01_profile_wineboot.log",
+                    timeout=120,
+                ),
+            )
+            run_step(
+                "set-win10",
+                "Setting Windows 10 compatibility...",
+                lambda: set_prefix_windows_version(bottle, wine64, "win10", extra_env=graphics_environment),
+            )
         if steam_exe.exists():
             steps.append({"name": "install-steam", "status": "ok"})
         else:
@@ -480,6 +518,7 @@ def cmd_setup_compatibility_profile(args: argparse.Namespace) -> None:
                     log_name="02_profile_steam.log",
                     unattended=not args.interactive,
                     extra_env=graphics_environment,
+                    wine_path=wine64,
                 ),
             )
         if graphics_backend == "dxmt":
@@ -505,6 +544,16 @@ def cmd_setup_compatibility_profile(args: argparse.Namespace) -> None:
             _stream_step(action=action, job_id=job_id or uuid.uuid4().hex, name="attach-libraries", status="started", message="Attaching existing Steam libraries...")
         attachment = attach_registered_libraries(bottle, refresh_registry(bottle))
         steps.append({"name": "attach-libraries", "status": "ok"})
+        if graphics_backend == "d3dmetal":
+            run_step(
+                "verify-steam-stability",
+                "Verifying Steam stability with the pinned D3DMetal engine...",
+                lambda: probe_steam_stability(
+                    bottle=bottle,
+                    wine64_path=wine64,
+                    graphics_source=graphics_source,
+                ),
+            )
         manifest = mark_profile_ready(bottle)
     except Exception as exc:
         message = str(exc)

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import shutil
 import signal
 import subprocess
 import time
@@ -12,6 +13,7 @@ from . import DEFAULT_STEAM_WINDOWS_PATH, STEAM_SETUP_URL
 from .bottle import Bottle, ensure_bottle_dirs
 from .runtime import download, run_logged, run_logged_detached
 from .d3dmetal import d3dmetal_launch_environment
+from .sessions import steam_is_running
 
 
 @dataclass(frozen=True)
@@ -306,6 +308,84 @@ def run_steam(
     )
     combined_tail = "\n".join(part for part in (tail, wait_tail) if part)
     return wait_code, combined_tail
+
+
+def probe_steam_stability(
+    *,
+    bottle: Bottle,
+    wine64_path: Path,
+    graphics_source: Path,
+    duration_seconds: int = 45,
+) -> tuple[int, str]:
+    dumps = steam_prefix_root(bottle) / "dumps"
+    bootstrap_log = steam_prefix_root(bottle) / "logs" / "bootstrap_log.txt"
+    bootstrap_offset = bootstrap_log.stat().st_size if bootstrap_log.is_file() else 0
+    existing_asserts = set(dumps.glob("assert_steam.exe_*.dmp")) if dumps.is_dir() else set()
+    code, tail = run_steam(
+        bottle=bottle,
+        wine64_path=wine64_path,
+        extra_args=["-silent"],
+        wait=False,
+        graphics_backend="d3dmetal",
+        restart_existing=True,
+        graphics_source=graphics_source,
+    )
+    if code != 0:
+        return code, tail
+
+    # Steam may exit and relaunch several times while replacing its bootstrapper
+    # and switching from the legacy 32-bit updater to the current 64-bit client.
+    # Require one continuous stable window, but tolerate those updater gaps.
+    deadline = time.monotonic() + duration_seconds + 180
+    observed = False
+    consecutive_running_seconds = 0
+    while time.monotonic() < deadline:
+        if steam_is_running(str(bottle.prefix)):
+            observed = True
+            consecutive_running_seconds += 1
+            if consecutive_running_seconds >= duration_seconds:
+                break
+        else:
+            consecutive_running_seconds = 0
+        time.sleep(1)
+
+    new_asserts = set(dumps.glob("assert_steam.exe_*.dmp")) - existing_asserts if dumps.is_dir() else set()
+    if new_asserts:
+        names = ", ".join(sorted(path.name for path in new_asserts))
+        return 1, f"Steam generated a crash/assert dump during verification: {names}"
+    if bootstrap_log.is_file():
+        with bootstrap_log.open("r", encoding="utf-8", errors="replace") as handle:
+            handle.seek(bootstrap_offset)
+            new_bootstrap_log = handle.read()
+        fatal_markers = (
+            "Error: Saving package",
+            "Error: Steam needs to be online to update",
+            "Fatal Error",
+        )
+        matched = next((marker for marker in fatal_markers if marker in new_bootstrap_log), None)
+        if matched:
+            free_bytes = shutil.disk_usage(bootstrap_log).free
+            free_mib = free_bytes // (1024 * 1024)
+            disk_hint = (
+                f" Only {free_mib} MiB is free; make at least 2 GiB available and retry setup."
+                if free_bytes < 2 * 1024**3
+                else ""
+            )
+            return 1, f"Steam updater failed during verification ({matched}).{disk_hint}"
+    if not observed or consecutive_running_seconds < duration_seconds or not steam_is_running(str(bottle.prefix)):
+        return 1, "Steam did not remain continuously running after its updater restarts."
+
+    environment = _graphics_launch_env(bottle, "-all", "d3dmetal", graphics_source)
+    shutdown_code, shutdown_tail = run_logged(
+        cmd=[str(wine64_path), steam_windows_path(), "-shutdown"],
+        env=environment,
+        log_file=bottle.logs / "04_d3dmetal_steam_probe.log",
+        timeout=15,
+    )
+    combined = "\n".join(
+        part for part in (tail, shutdown_tail, "Steam remained stable for the full probe window.") if part
+    )
+    return (0 if shutdown_code in (0, 124) else shutdown_code), combined
 
 
 def kill_wine_processes(

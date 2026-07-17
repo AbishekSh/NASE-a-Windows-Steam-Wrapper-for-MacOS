@@ -203,8 +203,11 @@ def run_logged(
             if timeout is not None:
                 try:
                     os.killpg(proc.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    proc.kill()
+                except (ProcessLookupError, PermissionError):
+                    try:
+                        proc.kill()
+                    except ProcessLookupError:
+                        pass
             else:
                 proc.kill()
             try:
