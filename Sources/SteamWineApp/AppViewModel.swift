@@ -2342,6 +2342,14 @@ final class AppViewModel {
                         launchURL: installURL
                     )
                 }
+                let hasActiveEpicOperation = activeBackendJobs.contains {
+                    $0.status == .started && $0.action.localizedCaseInsensitiveContains("Epic")
+                }
+                if !hasActiveEpicOperation {
+                    for game in epicGames where launchStatusByPinID[game.pinID]?.phase == .launching {
+                        launchStatusByPinID.removeValue(forKey: game.pinID)
+                    }
+                }
                 selectedGame = epicGames.first
                 appendLog(response.output)
                 rightPanelMessage = "Loaded \(epicGames.count) Epic Games title(s)."
