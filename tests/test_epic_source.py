@@ -85,6 +85,21 @@ class EpicSourceTests(unittest.TestCase):
                 source.authenticate(authorization_code="super-secret-code")
             self.assertNotIn("super-secret-code", str(raised.exception))
 
+    def test_zero_exit_without_credentials_is_not_reported_as_connected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            client = root / "legendary"
+            client.write_text("", encoding="utf-8")
+            client.chmod(0o755)
+
+            def runner(command, environment, timeout):
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            with patch("mysteamwine.sources.epic.app_support_root", return_value=root / "support"):
+                source = EpicSource(str(client), runner=runner)
+                with self.assertRaisesRegex(RuntimeError, "did not accept"):
+                    source.authenticate(authorization_code="unused-code")
+
     def test_auth_accepts_complete_epic_json_response(self) -> None:
         commands: list[list[str]] = []
         with tempfile.TemporaryDirectory() as temporary:

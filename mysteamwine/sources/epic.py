@@ -144,7 +144,12 @@ class EpicSource:
         if not code or any(character.isspace() for character in code):
             raise ValueError("Paste the authorization code from Epic without spaces.")
         self._run(["auth", "--code", code, "--disable-webview"], timeout=120)
-        return self.status()
+        status = self.status()
+        if not status.authenticated:
+            raise RuntimeError(
+                "Epic did not accept that authorization code. Open Epic Login again and paste a fresh authorizationCode or the complete JSON response."
+            )
+        return status
 
     def sign_out(self) -> SourceStatus:
         self._run(["auth", "--delete"], timeout=30)

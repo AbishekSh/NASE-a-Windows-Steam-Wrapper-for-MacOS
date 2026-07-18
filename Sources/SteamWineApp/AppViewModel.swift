@@ -154,6 +154,7 @@ final class AppViewModel {
     private(set) var discoveredSteamGames: [LibraryGame] = []
     private(set) var epicGames: [LibraryGame] = []
     private(set) var epicSourceStatus: BackendSourceStatus?
+    private(set) var epicSetupMessage: String = "Checking Epic setup…"
     private(set) var nativeApps: [LibraryGame] = []
     private(set) var wineApps: [LibraryGame] = []
     private(set) var pinnedGameIDs: [String] = []
@@ -502,8 +503,10 @@ final class AppViewModel {
             do {
                 let response = try await BackendBridge.execute(.sourceStatus(source: "epic"), context: backendContext)
                 epicSourceStatus = response.sourceStatus
+                epicSetupMessage = response.sourceStatus?.message ?? "Epic status is unavailable."
             } catch {
                 rightPanelMessage = error.localizedDescription
+                epicSetupMessage = error.localizedDescription
             }
         }
     }
@@ -516,6 +519,7 @@ final class AppViewModel {
         }
         let action = BackendAction.installRuntime(id: runtime.id)
         executeDetached(action, successMessage: "Legendary installed. Continue with Epic sign-in.", context: backendContext)
+        epicSetupMessage = "Installing and verifying Legendary…"
         Task {
             try? await Task.sleep(for: .seconds(2))
             refreshRuntimeCenter()
@@ -529,16 +533,19 @@ final class AppViewModel {
             rightPanelMessage = "Paste the authorization code from Epic first."
             return
         }
+        epicSetupMessage = "Connecting to Epic Games…"
         Task {
             do {
                 let response = try await BackendBridge.executeStreaming(.epicAuthenticate(code: cleaned), context: backendContext) { _ in }
                 epicSourceStatus = response.sourceStatus
                 appendLog(response.output)
                 rightPanelMessage = "Epic Games account connected."
+                epicSetupMessage = "Epic Games account connected."
                 refreshEpicLibrary(forceRefresh: true)
             } catch {
                 appendLog("Epic sign-in failed:\n\(error.localizedDescription)")
                 rightPanelMessage = error.localizedDescription
+                epicSetupMessage = error.localizedDescription
                 refreshEpicSourceStatus()
             }
         }
@@ -552,8 +559,10 @@ final class AppViewModel {
                 epicGames = []
                 appendLog(response.output)
                 rightPanelMessage = "Epic Games account signed out."
+                epicSetupMessage = "Epic Games account signed out."
             } catch {
                 rightPanelMessage = error.localizedDescription
+                epicSetupMessage = error.localizedDescription
             }
         }
     }

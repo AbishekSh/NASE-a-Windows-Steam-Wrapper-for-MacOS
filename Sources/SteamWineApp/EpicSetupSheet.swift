@@ -75,9 +75,10 @@ struct EpicSetupSheet: View {
                 .padding(8)
             }
 
-            Text(model.epicSourceStatus?.message ?? "Checking Epic setup…")
+            Text(model.epicSetupMessage)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(model.epicSetupMessage.localizedCaseInsensitiveContains("failed") || model.epicSetupMessage.localizedCaseInsensitiveContains("error") ? .red : .secondary)
+                .textSelection(.enabled)
 
             Spacer()
         }

@@ -335,21 +335,21 @@ def _install_legendary_venv(archive: Path, entry: RuntimeCatalogEntry, callback:
     destination = runtime_root() / entry.kind / entry.id
     executable = destination / "bin" / "legendary"
     if executable.is_file() and executable.stat().st_mode & 0o111:
-        return destination, str(executable)
+        check = subprocess.run([str(executable), "--version"], capture_output=True, text=True, check=False, timeout=30)
+        if check.returncode == 0 and "0.20.34" in (check.stdout or check.stderr):
+            return destination, str(executable)
+        shutil.rmtree(destination)
     python = next(
         (path for name in ("python3.13", "python3.12", "python3.11", "python3.10") if (path := shutil.which(name))),
         None,
     )
     if not python:
         raise RuntimeError("Legendary requires Homebrew Python 3.10–3.13. Install Python from NASE setup, then retry.")
-    temporary = destination.with_name(destination.name + ".tmp")
-    if temporary.exists():
-        shutil.rmtree(temporary)
-    temporary.parent.mkdir(parents=True, exist_ok=True)
+    destination.parent.mkdir(parents=True, exist_ok=True)
     if callback:
         callback("extract", "started", "Creating a native managed Legendary environment...")
-    subprocess.run([python, "-m", "venv", str(temporary)], check=True, capture_output=True, text=True, timeout=120)
-    pip = temporary / "bin" / "pip"
+    subprocess.run([python, "-m", "venv", str(destination)], check=True, capture_output=True, text=True, timeout=120)
+    pip = destination / "bin" / "pip"
     result = subprocess.run(
         [str(pip), "install", "--disable-pip-version-check", str(archive)],
         capture_output=True,
@@ -357,17 +357,16 @@ def _install_legendary_venv(archive: Path, entry: RuntimeCatalogEntry, callback:
         check=False,
         timeout=600,
     )
-    candidate = temporary / "bin" / "legendary"
+    candidate = destination / "bin" / "legendary"
     if result.returncode != 0 or not candidate.is_file():
-        shutil.rmtree(temporary, ignore_errors=True)
+        shutil.rmtree(destination, ignore_errors=True)
         tail = (result.stderr or result.stdout).strip().splitlines()
         raise RuntimeError(f"Managed Legendary installation failed: {tail[-1] if tail else 'unknown error'}")
     version = subprocess.run([str(candidate), "--version"], capture_output=True, text=True, check=False, timeout=30)
     version_text = (version.stdout or version.stderr).strip()
     if version.returncode != 0 or "0.20.34" not in version_text:
-        shutil.rmtree(temporary, ignore_errors=True)
+        shutil.rmtree(destination, ignore_errors=True)
         raise RuntimeError(f"Unexpected Legendary version: {version_text or 'unknown'}")
-    temporary.rename(destination)
     if callback:
         callback("extract", "ok", "Created the native managed Legendary environment.")
     return destination, str(executable)
