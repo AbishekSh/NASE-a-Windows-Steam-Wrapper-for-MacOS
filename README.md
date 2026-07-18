@@ -14,7 +14,7 @@ The SwiftUI app is the product. The Python backend remains the implementation en
 
 Epic Games source work has started through an isolated Legendary provider adapter; GOG remains planned.
 
-Epic setup now downloads a checksum-pinned Legendary 0.20.34 standalone macOS client from its official release, verifies the archive before extraction, and keeps its credentials under NASE app support. The setup sheet opens Legendary's official Epic login flow and sends the short-lived authorization response to Python over standard input so it never appears in process arguments, previews, or job logs. Epic games can be installed into a shared host library, updated, verified, repaired, uninstalled with confirmation, and launched through the selected NASE compatibility profile while game files remain outside its bottle.
+Epic setup now downloads the checksum-pinned Legendary 0.20.34 wheel from PyPI, installs it into a native managed Python environment, verifies its version, and keeps its credentials under NASE app support. This avoids the legacy x86 standalone's multiprocessing failure on current Apple Silicon macOS. The setup sheet opens Legendary's official Epic login flow and sends the short-lived authorization response to Python over standard input so it never appears in process arguments, previews, or job logs. Epic games can be installed into a shared host library, updated, verified, repaired, uninstalled with confirmation, and launched through the selected NASE compatibility profile while game files remain outside its bottle.
 
 ## Open The App
 

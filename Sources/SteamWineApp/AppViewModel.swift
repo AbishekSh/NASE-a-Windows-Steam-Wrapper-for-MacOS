@@ -509,7 +509,7 @@ final class AppViewModel {
     }
 
     func installLegendary() {
-        guard let runtime = runtimeCatalog.first(where: { $0.id == "legendary-0.20.34-macos" }) else {
+        guard let runtime = runtimeCatalog.first(where: { $0.id == "legendary-python-0.20.34-macos" }) else {
             refreshRuntimeCenter()
             rightPanelMessage = "Loading the Legendary runtime…"
             return

@@ -48,17 +48,17 @@ StepCallback = Callable[[str, str, str], None]
 
 CATALOG: tuple[RuntimeCatalogEntry, ...] = (
     RuntimeCatalogEntry(
-        id="legendary-0.20.34-macos",
+        id="legendary-python-0.20.34-macos",
         name="Legendary Epic Client",
         version="0.20.34",
         kind="source-client",
         source="legendary-gl/legendary",
-        download_url="https://github.com/legendary-gl/legendary/releases/download/0.20.34/legendary_macOS.zip",
-        sha256="875e5977697d1fe1bc49ae5fe4a38d904bf62b01eead42f21538c68dc5e0409c",
-        archive_type="zip",
-        install_layout="legendary-macos",
+        download_url="https://files.pythonhosted.org/packages/2d/bb/f392f3b114410c7cd411500af424867d1cdacb347d12e8696758372de8c3/legendary_gl-0.20.34-py3-none-any.whl",
+        sha256="14f56c337f705346a4bfe27a14e56d60eecbe6508cc0a580ef18d1e44813136c",
+        archive_type="wheel",
+        install_layout="legendary-python-venv",
         license="GPL-3.0",
-        notes="Pinned standalone macOS client used for Epic authentication, library management, downloads, repair, and launch metadata.",
+        notes="Pinned Legendary wheel installed into a native managed Python environment for Epic authentication, downloads, repair, and launch metadata.",
     ),
     RuntimeCatalogEntry(
         id="dxvk-macos-1.10.3-20230507-repack",
@@ -331,6 +331,48 @@ def _find_wine_executable(root: Path) -> str | None:
     return None
 
 
+def _install_legendary_venv(archive: Path, entry: RuntimeCatalogEntry, callback: StepCallback | None) -> tuple[Path, str]:
+    destination = runtime_root() / entry.kind / entry.id
+    executable = destination / "bin" / "legendary"
+    if executable.is_file() and executable.stat().st_mode & 0o111:
+        return destination, str(executable)
+    python = next(
+        (path for name in ("python3.13", "python3.12", "python3.11", "python3.10") if (path := shutil.which(name))),
+        None,
+    )
+    if not python:
+        raise RuntimeError("Legendary requires Homebrew Python 3.10–3.13. Install Python from NASE setup, then retry.")
+    temporary = destination.with_name(destination.name + ".tmp")
+    if temporary.exists():
+        shutil.rmtree(temporary)
+    temporary.parent.mkdir(parents=True, exist_ok=True)
+    if callback:
+        callback("extract", "started", "Creating a native managed Legendary environment...")
+    subprocess.run([python, "-m", "venv", str(temporary)], check=True, capture_output=True, text=True, timeout=120)
+    pip = temporary / "bin" / "pip"
+    result = subprocess.run(
+        [str(pip), "install", "--disable-pip-version-check", str(archive)],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=600,
+    )
+    candidate = temporary / "bin" / "legendary"
+    if result.returncode != 0 or not candidate.is_file():
+        shutil.rmtree(temporary, ignore_errors=True)
+        tail = (result.stderr or result.stdout).strip().splitlines()
+        raise RuntimeError(f"Managed Legendary installation failed: {tail[-1] if tail else 'unknown error'}")
+    version = subprocess.run([str(candidate), "--version"], capture_output=True, text=True, check=False, timeout=30)
+    version_text = (version.stdout or version.stderr).strip()
+    if version.returncode != 0 or "0.20.34" not in version_text:
+        shutil.rmtree(temporary, ignore_errors=True)
+        raise RuntimeError(f"Unexpected Legendary version: {version_text or 'unknown'}")
+    temporary.rename(destination)
+    if callback:
+        callback("extract", "ok", "Created the native managed Legendary environment.")
+    return destination, str(executable)
+
+
 def _record_install(entry: RuntimeCatalogEntry, path: Path, executable: str | None) -> InstalledRuntime:
     runtimes = [runtime for runtime in list_installed_runtimes() if runtime.id != entry.id]
     installed = InstalledRuntime(
@@ -359,20 +401,13 @@ def install_runtime(
     entry = _catalog_entry(runtime_id)
     archive = _download(entry, callback)
     _verify(archive, entry.sha256, callback)
-    extracted = _extract(archive, entry, callback)
+    if entry.install_layout == "legendary-python-venv":
+        extracted, executable = _install_legendary_venv(archive, entry, callback)
+    else:
+        extracted = _extract(archive, entry, callback)
+        executable = _find_wine_executable(extracted) if entry.kind == "wine" else None
 
     notes: list[str] = []
-    executable = _find_wine_executable(extracted) if entry.kind == "wine" else None
-    if entry.install_layout == "legendary-macos":
-        legendary = extracted / "legendary"
-        if not legendary.is_file():
-            raise RuntimeError("Legendary archive is missing its macOS executable.")
-        legendary.chmod(0o700)
-        result = subprocess.run([str(legendary), "--version"], capture_output=True, text=True, timeout=15, check=False)
-        version = (result.stdout or result.stderr).strip()
-        if result.returncode != 0 or "0.20.34" not in version:
-            raise RuntimeError(f"Unexpected Legendary version: {version or 'unknown'}")
-        executable = str(legendary)
     if entry.id == "wine-sikarugir-10.0-r6":
         if executable is None or not (extracted / "bin" / "wineserver").is_file():
             raise RuntimeError("Sikarugir Wine archive is missing bin/wine or bin/wineserver.")

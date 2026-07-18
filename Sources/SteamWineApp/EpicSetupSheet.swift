@@ -8,7 +8,7 @@ struct EpicSetupSheet: View {
     @State private var showLogoutConfirmation = false
 
     private var legendaryRuntime: ManagedRuntime? {
-        model.runtimeCatalog.first { $0.id == "legendary-0.20.34-macos" }
+        model.runtimeCatalog.first { $0.id == "legendary-python-0.20.34-macos" }
     }
 
     var body: some View {

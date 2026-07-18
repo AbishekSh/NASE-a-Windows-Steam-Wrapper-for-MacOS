@@ -49,7 +49,7 @@ class EpicSource:
         resolved = shutil.which(self.requested_client)
         if resolved:
             return resolved
-        managed = app_support_root() / "runtimes" / "source-client" / "legendary-0.20.34-macos" / "legendary"
+        managed = app_support_root() / "runtimes" / "source-client" / "legendary-python-0.20.34-macos" / "bin" / "legendary"
         if managed.is_file() and os.access(managed, os.X_OK):
             return str(managed)
         return None
@@ -106,7 +106,7 @@ class EpicSource:
                 version=None,
                 message="Legendary is not installed yet. Complete Epic setup to enable this source.",
             )
-        version_text = "0.20.34" if "legendary-0.20.34-macos" in client else None
+        version_text = "0.20.34" if "legendary-python-0.20.34-macos" in client else None
         credentials = self.config_root / "legendary" / "user.json"
         if not credentials.is_file() or credentials.stat().st_size == 0:
             return SourceStatus(self.id, True, False, client, version_text, "Sign in to Epic Games to load your library.")
