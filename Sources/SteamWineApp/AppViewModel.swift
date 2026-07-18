@@ -3123,7 +3123,11 @@ final class AppViewModel {
         appendLog("== Action ==\n\(preview)")
         rightPanelMessage = "Launching..."
         if let game {
-            setLaunchStatus(.launching, for: game, message: "Sending launch request...")
+            if case .sourceGameAction(_, let operation, _) = action {
+                setLaunchStatus(.launching, for: game, message: "Epic \(operation) in progress…")
+            } else {
+                setLaunchStatus(.launching, for: game, message: "Sending launch request...")
+            }
         }
         let activeJobID = beginBackendJob(for: action)
 
@@ -3176,7 +3180,12 @@ final class AppViewModel {
                         self.refreshDependencyStatus()
                     }
                     if let game {
-                        if response.sessions.isEmpty {
+                        if case .sourceGameAction = action {
+                            self.clearLaunchStatus(for: game)
+                            self.refreshEpicLibrary(forceRefresh: false)
+                        } else if case .launchSourceGame = action {
+                            self.setLaunchStatus(.running, for: game, message: "Epic launch request completed.")
+                        } else if response.sessions.isEmpty {
                             self.setLaunchStatus(.launching, for: game, message: "Waiting for the game process...")
                         } else {
                             self.applyLaunchSessions(response.sessions)
