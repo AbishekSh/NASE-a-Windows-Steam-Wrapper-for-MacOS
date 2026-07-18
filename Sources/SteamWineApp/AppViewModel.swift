@@ -119,6 +119,11 @@ final class AppViewModel {
     var isShowingGameDetails: Bool = false
     var isShowingLogViewer: Bool = false
     var isShowingWinetricks: Bool = false
+    var isShowingSetupWizard: Bool = false
+    var isCheckingForUpdates: Bool = false
+    var isDownloadingUpdate: Bool = false
+    var updateStatusMessage: String = "Updates have not been checked yet."
+    var availableUpdate: NASEUpdateManifest?
     var backendContext: BackendContext = .default()
     var hasAttemptedSteamDetection: Bool = false
     var sortOption: LibrarySortOption = .manual
@@ -208,6 +213,9 @@ final class AppViewModel {
             }
         }
         refreshBackendJobs()
+        if !UserDefaults.standard.bool(forKey: "onboarding.hasSeenSetupWizard") {
+            isShowingSetupWizard = true
+        }
     }
 
     var operationCards: [OperationCard] {
@@ -457,7 +465,57 @@ final class AppViewModel {
         isShowingSettings = true
     }
 
-    func closeSetupWizard() {}
+    func openSetupWizard() {
+        isShowingSetupWizard = true
+    }
+
+    func closeSetupWizard() {
+        UserDefaults.standard.set(true, forKey: "onboarding.hasSeenSetupWizard")
+        isShowingSetupWizard = false
+    }
+
+    func checkForUpdates() {
+        guard !isCheckingForUpdates else { return }
+        isCheckingForUpdates = true
+        updateStatusMessage = "Checking for updates…"
+        Task {
+            do {
+                let manifest = try await NASEUpdateService.check()
+                await MainActor.run {
+                    self.availableUpdate = NASEUpdateService.isNewer(manifest) ? manifest : nil
+                    self.updateStatusMessage = self.availableUpdate == nil
+                        ? "NASE is up to date."
+                        : "NASE \(manifest.version) is available."
+                    self.isCheckingForUpdates = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.updateStatusMessage = error.localizedDescription
+                    self.isCheckingForUpdates = false
+                }
+            }
+        }
+    }
+
+    func downloadAvailableUpdate() {
+        guard let availableUpdate, !isDownloadingUpdate else { return }
+        isDownloadingUpdate = true
+        updateStatusMessage = "Downloading and verifying NASE \(availableUpdate.version)…"
+        Task {
+            do {
+                let destination = try await NASEUpdateService.downloadAndOpen(availableUpdate)
+                await MainActor.run {
+                    self.updateStatusMessage = "Verified update opened from \(destination.lastPathComponent)."
+                    self.isDownloadingUpdate = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.updateStatusMessage = error.localizedDescription
+                    self.isDownloadingUpdate = false
+                }
+            }
+        }
+    }
 
     func openWinetricks() {
         isShowingWinetricks = true
@@ -1512,7 +1570,7 @@ final class AppViewModel {
         let context = effectiveBackendContext(backendContext.compatibilityContext(for: profile))
         executeDetached(
             .repairCompatibilityProfile(profile),
-            successMessage: "(profile.rawValue) profile was repaired and verified.",
+            successMessage: "\(profile.rawValue) profile was repaired and verified.",
             context: context
         )
     }

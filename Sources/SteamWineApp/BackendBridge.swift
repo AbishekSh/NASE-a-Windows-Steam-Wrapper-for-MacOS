@@ -204,10 +204,18 @@ struct BackendContext {
     static func `default`() -> BackendContext {
         let defaults = UserDefaults.standard
         let sourceURL = URL(fileURLWithPath: #filePath)
-        let repoRoot = sourceURL
+        let sourceRepoRoot = sourceURL
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
+        let bundledBackend = Bundle.main.resourceURL?.appendingPathComponent("Backend", isDirectory: true)
+        let repoRoot: URL
+        if let bundledBackend,
+           FileManager.default.fileExists(atPath: bundledBackend.appendingPathComponent("mysteamwine.py").path) {
+            repoRoot = bundledBackend
+        } else {
+            repoRoot = sourceRepoRoot
+        }
 
         return BackendContext(
             repoRoot: repoRoot,

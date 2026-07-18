@@ -3,6 +3,8 @@
 
 .build/
 .swiftpm/
+dist/
+release/private/
 .vscode/
 
 AGENTS.md

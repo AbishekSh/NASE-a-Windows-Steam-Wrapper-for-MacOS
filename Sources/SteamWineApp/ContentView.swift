@@ -33,6 +33,10 @@ struct ContentView: View {
         .sheet(isPresented: $model.isShowingWinetricks) {
             WinetricksSheet(model: model)
         }
+        .sheet(isPresented: $model.isShowingSetupWizard) {
+            SetupWizardSheet(model: model)
+                .interactiveDismissDisabled()
+        }
     }
 
     private var sidebar: some View {

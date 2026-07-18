@@ -30,6 +30,8 @@ struct SettingsSheet: View {
                 VStack(alignment: .leading, spacing: 18) {
                     settingsHeader
 
+                    settingsReleasePanel
+
                     settingsTargetPanel
 
                     settingsDependencyPanel
@@ -184,6 +186,34 @@ struct SettingsSheet: View {
                     .lineLimit(2)
             }
             Spacer()
+            Button("Setup Wizard") {
+                dismiss()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { model.openSetupWizard() }
+            }
+        }
+    }
+
+    private var settingsReleasePanel: some View {
+        settingsSection("App Updates") {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(model.updateStatusMessage)
+                    .font(.subheadline)
+                    .foregroundStyle(themeMutedForeground)
+                HStack(spacing: 10) {
+                    Button("Check for Updates") { model.checkForUpdates() }
+                        .disabled(model.isCheckingForUpdates || model.isDownloadingUpdate)
+                    if model.availableUpdate != nil {
+                        Button(model.isDownloadingUpdate ? "Downloading…" : "Download Verified Update") {
+                            model.downloadAvailableUpdate()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(model.isDownloadingUpdate)
+                    }
+                    if model.isCheckingForUpdates || model.isDownloadingUpdate {
+                        ProgressView().controlSize(.small)
+                    }
+                }
+            }
         }
     }
 

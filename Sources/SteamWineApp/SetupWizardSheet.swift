@@ -14,6 +14,7 @@ struct SetupWizardSheet: View {
     @State private var bottleName: String = ""
     @State private var downloadStatusMessage: String = ""
     @State private var isDownloadingDXMT: Bool = false
+    @State private var showRecommendedBootstrapConfirmation: Bool = false
 
     private let orderedSteps = SetupWizardStep.allCases
 
@@ -106,10 +107,19 @@ struct SetupWizardSheet: View {
         }
         .frame(width: 980, height: 720)
         .task {
+            model.refreshDependencyStatus()
             winePath = model.backendContext.winePath
             dxmtSource = model.backendContext.dxmtSource
             dxvkSource = model.backendContext.dxvkSource
             bottleName = model.backendContext.bottleName
+        }
+        .alert("Install Recommended Environment?", isPresented: $showRecommendedBootstrapConfirmation) {
+            Button("Cancel", role: .cancel) {}
+            Button("Accept and Continue") {
+                model.startRecommendedBootstrap(confirmRosettaLicense: true)
+            }
+        } message: {
+            Text("NASE will install missing required dependencies. On Apple Silicon this confirms Apple's Rosetta license, then installs Python, Wine Stable, Winetricks, and the verified DXMT runtime as needed before preparing the recommended profile.")
         }
     }
 
@@ -124,6 +134,13 @@ struct SetupWizardSheet: View {
                     setupBullet("Pick the DXMT payload we use for the managed Metal path.")
                     setupBullet("Create a managed bottle under ~/Library/Application Support/MySteamWine.")
                     setupBullet("Install Steam into that bottle and prepare it for launch.")
+                    Button {
+                        showRecommendedBootstrapConfirmation = true
+                    } label: {
+                        Label("Install Recommended Environment", systemImage: "wand.and.stars")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(model.isBusy)
                     Text("DXVK remains available later as a per-game compatibility choice. The guided setup flow is centered on the managed DXMT/Metal path we have been validating.")
                         .foregroundStyle(themeMutedForeground)
                 }
@@ -379,11 +396,20 @@ struct SetupWizardSheet: View {
             VStack(alignment: .leading, spacing: 10) {
                 checklistRow(title: "Wine", detail: model.detectedWinePathStatus(winePath))
                 checklistRow(title: "Winetricks", detail: model.detectedWinetricksStatus())
+                checklistRow(title: "Python", detail: dependencyDetail(named: "Python"))
+                checklistRow(title: "Rosetta", detail: dependencyDetail(named: "Rosetta 2"))
                 checklistRow(title: "DXMT", detail: firstMeaningfulDXMTStatus)
                 checklistRow(title: "Bottle", detail: bottleName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "FAIL: Bottle name is empty" : "OK: Bottle name is set to \(bottleName)")
                 checklistRow(title: "Steam Setup", detail: model.latestSetupResult == nil ? "PENDING: Run the setup step to install Steam into the managed bottle" : finishSubtitle)
             }
         }
+    }
+
+    private func dependencyDetail(named name: String) -> String {
+        guard let check = model.latestDependencyResult?.checks.first(where: { $0.name == name }) else {
+            return "PENDING: Checking \(name)…"
+        }
+        return "\(check.status.uppercased()): \(check.detail)"
     }
 
     private var firstMeaningfulDXMTStatus: String {

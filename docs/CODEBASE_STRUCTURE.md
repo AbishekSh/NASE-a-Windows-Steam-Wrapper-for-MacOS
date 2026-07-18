@@ -70,6 +70,8 @@ The bridge should remain the only place that knows the exact CLI argument shape.
 
 - `SettingsSheet.swift`: backend paths, bottle/prefix selection, Runtime Center, runtime status, job history, doctor/setup summaries.
 - `SetupWizardSheet.swift`: guided first-run setup.
+- `UpdateService.swift`: signed update-manifest verification, version checks,
+  streamed DMG download, checksum validation, and user-confirmed installation.
 - `WinetricksSheet.swift`: Winetricks UI.
 - `GameSheets.swift`: game details, settings, logs, metadata, and per-game controls.
 
@@ -131,6 +133,17 @@ Treat each graphics choice as a runtime profile, not only a DLL selection. DXMT 
 - `doctor.py`: environment and prefix checks plus safe repairs.
 - `jobs.py`: atomic durable job records, interrupted-job reconciliation, and
   verified backend-process cancellation.
+
+### Packaged application layout
+
+`scripts/build-app.sh` turns the SwiftPM executable into `NASE.app`. The release
+bundle embeds the Python backend and probe tools at
+`Contents/Resources/Backend`; `BackendContext.default()` prefers that location
+and falls back to the repository only for development builds.
+
+Signing/notarization assets live under `release/`, release automation under
+`scripts/`, and the complete credential, update-feed, and clean-machine process
+is documented in `docs/RELEASING.md`.
 - `sessions.py`: persistent launch-session registry, real process reconciliation, targeted per-game termination, and ownership-aware Steam cleanup. Session records already carry a compatibility-profile id so runtime fingerprints can be added without replacing the lifecycle contract.
 - `profiles.py`: compatibility-profile definitions and immutable per-bottle runtime/source fingerprints. A profile binds Wine, the graphics stack, and a dedicated bottle as one launch unit.
   - `setup-compatibility-profile` performs the observable setup workflow and only marks the profile manifest ready after Wine, Steam, and renderer setup succeed.

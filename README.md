@@ -136,6 +136,9 @@ New profile setup performs this attachment automatically after Steam and the ren
 
 ## Architecture
 
+Release packaging, Developer ID signing, notarization, signed updates, and the
+clean-machine release gate are documented in [docs/RELEASING.md](docs/RELEASING.md).
+
 High-level split:
 
 - `Sources/SteamWineApp/`: SwiftUI product, app state, views, settings, game library, and backend bridge.
