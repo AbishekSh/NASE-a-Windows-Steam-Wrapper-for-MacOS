@@ -106,13 +106,17 @@ class EpicSource:
                 version=None,
                 message="Legendary is not installed yet. Complete Epic setup to enable this source.",
             )
-        version_result = self.runner([client, "--version"], self._environment(), 15)
-        version = (version_result.stdout or version_result.stderr).strip().splitlines()
-        version_text = version[-1] if version else None
+        version_text = "0.20.34" if "legendary-0.20.34-macos" in client else None
+        credentials = self.config_root / "legendary" / "user.json"
+        if not credentials.is_file() or credentials.stat().st_size == 0:
+            return SourceStatus(self.id, True, False, client, version_text, "Sign in to Epic Games to load your library.")
         try:
+            local_payload = self._json_output(self._run(["status", "--offline", "--json"], timeout=30))
+            if not _authenticated_from_status(local_payload):
+                return SourceStatus(self.id, True, False, client, version_text, "Sign in to Epic Games to load your library.")
             payload = self._json_output(self._run(["status", "--json"], timeout=45))
             authenticated = _authenticated_from_status(payload)
-            message = "Epic account is connected." if authenticated else "Sign in to Epic Games to load your library."
+            message = "Epic account is connected." if authenticated else "Epic sign-in has expired. Connect your account again."
         except RuntimeError:
             authenticated = False
             message = "Epic sign-in is required or has expired."
@@ -201,8 +205,10 @@ def _game_id(value: str) -> str:
 def _authenticated_from_status(payload: Any) -> bool:
     if not isinstance(payload, dict):
         return False
+    rejected_values = {"<not logged in>", "not logged in", "none", "null", "unknown"}
     for key in ("account", "account_id", "display_name", "username"):
-        if payload.get(key):
+        value = payload.get(key)
+        if value and str(value).strip().casefold() not in rejected_values:
             return True
     user = payload.get("user")
     return isinstance(user, dict) and bool(user)

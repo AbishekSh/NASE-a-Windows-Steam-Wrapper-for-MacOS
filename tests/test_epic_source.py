@@ -8,10 +8,15 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from mysteamwine.sources.epic import EpicSource, normalize_epic_games
+from mysteamwine.sources.epic import EpicSource, _authenticated_from_status, normalize_epic_games
 
 
 class EpicSourceTests(unittest.TestCase):
+    def test_legendary_logged_out_placeholder_is_not_authenticated(self) -> None:
+        self.assertFalse(_authenticated_from_status({"account": "<not logged in>", "games_available": 0}))
+        self.assertFalse(_authenticated_from_status({"account": "not logged in"}))
+        self.assertTrue(_authenticated_from_status({"account": "real-user"}))
+
     def test_normalizes_owned_and_installed_games(self) -> None:
         owned = [
             {"app_name": "Anemone", "app_title": "World of Goo"},
@@ -28,7 +33,9 @@ class EpicSourceTests(unittest.TestCase):
         self.assertEqual(world.version, "1.2")
 
     def test_missing_client_has_friendly_status(self) -> None:
-        with patch("mysteamwine.sources.epic.shutil.which", return_value=None):
+        with tempfile.TemporaryDirectory() as temporary, \
+             patch("mysteamwine.sources.epic.shutil.which", return_value=None), \
+             patch("mysteamwine.sources.epic.app_support_root", return_value=Path(temporary)):
             status = EpicSource("missing-legendary").status()
         self.assertFalse(status.available)
         self.assertFalse(status.authenticated)
@@ -81,19 +88,25 @@ class EpicSourceTests(unittest.TestCase):
     def test_auth_accepts_complete_epic_json_response(self) -> None:
         commands: list[list[str]] = []
         with tempfile.TemporaryDirectory() as temporary:
-            client = Path(temporary) / "legendary"
+            root = Path(temporary)
+            client = root / "legendary"
             client.write_text("", encoding="utf-8")
             client.chmod(0o755)
+            source = EpicSource(str(client), runner=lambda command, environment, timeout: subprocess.CompletedProcess(command, 0, "", ""))
 
             def runner(command, environment, timeout):
                 commands.append(command)
+                if command[1] == "auth":
+                    credentials = source.config_root / "legendary" / "user.json"
+                    credentials.parent.mkdir(parents=True, exist_ok=True)
+                    credentials.write_text('{"refresh_token":"test"}', encoding="utf-8")
                 if command[1] == "status":
                     return subprocess.CompletedProcess(command, 0, '{"account_id":"123"}', "")
                 return subprocess.CompletedProcess(command, 0, "", "")
 
-            status = EpicSource(str(client), runner=runner).authenticate(
-                authorization_code='{"authorizationCode": "short-code"}'
-            )
+            with patch("mysteamwine.sources.epic.app_support_root", return_value=root / "support"):
+                source = EpicSource(str(client), runner=runner)
+                status = source.authenticate(authorization_code='{"authorizationCode": "short-code"}')
         self.assertTrue(status.authenticated)
         self.assertIn("short-code", commands[0])
 
