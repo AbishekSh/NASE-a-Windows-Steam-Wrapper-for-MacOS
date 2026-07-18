@@ -46,9 +46,9 @@ enum RunnerKind: String, CaseIterable, Identifiable {
 
     var isAvailable: Bool {
         switch self {
-        case .home, .mac, .steam, .wine:
+        case .home, .mac, .steam, .wine, .epic:
             true
-        case .epic, .gog:
+        case .gog:
             false
         }
     }
@@ -64,7 +64,7 @@ enum RunnerKind: String, CaseIterable, Identifiable {
         case .wine:
             "Prefixes, runtime health, Metal stack"
         case .epic:
-            "Planned"
+            "Epic library via Legendary"
         case .gog:
             "Planned"
         }

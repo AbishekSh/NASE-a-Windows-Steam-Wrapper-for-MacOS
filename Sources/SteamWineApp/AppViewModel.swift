@@ -78,8 +78,8 @@ enum BackendDebugSection: String, CaseIterable, Identifiable {
 @Observable
 final class AppViewModel {
     let sidebarSections: [SidebarSection] = [
-        SidebarSection(id: "libraries", title: "Libraries", runners: [.home, .mac, .steam, .wine]),
-        SidebarSection(id: "coming-soon", title: "Coming Soon", runners: [.epic, .gog]),
+        SidebarSection(id: "libraries", title: "Libraries", runners: [.home, .mac, .steam, .wine, .epic]),
+        SidebarSection(id: "coming-soon", title: "Coming Soon", runners: [.gog]),
     ]
 
     var selectedRunner: RunnerKind? = .home
@@ -151,6 +151,8 @@ final class AppViewModel {
     private(set) var installedManagedRuntimes: [ManagedRuntime] = []
     private(set) var steamIdentityStatus: SteamIdentityStatus?
     private(set) var discoveredSteamGames: [LibraryGame] = []
+    private(set) var epicGames: [LibraryGame] = []
+    private(set) var epicSourceStatus: BackendSourceStatus?
     private(set) var nativeApps: [LibraryGame] = []
     private(set) var wineApps: [LibraryGame] = []
     private(set) var pinnedGameIDs: [String] = []
@@ -467,8 +469,11 @@ final class AppViewModel {
             }
         case .wine:
             rightPanelMessage = "Add Windows executables or folders here and launch them through Wine."
-        case .epic, .gog:
-            rightPanelMessage = "These are placeholders for the future multi-store layout."
+        case .epic:
+            rightPanelMessage = "Checking Epic Games support…"
+            refreshEpicLibrary(forceRefresh: false)
+        case .gog:
+            rightPanelMessage = "GOG support is planned after the Epic source workflow."
         }
     }
 
@@ -2084,12 +2089,12 @@ final class AppViewModel {
         case .wine:
             wineApps
         case .epic, .gog:
-            []
+            selectedRunner == .epic ? epicGames : []
         }
     }
 
     private var pinnedGames: [LibraryGame] {
-        let all = nativeApps + discoveredSteamGames + wineApps
+        let all = nativeApps + discoveredSteamGames + wineApps + epicGames
         let byID = Dictionary(uniqueKeysWithValues: all.map { ($0.pinID, $0) })
         return pinnedGameIDs.compactMap { byID[$0] }
     }
@@ -2164,6 +2169,58 @@ final class AppViewModel {
                 }
                 appendLog("Command failed:\n\(error.localizedDescription)")
                 rightPanelMessage = "Steam game detection failed."
+            }
+        }
+    }
+
+    func refreshEpicLibrary(forceRefresh: Bool = true) {
+        Task {
+            do {
+                let statusResponse = try await BackendBridge.execute(
+                    .sourceStatus(source: "epic"),
+                    context: backendContext
+                )
+                epicSourceStatus = statusResponse.sourceStatus
+                guard let status = epicSourceStatus, status.available else {
+                    epicGames = []
+                    selectedGame = nil
+                    rightPanelMessage = statusResponse.sourceStatus?.message ?? "Install Legendary to enable Epic Games."
+                    return
+                }
+                guard status.authenticated else {
+                    epicGames = []
+                    selectedGame = nil
+                    rightPanelMessage = status.message
+                    return
+                }
+                rightPanelMessage = "Refreshing Epic Games library…"
+                let response = try await BackendBridge.executeStreaming(
+                    .listSourceGames(source: "epic", forceRefresh: forceRefresh),
+                    context: backendContext
+                ) { _ in }
+                epicGames = response.sourceGames.map { game in
+                    let installURL = game.installPath.map(URL.init(fileURLWithPath:))
+                    return LibraryGame(
+                        pinID: game.libraryID,
+                        backendID: game.storeID,
+                        title: game.title,
+                        runner: .epic,
+                        capsule: "Epic Games",
+                        status: game.installed ? (game.updateAvailable ? "Update Available" : "Installed") : "Owned",
+                        statsText: game.version,
+                        bannerURL: game.artURL.flatMap(URL.init(string:)),
+                        installURL: installURL,
+                        launchURL: installURL
+                    )
+                }
+                selectedGame = epicGames.first
+                appendLog(response.output)
+                rightPanelMessage = "Loaded \(epicGames.count) Epic Games title(s)."
+            } catch {
+                epicGames = []
+                selectedGame = nil
+                appendLog("Epic library refresh failed:\n\(error.localizedDescription)")
+                rightPanelMessage = error.localizedDescription
             }
         }
     }
@@ -2676,6 +2733,10 @@ final class AppViewModel {
 
     private func actionDisplayName(_ action: BackendAction) -> String {
         switch action {
+        case .sourceStatus:
+            return "Check Game Source"
+        case .listSourceGames:
+            return "Refresh Store Library"
         case .steamIdentityStatus:
             return "Refresh Steam Login"
         case .captureSteamIdentity:
@@ -2753,6 +2814,10 @@ final class AppViewModel {
 
     private func jobSuccessMessage(for action: BackendAction) -> String {
         switch action {
+        case .sourceStatus:
+            return "Game source status refreshed."
+        case .listSourceGames:
+            return "Store library refreshed."
         case .steamIdentityStatus:
             return "Shared Steam login status refreshed."
         case .captureSteamIdentity:

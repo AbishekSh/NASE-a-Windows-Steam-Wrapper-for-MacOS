@@ -12,7 +12,7 @@ The SwiftUI app is the product. The Python backend remains the implementation en
 - Native macOS app imports
 - Per-game settings, logs, health checks, and compatibility notes
 
-Planned sources include Epic Games and GOG.
+Epic Games source work has started through an isolated Legendary provider adapter; GOG remains planned.
 
 ## Open The App
 
@@ -162,6 +162,7 @@ Key Python modules:
 - `mysteamwine/runtime.py`: process execution, downloads, executable resolution, Wine runtime detection
 - `mysteamwine/steam_libraries.py`: cross-bottle Steam library discovery and the canonical read-only registry
 - `mysteamwine/steam_identity.py`: permission-locked, integrity-checked Steam authentication capture, per-profile provisioning, sign-out, and forget operations
+- `mysteamwine/sources/`: normalized multi-store contracts and provider adapters; the Epic adapter isolates Legendary credentials and converts owned/installed results into NASE library records
 - `mysteamwine/catalog.py`: managed runtime catalog, downloads, checksum verification, extraction, and install records
 - `mysteamwine/bottle.py`: managed bottle and external-prefix paths
 - `mysteamwine/steam.py`: Steam installer/runner, VDF parsing, manifest discovery, Steam/direct game launch helpers

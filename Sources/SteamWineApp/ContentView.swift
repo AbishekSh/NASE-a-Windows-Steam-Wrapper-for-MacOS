@@ -115,6 +115,15 @@ struct ContentView: View {
                         .buttonStyle(.plain)
                     }
 
+                    if model.selectedRunner == .epic {
+                        Button {
+                            model.refreshEpicLibrary()
+                        } label: {
+                            sidebarFooterLabel("Refresh Epic", systemImage: "arrow.clockwise")
+                        }
+                        .buttonStyle(.plain)
+                    }
+
                     addGameControl
                 }
                 .padding(10)
@@ -352,7 +361,7 @@ struct ContentView: View {
     }
 
     private var shouldShowSidebarFooter: Bool {
-        model.selectedRunner == .steam || model.shouldShowAddButton
+        model.selectedRunner == .steam || model.selectedRunner == .epic || model.shouldShowAddButton
     }
 
     @ViewBuilder

@@ -33,6 +33,30 @@ struct BackendResponse {
     let job: BackendJob?
     let structured: BackendStructuredResult?
     let steamIdentity: SteamIdentityStatus?
+    let sourceGames: [BackendSourceGame]
+    let sourceStatus: BackendSourceStatus?
+}
+
+struct BackendSourceGame: Identifiable {
+    var id: String { libraryID }
+    let source: String
+    let storeID: String
+    let libraryID: String
+    let title: String
+    let installed: Bool
+    let installPath: String?
+    let version: String?
+    let updateAvailable: Bool
+    let artURL: String?
+}
+
+struct BackendSourceStatus {
+    let source: String
+    let available: Bool
+    let authenticated: Bool
+    let client: String?
+    let version: String?
+    let message: String
 }
 
 struct SteamIdentityStatus {
@@ -130,6 +154,29 @@ private struct BackendJSONData: Decodable {
     let account_count: Int?
     let provisioned_profiles: [String]?
     let active_steam_profiles: [String]?
+    let source_games: [BackendJSONSourceGame]?
+    let source_status: BackendJSONSourceStatus?
+}
+
+private struct BackendJSONSourceGame: Decodable {
+    let source: String
+    let store_id: String
+    let library_id: String
+    let title: String
+    let installed: Bool
+    let install_path: String?
+    let version: String?
+    let update_available: Bool
+    let art_url: String?
+}
+
+private struct BackendJSONSourceStatus: Decodable {
+    let source: String
+    let available: Bool
+    let authenticated: Bool
+    let client: String?
+    let version: String?
+    let message: String
 }
 
 private struct BackendJSONJob: Decodable {
@@ -368,6 +415,8 @@ struct BackendContext {
 }
 
 enum BackendAction {
+    case sourceStatus(source: String)
+    case listSourceGames(source: String, forceRefresh: Bool)
     case steamIdentityStatus
     case captureSteamIdentity(sourceBottle: String)
     case provisionSteamIdentity(targetBottle: String)
@@ -471,7 +520,12 @@ enum BackendBridge {
             return [
                 BackendCommand(title: "Native Library", command: "Native scanning is not wired yet."),
             ]
-        case .epic, .gog:
+        case .epic:
+            return [
+                BackendCommand(title: "Epic Status", command: preview(.sourceStatus(source: "epic"), context: context)),
+                BackendCommand(title: "Refresh Epic Library", command: preview(.listSourceGames(source: "epic", forceRefresh: true), context: context)),
+            ]
+        case .gog:
             return [
                 BackendCommand(title: "Planned", command: "Store integration is not wired yet."),
             ]
@@ -515,6 +569,11 @@ enum BackendBridge {
         let base = context.targetArguments + ["--wine", context.winePath, "--jsonl"]
 
         switch action {
+        case .sourceStatus(let source):
+            return context.targetArguments + ["--jsonl", "source-status", "--source", source]
+        case .listSourceGames(let source, let forceRefresh):
+            return context.targetArguments + ["--jsonl", "list-source-games", "--source", source]
+                + (forceRefresh ? ["--force-refresh"] : [])
         case .steamIdentityStatus:
             return context.targetArguments + ["--jsonl", "steam-identity-status"]
         case .captureSteamIdentity(let sourceBottle):
@@ -795,7 +854,9 @@ enum BackendBridge {
             jobs: [],
             job: nil,
             structured: nil,
-            steamIdentity: nil
+            steamIdentity: nil,
+            sourceGames: [],
+            sourceStatus: nil
         )
     }
 
@@ -823,7 +884,37 @@ enum BackendBridge {
             jobs: jobs,
             job: job,
             structured: structured,
-            steamIdentity: makeSteamIdentity(from: payload.data)
+            steamIdentity: makeSteamIdentity(from: payload.data),
+            sourceGames: makeSourceGames(from: payload.data),
+            sourceStatus: makeSourceStatus(from: payload.data)
+        )
+    }
+
+    private static func makeSourceGames(from data: BackendJSONData?) -> [BackendSourceGame] {
+        data?.source_games?.map {
+            BackendSourceGame(
+                source: $0.source,
+                storeID: $0.store_id,
+                libraryID: $0.library_id,
+                title: $0.title,
+                installed: $0.installed,
+                installPath: $0.install_path,
+                version: $0.version,
+                updateAvailable: $0.update_available,
+                artURL: $0.art_url
+            )
+        } ?? []
+    }
+
+    private static func makeSourceStatus(from data: BackendJSONData?) -> BackendSourceStatus? {
+        guard let status = data?.source_status else { return nil }
+        return BackendSourceStatus(
+            source: status.source,
+            available: status.available,
+            authenticated: status.authenticated,
+            client: status.client,
+            version: status.version,
+            message: status.message
         )
     }
 

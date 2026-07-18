@@ -55,6 +55,7 @@ from .steam_identity import (
     sign_out_steam_profile,
     steam_identity_status,
 )
+from .sources import EpicSource
 from .winetricks import run_winetricks
 
 
@@ -68,6 +69,8 @@ _TRANSIENT_JOB_ACTIONS = {
     "list-runtime-catalog",
     "list-sessions",
     "steam-identity-status",
+    "source-status",
+    "list-source-games",
 }
 _TRANSIENT_JOB_IDS: set[str] = set()
 _JOB_TARGET: dict[str, str] = {}
@@ -1195,6 +1198,51 @@ def cmd_sign_out_steam_profile(args: argparse.Namespace) -> None:
     except (OSError, RuntimeError, ValueError) as exc:
         _json_error(args, action=action, message=str(exc))
     _identity_result(args, action=action, message=f"Signed out Steam in {args.target_bottle} only.", data=data)
+
+
+def _epic_source(args: argparse.Namespace) -> EpicSource:
+    return EpicSource(args.epic_client)
+
+
+def cmd_source_status(args: argparse.Namespace) -> None:
+    source = _epic_source(args)
+    data = {"source_status": source.status().as_dict()}
+    _identity_result(args, action="source-status", message="Epic Games source status loaded.", data=data)
+
+
+def cmd_list_source_games(args: argparse.Namespace) -> None:
+    action = "list-source-games"
+    source = _epic_source(args)
+    try:
+        games = [game.as_dict() for game in source.list_games(force_refresh=args.force_refresh)]
+    except (OSError, RuntimeError, ValueError) as exc:
+        _json_error(args, action=action, message=str(exc))
+    _identity_result(
+        args,
+        action=action,
+        message=f"Found {len(games)} Epic Games library item(s).",
+        data={"source_id": "epic", "source_games": games},
+    )
+
+
+def cmd_epic_auth(args: argparse.Namespace) -> None:
+    action = "epic-auth"
+    try:
+        status = _epic_source(args).authenticate(authorization_code=args.authorization_code)
+    except (OSError, RuntimeError, ValueError) as exc:
+        _json_error(args, action=action, message=str(exc))
+    _identity_result(args, action=action, message="Epic Games account connected.", data={"source_status": status.as_dict()})
+
+
+def cmd_epic_logout(args: argparse.Namespace) -> None:
+    action = "epic-logout"
+    if not args.confirm:
+        _json_error(args, action=action, message="Epic sign-out requires --confirm.")
+    try:
+        status = _epic_source(args).sign_out()
+    except (OSError, RuntimeError, ValueError) as exc:
+        _json_error(args, action=action, message=str(exc))
+    _identity_result(args, action=action, message="Epic Games account signed out.", data={"source_status": status.as_dict()})
 
 
 def cmd_stop_game(args: argparse.Namespace) -> None:
@@ -2604,6 +2652,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--compatibility-profile",
         help="Pinned compatibility profile id. Defaults to the profile for --graphics-backend.",
     )
+    parser.add_argument("--epic-client", default="legendary", help="Path or command name for the Legendary Epic client")
 
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -2631,6 +2680,19 @@ def build_parser() -> argparse.ArgumentParser:
     sign_out_profile.add_argument("--target-bottle", required=True, help="Managed bottle to sign out")
     sign_out_profile.add_argument("--confirm", action="store_true", help="Confirm per-profile sign-out")
     sign_out_profile.set_defaults(func=cmd_sign_out_steam_profile)
+    source_status = sub.add_parser("source-status", help="Show availability and authentication state for a game source")
+    source_status.add_argument("--source", choices=("epic",), required=True)
+    source_status.set_defaults(func=cmd_source_status)
+    list_source_games = sub.add_parser("list-source-games", help="List normalized games owned through a store source")
+    list_source_games.add_argument("--source", choices=("epic",), required=True)
+    list_source_games.add_argument("--force-refresh", action="store_true", help="Refresh Epic metadata from the service")
+    list_source_games.set_defaults(func=cmd_list_source_games)
+    epic_auth = sub.add_parser("epic-auth", help="Connect Epic using an authorization code")
+    epic_auth.add_argument("--authorization-code", required=True, help="Short-lived code copied from Epic's authorization response")
+    epic_auth.set_defaults(func=cmd_epic_auth)
+    epic_logout = sub.add_parser("epic-logout", help="Remove the Epic authentication stored by Legendary")
+    epic_logout.add_argument("--confirm", action="store_true", help="Confirm Epic sign-out")
+    epic_logout.set_defaults(func=cmd_epic_logout)
     sub.add_parser("list-compatibility-profiles", help="List pinned graphics/runtime profiles").set_defaults(func=cmd_list_compatibility_profiles)
     discover_d3dmetal = sub.add_parser("discover-d3dmetal", help="Find a matched local GPTK Wine and D3DMetal installation")
     discover_d3dmetal.add_argument("--gptk-wine", help="Previously selected GPTK Wine executable")
