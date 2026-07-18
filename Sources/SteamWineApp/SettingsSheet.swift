@@ -644,7 +644,7 @@ struct SettingsSheet: View {
                     Spacer()
                     if isReady {
                         Button("Repair") {
-                            model.setupCompatibilityProfile(profile)
+                            model.repairCompatibilityProfile(profile)
                         }
                         .disabled(model.isBusy)
                         Button("Reset", role: .destructive) {
@@ -852,9 +852,14 @@ struct SettingsSheet: View {
 
             if model.activeBackendJobs.isEmpty == false {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Active")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(themeForeground)
+                    HStack {
+                        Text("Active")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(themeForeground)
+                        Spacer()
+                        Button("Refresh") { model.refreshBackendJobs() }
+                            .buttonStyle(.borderless)
+                    }
                     ForEach(model.activeBackendJobs) { job in
                         jobRow(job)
                     }
@@ -900,6 +905,12 @@ struct SettingsSheet: View {
                         .font(.subheadline)
                         .foregroundStyle(themeMutedForeground)
                         .fixedSize(horizontal: false, vertical: true)
+                    if [.queued, .started, .cancelling].contains(job.status) {
+                        Button(job.status == .cancelling ? "Cancelling…" : "Cancel") {
+                            model.cancelBackendJob(job)
+                        }
+                        .disabled(job.status == .cancelling)
+                    }
                     HStack(spacing: 8) {
                         Text(job.status.rawValue.capitalized)
                             .font(.caption.weight(.semibold))
@@ -1189,11 +1200,11 @@ struct SettingsSheet: View {
 
     private func jobAccentColor(for status: BackendJobStatus) -> Color {
         switch status {
-        case .started:
+        case .started, .cancelling:
             return Color(hex: "#6DBB7A")
         case .completed:
             return Color(hex: "#6DBB7A")
-        case .failed:
+        case .failed, .cancelled, .interrupted:
             return Color.red
         case .queued:
             return Color(hex: "#8A948C")

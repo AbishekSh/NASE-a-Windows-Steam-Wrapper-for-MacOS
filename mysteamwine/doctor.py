@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
 
 from .bottle import Bottle, ensure_bottle_dirs
@@ -203,11 +204,31 @@ def _check_steam(bottle: Bottle) -> list[CheckResult]:
     return checks
 
 
+def _check_profile_transaction(bottle: Bottle) -> CheckResult | None:
+    manifest_path = bottle.root / "compatibility-profile.json"
+    if not manifest_path.exists():
+        return None
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return _result("fail", "Compatibility profile transaction", f"Manifest is damaged: {exc}")
+    status = str(manifest.get("setup_status") or "unknown")
+    if status == "ready":
+        return _result("ok", "Compatibility profile transaction", "Profile setup completed and verified")
+    if status in {"setting-up", "needs-repair", "bound"}:
+        detail = manifest.get("last_failure") or "Setup did not reach final verification"
+        return _result("fail", "Compatibility profile transaction", f"{status}: {detail}. Use Repair in Runtime Center.")
+    return _result("warn", "Compatibility profile transaction", f"Unknown setup state: {status}")
+
+
 def run_doctor(*, bottle: Bottle, wine_value: str | None, winetricks_value: str) -> list[CheckResult]:
     checks: list[CheckResult] = []
 
     checks.append(_result("ok" if bottle.root.exists() else "warn", "Bottle root", str(bottle.root)))
     checks.append(_result("ok" if bottle.prefix.exists() else "fail", "Wine prefix", str(bottle.prefix)))
+    profile_transaction = _check_profile_transaction(bottle)
+    if profile_transaction is not None:
+        checks.append(profile_transaction)
 
     wine_path = None
     if wine_value:

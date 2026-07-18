@@ -29,6 +29,7 @@ struct BackendResponse {
     let games: [BackendGame]
     let runtimes: [ManagedRuntime]
     let sessions: [GameLaunchSession]
+    let jobs: [BackendJob]
     let job: BackendJob?
     let structured: BackendStructuredResult?
 }
@@ -110,8 +111,19 @@ private struct BackendJSONData: Decodable {
     let executable: String?
     let session: BackendJSONSession?
     let sessions: [BackendJSONSession]?
+    let jobs: [BackendJSONJob]?
     let gptk_wine_path: String?
     let d3dmetal_source: String?
+}
+
+private struct BackendJSONJob: Decodable {
+    let job_id: String
+    let action: String
+    let status: String
+    let message: String
+    let progress: Double?
+    let completed_steps: Int?
+    let total_steps: Int?
 }
 
 private struct BackendJSONSession: Decodable {
@@ -332,11 +344,14 @@ struct BackendContext {
 }
 
 enum BackendAction {
+    case listJobs
+    case cancelJob(id: String)
     case dependencyStatus
     case discoverD3DMetal
     case importGPTK(confirmLicense: Bool)
     case installHostDependency(id: String, confirmLicense: Bool)
     case setupCompatibilityProfile(GraphicsBackendOption)
+    case repairCompatibilityProfile(GraphicsBackendOption)
     case resetCompatibilityProfile(GraphicsBackendOption)
     case resetGameOverlay(gameID: String)
     case attachSteamLibraries(GraphicsBackendOption)
@@ -473,6 +488,10 @@ enum BackendBridge {
         switch action {
         case .dependencyStatus:
             return base + ["dependency-status", "--gptk-wine", context.gptkWinePath, "--d3dmetal-source", context.d3dMetalSource]
+        case .listJobs:
+            return context.targetArguments + ["--jsonl", "list-jobs", "--limit", "50"]
+        case .cancelJob(let id):
+            return context.targetArguments + ["--jsonl", "cancel-job", "--job-id", id]
         case .discoverD3DMetal:
             return base + ["discover-d3dmetal", "--gptk-wine", context.gptkWinePath, "--d3dmetal-source", context.d3dMetalSource]
         case .importGPTK(let confirmLicense):
@@ -482,6 +501,16 @@ enum BackendBridge {
             return base + ["install-host-dependency", "--dependency", id] + (confirmLicense ? ["--confirm-rosetta-license"] : [])
         case .setupCompatibilityProfile(let profile):
             var args = base + ["setup-compatibility-profile", "--profile", profile.compatibilityProfileID]
+            if profile == .dxmt {
+                args += ["--dxmt-source", context.dxmtSource]
+            } else if profile == .dxvk {
+                args += ["--dxvk-source", context.dxvkSource]
+            } else if profile == .d3dmetal {
+                args += ["--d3dmetal-source", context.d3dMetalSource]
+            }
+            return args
+        case .repairCompatibilityProfile(let profile):
+            var args = base + ["repair-compatibility-profile", "--profile", profile.compatibilityProfileID]
             if profile == .dxmt {
                 args += ["--dxmt-source", context.dxmtSource]
             } else if profile == .dxvk {
@@ -724,6 +753,7 @@ enum BackendBridge {
             games: games,
             runtimes: [],
             sessions: [],
+            jobs: [],
             job: nil,
             structured: nil
         )
@@ -743,14 +773,29 @@ enum BackendBridge {
         if let session = payload.data?.session {
             sessions.append(makeSession(from: session))
         }
+        let jobs = payload.data?.jobs?.compactMap { makeJob(from: $0) } ?? []
 
         return BackendResponse(
             output: renderOutput(from: payload),
             games: games,
             runtimes: runtimes,
             sessions: sessions,
+            jobs: jobs,
             job: job,
             structured: structured
+        )
+    }
+
+    private static func makeJob(from payload: BackendJSONJob) -> BackendJob? {
+        guard let status = BackendJobStatus(rawValue: payload.status) else { return nil }
+        return BackendJob(
+            id: payload.job_id,
+            action: payload.action,
+            status: status,
+            message: payload.message,
+            progress: payload.progress,
+            completedSteps: payload.completed_steps,
+            totalSteps: payload.total_steps
         )
     }
 

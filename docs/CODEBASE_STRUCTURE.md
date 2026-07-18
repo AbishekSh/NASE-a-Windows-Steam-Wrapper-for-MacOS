@@ -129,6 +129,8 @@ Treat each graphics choice as a runtime profile, not only a DLL selection. DXMT 
 ### Health, Dependencies, And Advice
 
 - `doctor.py`: environment and prefix checks plus safe repairs.
+- `jobs.py`: atomic durable job records, interrupted-job reconciliation, and
+  verified backend-process cancellation.
 - `sessions.py`: persistent launch-session registry, real process reconciliation, targeted per-game termination, and ownership-aware Steam cleanup. Session records already carry a compatibility-profile id so runtime fingerprints can be added without replacing the lifecycle contract.
 - `profiles.py`: compatibility-profile definitions and immutable per-bottle runtime/source fingerprints. A profile binds Wine, the graphics stack, and a dedicated bottle as one launch unit.
   - `setup-compatibility-profile` performs the observable setup workflow and only marks the profile manifest ready after Wine, Steam, and renderer setup succeed.
@@ -168,6 +170,19 @@ Treat each graphics choice as a runtime profile, not only a DLL selection. DXMT 
 
 1. SwiftUI calls `BackendBridge.executeStreaming(.setupMetal, context: ...)`.
 2. The bridge runs `python3 mysteamwine.py ... --jsonl setup-metal --dxmt-source ... --no-wait`.
+
+### Jobs, rollback, and repair
+
+- JSONL remains the live event transport, while `jobs.py` persists long-running
+  operations independently of the SwiftUI process.
+- Read-only refresh commands remain transient and do not fill job history.
+- Profile setup records step progress and treats the bottle as a transaction.
+  Newly created incomplete bottles are rolled back; existing bottles are kept
+  and marked `needs-repair`.
+- `repair-compatibility-profile` resumes the pinned setup, reruns verification,
+  and only marks the manifest ready after all required probes pass.
+- SwiftUI reloads durable jobs on startup and exposes cancellation and repair
+  without requiring users to inspect terminal output.
 3. `cli.py` emits JSONL job/step/result events.
 4. Python creates or reuses the bottle, runs Wine setup, installs Steam via Winetricks, installs DXMT, and opens Steam.
 5. SwiftUI merges structured steps into the setup result and updates active/recent jobs.

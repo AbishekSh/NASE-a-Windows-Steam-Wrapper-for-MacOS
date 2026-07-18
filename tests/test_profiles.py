@@ -114,6 +114,29 @@ class CompatibilityProfileTests(unittest.TestCase):
                 require_ready=False,
             )
 
+    def test_mark_ready_clears_failed_transaction_metadata(self) -> None:
+        manifest_path = self.bottle.root / "compatibility-profile.json"
+        manifest_path.write_text(
+            json.dumps(
+                {
+                    "profile": {"id": "dxmt-wine-stable-11-v1"},
+                    "setup_status": "needs-repair",
+                    "active_job_id": "old",
+                    "last_failed_job": "old",
+                    "last_failure": "failed",
+                    "failed_at": 1,
+                    "setup_started_at": 1,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        ready = profiles.mark_profile_ready(self.bottle)
+
+        self.assertEqual(ready["setup_status"], "ready")
+        self.assertNotIn("last_failure", ready)
+        self.assertNotIn("active_job_id", ready)
+
     def test_import_migration_ignores_profiles_without_graphics_source(self) -> None:
         bottles_root = self.bottle.root / "bottles"
         plain_manifest = bottles_root / "Plain" / "compatibility-profile.json"

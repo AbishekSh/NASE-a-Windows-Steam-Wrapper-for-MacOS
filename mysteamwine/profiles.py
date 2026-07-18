@@ -236,6 +236,14 @@ def mark_profile_ready(bottle: Bottle) -> dict:
         raise RuntimeError(f"Compatibility manifest is missing or damaged: {manifest_path}") from exc
     manifest["setup_status"] = "ready"
     manifest["ready_at"] = time.time()
+    for key in (
+        "active_job_id",
+        "failed_at",
+        "last_failed_job",
+        "last_failure",
+        "setup_started_at",
+    ):
+        manifest.pop(key, None)
     temporary = manifest_path.with_suffix(".tmp")
     temporary.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     temporary.replace(manifest_path)

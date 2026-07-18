@@ -361,9 +361,9 @@ struct SetupWizardSheet: View {
             switch job.status {
             case .completed:
                 return "Setup finished. Steam should now be ready in the managed bottle."
-            case .failed:
+            case .failed, .cancelled, .interrupted:
                 return "Setup failed. Review the result below and rerun the setup step."
-            case .queued, .started:
+            case .queued, .started, .cancelling:
                 return "Setup is still running."
             }
         }

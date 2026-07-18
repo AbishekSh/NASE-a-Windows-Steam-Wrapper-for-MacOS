@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import signal
 import shutil
 import subprocess
 import textwrap
@@ -29,6 +30,7 @@ from .dxvk_macos import (
 from .gptk import discover_gptk_installations, import_managed_gptk, prepare_sikarugir_native_dependencies
 from .library_activity import acquire_steam_activity, assert_direct_launch_safe, release_steam_activity
 from .legacy_directx import prepare_legacy_directx_overlay, reset_legacy_directx_overlay
+from .jobs import cancel_job, create_job, list_jobs, update_job
 from .profiles import PROFILES, bind_profile, list_profiles, mark_profile_ready, migrate_imported_d3dmetal_profiles
 from .runtime import detect_wine_runtime, is_apple_silicon, resolve_executable, resolve_with_fallback, run_logged
 from .scanner import scan_game_dir
@@ -47,6 +49,20 @@ from .steam import (
 )
 from .steam_libraries import attach_registered_libraries, installed_games, refresh_registry, resolve_registered_app
 from .winetricks import run_winetricks
+
+
+_TRANSIENT_JOB_ACTIONS = {
+    "cancel-job",
+    "dependency-status",
+    "list-compatibility-profiles",
+    "list-games",
+    "list-installed-runtimes",
+    "list-jobs",
+    "list-runtime-catalog",
+    "list-sessions",
+}
+_TRANSIENT_JOB_IDS: set[str] = set()
+_JOB_TARGET: dict[str, str] = {}
 
 
 def _json_enabled(args: argparse.Namespace) -> bool:
@@ -96,6 +112,20 @@ def _emit_stream_event(
     errors: list[str] | None = None,
     ok: bool | None = None,
 ) -> None:
+    if job_id not in _TRANSIENT_JOB_IDS:
+        step = (data or {}).get("step") if event == "step" else None
+        update_job(
+            job_id,
+            status=status,
+            message=message,
+            step=step,
+            progress=(data or {}).get("progress"),
+            completed_steps=(data or {}).get("completed_steps"),
+            total_steps=(data or {}).get("total_steps"),
+            warnings=warnings,
+            errors=errors,
+            rollback=(data or {}).get("rollback"),
+        )
     print(
         json.dumps(
             {
@@ -116,6 +146,10 @@ def _emit_stream_event(
 
 def _stream_start(*, action: str, message: str) -> str:
     job_id = uuid.uuid4().hex
+    if action in _TRANSIENT_JOB_ACTIONS:
+        _TRANSIENT_JOB_IDS.add(job_id)
+    else:
+        create_job(job_id=job_id, action=action, message=message, target=_JOB_TARGET)
     _emit_stream_event(
         event="job",
         action=action,
@@ -189,9 +223,10 @@ def _stream_result(
 
 def _json_error(args: argparse.Namespace, *, action: str, message: str, code: int = 1, data: dict | None = None) -> None:
     if _stream_enabled(args):
+        job_id = _stream_start(action=action, message=message)
         _stream_result(
             action=action,
-            job_id=uuid.uuid4().hex,
+            job_id=job_id,
             ok=False,
             status="failed",
             message=message,
@@ -268,7 +303,7 @@ def _bind_launch_profile(args: argparse.Namespace, *, action: str, bottle, wine_
                     f"D3DMetal setup needs at least 2 GiB of free disk space for Wine, Steam updates, and temporary files; "
                     f"only {free_mib} MiB is available. Free some space, then retry Set Up."
                 )
-        bind_profile(
+        active_manifest = bind_profile(
             bottle=bottle,
             profile_id=profile_id,
             graphics_backend=graphics_backend,
@@ -431,7 +466,7 @@ def cmd_install_host_dependency(args: argparse.Namespace) -> None:
 
 
 def cmd_setup_compatibility_profile(args: argparse.Namespace) -> None:
-    action = "setup-compatibility-profile"
+    action = "repair-compatibility-profile" if getattr(args, "repair", False) else "setup-compatibility-profile"
     wine64 = _require_wine64(args)
     bottle = _resolve_bottle(args)
     if _is_external_prefix(args):
@@ -445,7 +480,10 @@ def cmd_setup_compatibility_profile(args: argparse.Namespace) -> None:
     }
     if profile_id not in backend_by_profile:
         _json_error(args, action=action, message=f"Unknown compatibility profile: {profile_id}")
+    if getattr(args, "repair", False) and not bottle.root.exists():
+        _json_error(args, action=action, message=f"There is no {bottle.name} profile bottle to repair. Choose Set Up instead.")
     graphics_backend = backend_by_profile[profile_id]
+    setup_total_steps = {"dxmt": 5, "d3dmetal": 8, "dxvk": 10, "none": 5}[graphics_backend]
     source_value = {
         "dxmt": args.dxmt_source,
         "d3dmetal": args.d3dmetal_source,
@@ -456,8 +494,19 @@ def cmd_setup_compatibility_profile(args: argparse.Namespace) -> None:
     moltenvk_source = Path(args.moltenvk_source) if args.moltenvk_source else None
     if graphics_backend == "dxvk" and moltenvk_source is None:
         moltenvk_source = discover_moltenvk_source()
+    root_existed = bottle.root.exists()
+    manifest_path = bottle.root / "compatibility-profile.json"
+    original_manifest = manifest_path.read_bytes() if manifest_path.is_file() else None
     job_id = _stream_start(action=action, message=f"Preparing {profile_id} in {bottle.name}...") if _stream_enabled(args) else None
     steps: list[dict[str, str]] = []
+    cancelled = False
+
+    def cancel_setup(_signum, _frame) -> None:
+        nonlocal cancelled
+        cancelled = True
+        raise RuntimeError("Setup cancelled by the user.")
+
+    previous_sigterm = signal.signal(signal.SIGTERM, cancel_setup)
 
     def run_step(name: str, message: str, operation) -> None:
         if _stream_enabled(args):
@@ -474,7 +523,7 @@ def cmd_setup_compatibility_profile(args: argparse.Namespace) -> None:
                 status="ok",
                 message=message.replace("...", "") + " complete.",
                 completed_steps=len(steps),
-                total_steps=5,
+                total_steps=setup_total_steps,
             )
 
     try:
@@ -501,6 +550,15 @@ def cmd_setup_compatibility_profile(args: argparse.Namespace) -> None:
             moltenvk_source=moltenvk_source,
             require_ready=False,
         )
+        active_manifest["setup_status"] = "setting-up"
+        active_manifest["active_job_id"] = job_id
+        active_manifest["setup_started_at"] = time.time()
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_manifest = manifest_path.with_suffix(".tmp")
+        temporary_manifest.write_text(
+            json.dumps(active_manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        temporary_manifest.replace(manifest_path)
         if graphics_backend == "dxvk":
             manifest_path = bottle.root / "compatibility-profile.json"
             bound_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -520,7 +578,7 @@ def cmd_setup_compatibility_profile(args: argparse.Namespace) -> None:
                         f"{native_dependency['dependency']} ({native_dependency['sha256'][:12]}...)."
                     ),
                     completed_steps=len(steps),
-                    total_steps=6,
+                    total_steps=setup_total_steps,
                 )
         ensure_bottle_dirs(bottle)
         steam_exe = bottle.drive_c / "Program Files (x86)" / "Steam" / "Steam.exe"
@@ -634,20 +692,55 @@ def cmd_setup_compatibility_profile(args: argparse.Namespace) -> None:
                 ),
             )
         manifest = mark_profile_ready(bottle)
-    except Exception as exc:
+    except BaseException as exc:
         message = str(exc)
+        try:
+            kill_wine_processes(bottle=bottle, wine64_path=wine64)
+        except Exception:
+            pass
+        rollback = {
+            "attempted": True,
+            "removed_new_bottle": False,
+            "restored_manifest": False,
+            "repair_required": root_existed,
+        }
+        if not root_existed:
+            if bottle.root.exists():
+                shutil.rmtree(bottle.root)
+            rollback["removed_new_bottle"] = True
+            rollback["repair_required"] = False
+        else:
+            bottle.root.mkdir(parents=True, exist_ok=True)
+            if original_manifest is not None:
+                try:
+                    failed_manifest = json.loads(original_manifest)
+                except (ValueError, json.JSONDecodeError):
+                    failed_manifest = {}
+                rollback["restored_manifest"] = True
+            else:
+                failed_manifest = {"schema_version": 1, "profile": {"id": profile_id}}
+            failed_manifest["setup_status"] = "needs-repair"
+            failed_manifest["last_failed_job"] = job_id
+            failed_manifest["last_failure"] = message
+            failed_manifest["failed_at"] = time.time()
+            temporary = manifest_path.with_suffix(".tmp")
+            temporary.write_text(json.dumps(failed_manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            temporary.replace(manifest_path)
+        status = "cancelled" if cancelled else "failed"
         if _stream_enabled(args):
             _stream_result(
                 action=action,
                 job_id=job_id or uuid.uuid4().hex,
                 ok=False,
-                status="failed",
+                status=status,
                 message=message,
-                data={"profile_id": profile_id, "bottle": bottle.name, "steps": steps},
+                data={"profile_id": profile_id, "bottle": bottle.name, "steps": steps, "rollback": rollback},
                 errors=[message],
             )
             raise SystemExit(1)
-        _json_error(args, action=action, message=message, code=1)
+        _json_error(args, action=action, message=message, code=1, data={"rollback": rollback})
+    finally:
+        signal.signal(signal.SIGTERM, previous_sigterm)
 
     message = f"{manifest['profile']['name']} is ready in {bottle.name}."
     data = {"profile": manifest["profile"], "bottle": bottle.name, "manifest": manifest, "steps": steps, "library_attachment": attachment}
@@ -1002,6 +1095,37 @@ def cmd_list_sessions(args: argparse.Namespace) -> None:
         return
     for session in sessions:
         print(f"{session.get('session_id')}\t{session.get('status')}\t{session.get('game')}\t{session.get('bottle')}")
+
+
+def cmd_list_jobs(args: argparse.Namespace) -> None:
+    action = "list-jobs"
+    jobs = list_jobs(limit=args.limit)
+    message = f"Loaded {len(jobs)} backend job record(s)."
+    data = {"jobs": jobs}
+    if _stream_enabled(args):
+        job_id = _stream_start(action=action, message="Loading backend job history...")
+        _stream_result(action=action, job_id=job_id, ok=True, status="completed", message=message, data=data)
+    elif _json_enabled(args):
+        _emit_json(action=action, ok=True, message=message, data=data)
+    else:
+        print(json.dumps(jobs, indent=2))
+
+
+def cmd_cancel_job(args: argparse.Namespace) -> None:
+    action = "cancel-job"
+    try:
+        job = cancel_job(args.job_id)
+    except (FileNotFoundError, OSError, ValueError) as exc:
+        _json_error(args, action=action, message=str(exc))
+    message = f"Cancellation state for {args.job_id}: {job['status']}."
+    data = {"job": job}
+    if _stream_enabled(args):
+        query_id = _stream_start(action=action, message=f"Cancelling {args.job_id}...")
+        _stream_result(action=action, job_id=query_id, ok=True, status="completed", message=message, data=data)
+    elif _json_enabled(args):
+        _emit_json(action=action, ok=True, message=message, data=data)
+    else:
+        print(message)
 
 
 def cmd_stop_game(args: argparse.Namespace) -> None:
@@ -2415,6 +2539,12 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("info", help="Show paths used for this bottle").set_defaults(func=cmd_info)
+    list_jobs_cmd = sub.add_parser("list-jobs", help="List durable backend job records")
+    list_jobs_cmd.add_argument("--limit", type=int, default=50, help="Maximum jobs to return")
+    list_jobs_cmd.set_defaults(func=cmd_list_jobs)
+    cancel_job_cmd = sub.add_parser("cancel-job", help="Request cancellation of a running backend job")
+    cancel_job_cmd.add_argument("--job-id", required=True, help="Durable backend job id")
+    cancel_job_cmd.set_defaults(func=cmd_cancel_job)
     sub.add_parser("list-compatibility-profiles", help="List pinned graphics/runtime profiles").set_defaults(func=cmd_list_compatibility_profiles)
     discover_d3dmetal = sub.add_parser("discover-d3dmetal", help="Find a matched local GPTK Wine and D3DMetal installation")
     discover_d3dmetal.add_argument("--gptk-wine", help="Previously selected GPTK Wine executable")
@@ -2442,7 +2572,16 @@ def build_parser() -> argparse.ArgumentParser:
     profile_setup.add_argument("--d3dmetal-source", help="D3DMetal directory from the selected GPTK installation")
     profile_setup.add_argument("--winetricks", default="winetricks", help="Path to winetricks")
     profile_setup.add_argument("--interactive", action="store_true", help="Allow interactive Steam installation")
-    profile_setup.set_defaults(func=cmd_setup_compatibility_profile)
+    profile_setup.set_defaults(func=cmd_setup_compatibility_profile, repair=False)
+    profile_repair = sub.add_parser("repair-compatibility-profile", help="Resume and verify an incomplete profile bottle")
+    profile_repair.add_argument("--profile", required=True, help="Profile id from list-compatibility-profiles")
+    profile_repair.add_argument("--dxmt-source", help="Verified DXMT source directory")
+    profile_repair.add_argument("--dxvk-source", help="Pinned DXVK-macOS bundle directory")
+    profile_repair.add_argument("--moltenvk-source", help="Compatible Sikarugir wrapper or moltenvkcx directory")
+    profile_repair.add_argument("--d3dmetal-source", help="D3DMetal directory from the selected GPTK installation")
+    profile_repair.add_argument("--winetricks", default="winetricks", help="Path to winetricks")
+    profile_repair.add_argument("--interactive", action="store_true", help="Allow interactive Steam installation")
+    profile_repair.set_defaults(func=cmd_setup_compatibility_profile, repair=True)
     profile_reset = sub.add_parser("reset-compatibility-profile", help="Remove one dedicated profile bottle without deleting shared games")
     profile_reset.add_argument("--profile", required=True, help="Profile id from list-compatibility-profiles")
     profile_reset.add_argument("--confirm", action="store_true", help="Confirm removal of the dedicated bottle")
@@ -2635,8 +2774,20 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    global _JOB_TARGET
     parser = build_parser()
     args = parser.parse_args()
+
+    _JOB_TARGET = {
+        "kind": "external-prefix" if getattr(args, "prefix", None) else "managed-bottle",
+        "bottle": getattr(args, "bottle", None) or DEFAULT_BOTTLE_NAME,
+    }
+    if getattr(args, "prefix", None):
+        _JOB_TARGET["prefix"] = str(Path(args.prefix).expanduser())
+    if getattr(args, "profile", None):
+        _JOB_TARGET["profile_id"] = str(args.profile)
+    if getattr(args, "appid", None):
+        _JOB_TARGET["appid"] = str(args.appid)
 
     if is_apple_silicon() and not getattr(args, "json", False) and not getattr(args, "jsonl", False):
         print("[Note] You’re on Apple Silicon. Many Wine/Steam setups run under Rosetta 2.")

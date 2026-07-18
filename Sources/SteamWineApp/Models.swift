@@ -178,8 +178,11 @@ enum HealthStatus: String, Codable {
 enum BackendJobStatus: String, Codable, Hashable {
     case queued
     case started
+    case cancelling
     case completed
     case failed
+    case cancelled
+    case interrupted
 }
 
 enum SetupWizardStep: String, CaseIterable, Identifiable {

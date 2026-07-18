@@ -180,6 +180,30 @@ The app talks to Python through `BackendBridge.swift`. The backend commands supp
 - `--json`: one machine-readable result
 - `--jsonl`: streaming job events plus final result
 
+Long-running JSONL operations are also recorded under
+`~/Library/Application Support/MySteamWine/jobs`. Each durable record includes the
+backend PID, timestamps, progress, completed steps, errors, and any rollback that
+was performed. The native app reloads these records after restart and identifies
+operations that were interrupted before a final result.
+
+```bash
+# inspect durable work from this or an earlier app session
+python3 mysteamwine.py --json list-jobs
+
+# safely request cancellation (only a verified NASE backend PID is signalled)
+python3 mysteamwine.py --json cancel-job --job-id JOB_ID
+
+# resume and verify an incomplete dedicated profile
+python3 mysteamwine.py --bottle Default-DXMT --wine /path/to/wine --jsonl \
+  repair-compatibility-profile --profile dxmt-wine-stable-11-v1 \
+  --dxmt-source "/path/to/dxmt-0.71"
+```
+
+Compatibility-profile setup is transactional. If a new bottle fails during
+setup, NASE stops its Wine processes and removes that incomplete bottle. If a
+pre-existing bottle fails during repair, NASE preserves its user data, marks the
+profile `needs-repair`, and stores the failure and rollback result with the job.
+
 Representative response shape:
 
 ```json

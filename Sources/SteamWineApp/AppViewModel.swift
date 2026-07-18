@@ -207,6 +207,7 @@ final class AppViewModel {
                 try? await Task.sleep(for: .seconds(5))
             }
         }
+        refreshBackendJobs()
     }
 
     var operationCards: [OperationCard] {
@@ -1507,6 +1508,41 @@ final class AppViewModel {
         )
     }
 
+    func repairCompatibilityProfile(_ profile: GraphicsBackendOption) {
+        let context = effectiveBackendContext(backendContext.compatibilityContext(for: profile))
+        executeDetached(
+            .repairCompatibilityProfile(profile),
+            successMessage: "(profile.rawValue) profile was repaired and verified.",
+            context: context
+        )
+    }
+
+    func refreshBackendJobs() {
+        Task {
+            do {
+                let response = try await BackendBridge.executeStreaming(.listJobs, context: backendContext) { _ in }
+                await MainActor.run {
+                    self.activeBackendJobs = response.jobs.filter {
+                        [.queued, .started, .cancelling].contains($0.status)
+                    }
+                    self.recentBackendJobs = Array(response.jobs.filter {
+                        ![.queued, .started, .cancelling].contains($0.status)
+                    }.prefix(12))
+                }
+            } catch {
+                // Job history is diagnostic; failure must not block the launcher.
+            }
+        }
+    }
+
+    func cancelBackendJob(_ job: BackendJob) {
+        guard [.queued, .started, .cancelling].contains(job.status) else { return }
+        Task {
+            _ = try? await BackendBridge.executeStreaming(.cancelJob(id: job.id), context: backendContext) { _ in }
+            await MainActor.run { self.refreshBackendJobs() }
+        }
+    }
+
     func resetCompatibilityProfile(_ profile: GraphicsBackendOption) {
         let context = effectiveBackendContext(backendContext.compatibilityContext(for: profile))
         executeDetached(
@@ -2422,10 +2458,10 @@ final class AppViewModel {
         guard let job = update.job else { return }
 
         switch job.status {
-        case .started, .queued:
+        case .started, .queued, .cancelling:
             activeBackendJobs.removeAll { $0.id == fallbackActiveJobID || $0.id == job.id || $0.action == job.action }
             activeBackendJobs.insert(job, at: 0)
-        case .completed, .failed:
+        case .completed, .failed, .cancelled, .interrupted:
             activeBackendJobs.removeAll { $0.id == fallbackActiveJobID || $0.id == job.id || $0.action == job.action }
             recordBackendJob(job)
         }
@@ -2456,6 +2492,8 @@ final class AppViewModel {
         guard let structured else { return }
 
         switch action {
+        case .listJobs, .cancelJob:
+            break
         case .doctor, .doctorFix:
             latestDoctorResult = structured
         case .setupMetal:
@@ -2519,6 +2557,10 @@ final class AppViewModel {
 
     private func actionDisplayName(_ action: BackendAction) -> String {
         switch action {
+        case .listJobs:
+            return "Refresh Jobs"
+        case .cancelJob:
+            return "Cancel Job"
         case .dependencyStatus:
             return "Check Dependencies"
         case .discoverD3DMetal:
@@ -2529,6 +2571,8 @@ final class AppViewModel {
             return "Install Host Dependency"
         case .setupCompatibilityProfile:
             return "Set Up Compatibility Profile"
+        case .repairCompatibilityProfile:
+            return "Repair Compatibility Profile"
         case .resetCompatibilityProfile:
             return "Reset Compatibility Profile"
         case .resetGameOverlay:
@@ -2580,6 +2624,10 @@ final class AppViewModel {
 
     private func jobSuccessMessage(for action: BackendAction) -> String {
         switch action {
+        case .listJobs:
+            return "Job history refreshed."
+        case .cancelJob:
+            return "Cancellation requested."
         case .dependencyStatus:
             return "Dependency check finished."
         case .discoverD3DMetal:
@@ -2590,6 +2638,8 @@ final class AppViewModel {
             return "Host dependency installed."
         case .setupCompatibilityProfile:
             return "Compatibility profile is ready."
+        case .repairCompatibilityProfile:
+            return "Compatibility profile was repaired."
         case .resetCompatibilityProfile:
             return "Compatibility profile was reset."
         case .resetGameOverlay:
