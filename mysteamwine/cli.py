@@ -48,6 +48,13 @@ from .steam import (
     steam_windows_path,
 )
 from .steam_libraries import attach_registered_libraries, installed_games, refresh_registry, resolve_registered_app
+from .steam_identity import (
+    capture_steam_identity,
+    forget_steam_identity,
+    provision_steam_identity,
+    sign_out_steam_profile,
+    steam_identity_status,
+)
 from .winetricks import run_winetricks
 
 
@@ -60,6 +67,7 @@ _TRANSIENT_JOB_ACTIONS = {
     "list-jobs",
     "list-runtime-catalog",
     "list-sessions",
+    "steam-identity-status",
 }
 _TRANSIENT_JOB_IDS: set[str] = set()
 _JOB_TARGET: dict[str, str] = {}
@@ -1126,6 +1134,67 @@ def cmd_cancel_job(args: argparse.Namespace) -> None:
         _emit_json(action=action, ok=True, message=message, data=data)
     else:
         print(message)
+
+
+def _identity_result(args: argparse.Namespace, *, action: str, message: str, data: dict) -> None:
+    if _stream_enabled(args):
+        job_id = _stream_start(action=action, message=message)
+        _stream_result(action=action, job_id=job_id, ok=True, status="completed", message=message, data=data)
+    elif _json_enabled(args):
+        _emit_json(action=action, ok=True, message=message, data=data)
+    else:
+        print(message)
+
+
+def cmd_steam_identity_status(args: argparse.Namespace) -> None:
+    _identity_result(
+        args,
+        action="steam-identity-status",
+        message="Shared Steam login status loaded.",
+        data=steam_identity_status(),
+    )
+
+
+def cmd_capture_steam_identity(args: argparse.Namespace) -> None:
+    action = "capture-steam-identity"
+    if not args.confirm:
+        _json_error(args, action=action, message="Capture requires --confirm after Steam is fully closed.")
+    try:
+        data = capture_steam_identity(bottle_paths(args.source_bottle))
+    except (OSError, RuntimeError, ValueError) as exc:
+        _json_error(args, action=action, message=str(exc))
+    _identity_result(args, action=action, message=f"Protected Steam login captured from {args.source_bottle}.", data=data)
+
+
+def cmd_provision_steam_identity(args: argparse.Namespace) -> None:
+    action = "provision-steam-identity"
+    try:
+        data = provision_steam_identity(bottle_paths(args.target_bottle))
+    except (OSError, RuntimeError, ValueError, KeyError) as exc:
+        _json_error(args, action=action, message=str(exc))
+    _identity_result(args, action=action, message=f"Shared Steam login applied to {args.target_bottle}.", data=data)
+
+
+def cmd_forget_steam_identity(args: argparse.Namespace) -> None:
+    action = "forget-steam-identity"
+    if not args.confirm:
+        _json_error(args, action=action, message="Forgetting the protected login requires --confirm.")
+    try:
+        data = forget_steam_identity()
+    except (OSError, RuntimeError) as exc:
+        _json_error(args, action=action, message=str(exc))
+    _identity_result(args, action=action, message="NASE forgot the protected Steam login. Existing profile logins were unchanged.", data=data)
+
+
+def cmd_sign_out_steam_profile(args: argparse.Namespace) -> None:
+    action = "sign-out-steam-profile"
+    if not args.confirm:
+        _json_error(args, action=action, message="Signing out this profile requires --confirm.")
+    try:
+        data = sign_out_steam_profile(bottle_paths(args.target_bottle))
+    except (OSError, RuntimeError, ValueError) as exc:
+        _json_error(args, action=action, message=str(exc))
+    _identity_result(args, action=action, message=f"Signed out Steam in {args.target_bottle} only.", data=data)
 
 
 def cmd_stop_game(args: argparse.Namespace) -> None:
@@ -2545,6 +2614,23 @@ def build_parser() -> argparse.ArgumentParser:
     cancel_job_cmd = sub.add_parser("cancel-job", help="Request cancellation of a running backend job")
     cancel_job_cmd.add_argument("--job-id", required=True, help="Durable backend job id")
     cancel_job_cmd.set_defaults(func=cmd_cancel_job)
+    sub.add_parser("steam-identity-status", help="Show protected shared Steam login status without exposing tokens").set_defaults(
+        func=cmd_steam_identity_status
+    )
+    capture_identity = sub.add_parser("capture-steam-identity", help="Save the minimal remembered Steam login from one stopped profile")
+    capture_identity.add_argument("--source-bottle", required=True, help="Signed-in managed bottle to capture from")
+    capture_identity.add_argument("--confirm", action="store_true", help="Confirm protected authentication capture")
+    capture_identity.set_defaults(func=cmd_capture_steam_identity)
+    provision_identity = sub.add_parser("provision-steam-identity", help="Apply the protected Steam login to one stopped profile")
+    provision_identity.add_argument("--target-bottle", required=True, help="Managed bottle that already contains Steam")
+    provision_identity.set_defaults(func=cmd_provision_steam_identity)
+    forget_identity = sub.add_parser("forget-steam-identity", help="Delete NASE's protected login without changing profile logins")
+    forget_identity.add_argument("--confirm", action="store_true", help="Confirm deletion of the protected login")
+    forget_identity.set_defaults(func=cmd_forget_steam_identity)
+    sign_out_profile = sub.add_parser("sign-out-steam-profile", help="Remove remembered Steam authentication from one profile")
+    sign_out_profile.add_argument("--target-bottle", required=True, help="Managed bottle to sign out")
+    sign_out_profile.add_argument("--confirm", action="store_true", help="Confirm per-profile sign-out")
+    sign_out_profile.set_defaults(func=cmd_sign_out_steam_profile)
     sub.add_parser("list-compatibility-profiles", help="List pinned graphics/runtime profiles").set_defaults(func=cmd_list_compatibility_profiles)
     discover_d3dmetal = sub.add_parser("discover-d3dmetal", help="Find a matched local GPTK Wine and D3DMetal installation")
     discover_d3dmetal.add_argument("--gptk-wine", help="Previously selected GPTK Wine executable")

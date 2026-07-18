@@ -149,6 +149,7 @@ final class AppViewModel {
     private(set) var wineRuntimes: [WineRuntimeRecord] = []
     private(set) var runtimeCatalog: [ManagedRuntime] = []
     private(set) var installedManagedRuntimes: [ManagedRuntime] = []
+    private(set) var steamIdentityStatus: SteamIdentityStatus?
     private(set) var discoveredSteamGames: [LibraryGame] = []
     private(set) var nativeApps: [LibraryGame] = []
     private(set) var wineApps: [LibraryGame] = []
@@ -182,6 +183,20 @@ final class AppViewModel {
         }
 
         return ([backendContext.bottleName] + names).uniquedPreservingOrder()
+    }
+
+    var allManagedSteamBottleNames: [String] {
+        let root = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/MySteamWine/bottles", isDirectory: true)
+        let names = (try? FileManager.default.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ))?.compactMap { url -> String? in
+            guard (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { return nil }
+            return url.lastPathComponent
+        } ?? []
+        return ([backendContext.bottleName] + names.sorted()).uniquedPreservingOrder()
     }
 
     var selectedWineRuntimeID: String? {
@@ -1661,6 +1676,52 @@ final class AppViewModel {
         )
     }
 
+    func refreshSteamIdentityStatus() {
+        Task {
+            do {
+                let response = try await BackendBridge.execute(.steamIdentityStatus, context: backendContext)
+                await MainActor.run { self.steamIdentityStatus = response.steamIdentity }
+            } catch {
+                await MainActor.run { self.rightPanelMessage = "Could not load shared Steam login status: \(error.localizedDescription)" }
+            }
+        }
+    }
+
+    func captureSteamIdentity(from bottle: String) {
+        runSteamIdentityAction(.captureSteamIdentity(sourceBottle: bottle), success: "Protected Steam login saved.")
+    }
+
+    func provisionSteamIdentity(to bottle: String) {
+        runSteamIdentityAction(.provisionSteamIdentity(targetBottle: bottle), success: "Shared Steam login applied to \(bottle).")
+    }
+
+    func forgetSteamIdentity() {
+        runSteamIdentityAction(.forgetSteamIdentity, success: "NASE forgot the protected Steam login. Profile logins were unchanged.")
+    }
+
+    func signOutSteamProfile(_ bottle: String) {
+        runSteamIdentityAction(.signOutSteamProfile(targetBottle: bottle), success: "Signed out Steam in \(bottle) only.")
+    }
+
+    private func runSteamIdentityAction(_ action: BackendAction, success: String) {
+        Task {
+            do {
+                let response = try await BackendBridge.executeStreaming(action, context: backendContext) { _ in }
+                await MainActor.run {
+                    self.appendLog(response.output)
+                    self.rightPanelMessage = success
+                    self.refreshSteamIdentityStatus()
+                }
+            } catch {
+                await MainActor.run {
+                    self.appendLog("Shared Steam login action failed:\n\(error.localizedDescription)")
+                    self.rightPanelMessage = error.localizedDescription
+                    self.refreshSteamIdentityStatus()
+                }
+            }
+        }
+    }
+
     func compatibilityProfileHasSharedLibraries(_ profile: GraphicsBackendOption) -> Bool {
         let context = backendContext.compatibilityContext(for: profile)
         let config = currentPrefixURL(for: context)?
@@ -2615,6 +2676,16 @@ final class AppViewModel {
 
     private func actionDisplayName(_ action: BackendAction) -> String {
         switch action {
+        case .steamIdentityStatus:
+            return "Refresh Steam Login"
+        case .captureSteamIdentity:
+            return "Save Steam Login"
+        case .provisionSteamIdentity:
+            return "Apply Steam Login"
+        case .forgetSteamIdentity:
+            return "Forget Steam Login"
+        case .signOutSteamProfile:
+            return "Sign Out Steam Profile"
         case .listJobs:
             return "Refresh Jobs"
         case .cancelJob:
@@ -2682,6 +2753,16 @@ final class AppViewModel {
 
     private func jobSuccessMessage(for action: BackendAction) -> String {
         switch action {
+        case .steamIdentityStatus:
+            return "Shared Steam login status refreshed."
+        case .captureSteamIdentity:
+            return "Protected Steam login saved."
+        case .provisionSteamIdentity:
+            return "Shared Steam login applied."
+        case .forgetSteamIdentity:
+            return "Protected Steam login forgotten."
+        case .signOutSteamProfile:
+            return "Steam profile signed out."
         case .listJobs:
             return "Job history refreshed."
         case .cancelJob:

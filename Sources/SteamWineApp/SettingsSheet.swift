@@ -2,6 +2,20 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
+private enum SteamIdentityAction {
+    case capture(String)
+    case provision(String)
+    case signOut(String)
+    case forget
+
+    var isDestructive: Bool {
+        switch self {
+        case .signOut, .forget: return true
+        case .capture, .provision: return false
+        }
+    }
+}
+
 struct SettingsSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
@@ -23,6 +37,9 @@ struct SettingsSheet: View {
     @State private var showGPTKImportConfirmation: Bool = false
     @State private var pendingProfileReset: GraphicsBackendOption?
     @State private var showProfileResetConfirmation: Bool = false
+    @State private var selectedSteamIdentityBottle: String = ""
+    @State private var pendingSteamIdentityAction: SteamIdentityAction?
+    @State private var showSteamIdentityConfirmation: Bool = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -33,6 +50,8 @@ struct SettingsSheet: View {
                     settingsReleasePanel
 
                     settingsTargetPanel
+
+                    settingsSteamIdentityPanel
 
                     settingsDependencyPanel
 
@@ -92,6 +111,7 @@ struct SettingsSheet: View {
             model.refreshWineRuntimes()
             model.refreshRuntimeCenter()
             model.refreshDependencyStatus()
+            model.refreshSteamIdentityStatus()
             winePath = model.backendContext.winePath
             dxmtSource = model.backendContext.dxmtSource
             dxvkSource = model.backendContext.dxvkSource
@@ -100,6 +120,7 @@ struct SettingsSheet: View {
             bottleName = model.backendContext.bottleName
             externalPrefix = model.backendContext.externalPrefix ?? ""
             useExternalPrefix = !(model.backendContext.externalPrefix ?? "").isEmpty
+            selectedSteamIdentityBottle = model.backendContext.bottleName
         }
         .onChange(of: model.backendContext.dxmtSource) { _, newValue in
             dxmtSource = newValue
@@ -153,6 +174,14 @@ struct SettingsSheet: View {
             }
         } message: {
             Text("This removes the profile's Windows prefix, Steam configuration, renderer files, caches, and logs. Shared Steam game files are kept.")
+        }
+        .alert("Change Shared Steam Login?", isPresented: $showSteamIdentityConfirmation) {
+            Button("Cancel", role: .cancel) { pendingSteamIdentityAction = nil }
+            Button(steamIdentityConfirmationButton, role: pendingSteamIdentityAction?.isDestructive == true ? .destructive : nil) {
+                performPendingSteamIdentityAction()
+            }
+        } message: {
+            Text(steamIdentityConfirmationMessage)
         }
     }
 
@@ -215,6 +244,109 @@ struct SettingsSheet: View {
                 }
             }
         }
+    }
+
+    private var settingsSteamIdentityPanel: some View {
+        settingsSection("Steam Login") {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 10) {
+                    Image(systemName: model.steamIdentityStatus?.available == true ? "checkmark.shield.fill" : "person.badge.key")
+                        .foregroundStyle(model.steamIdentityStatus?.available == true ? Color.green : themeMutedForeground)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(model.steamIdentityStatus?.available == true ? "Protected login saved" : "No shared login saved")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(themeForeground)
+                        Text(steamIdentityStatusDetail)
+                            .font(.caption)
+                            .foregroundStyle(themeMutedForeground)
+                    }
+                    Spacer()
+                    Button { model.refreshSteamIdentityStatus() } label: { Image(systemName: "arrow.clockwise") }
+                }
+
+                if let active = model.steamIdentityStatus?.activeSteamProfiles, !active.isEmpty {
+                    Label("Close Windows Steam in: \(active.joined(separator: ", "))", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+
+                HStack(spacing: 10) {
+                    Picker("Profile", selection: $selectedSteamIdentityBottle) {
+                        ForEach(model.allManagedSteamBottleNames, id: \.self) { Text($0).tag($0) }
+                    }
+                    .frame(maxWidth: 310)
+                    Button("Save Login From Profile") {
+                        pendingSteamIdentityAction = .capture(selectedSteamIdentityBottle)
+                        showSteamIdentityConfirmation = true
+                    }
+                    Button("Apply Login") {
+                        pendingSteamIdentityAction = .provision(selectedSteamIdentityBottle)
+                        showSteamIdentityConfirmation = true
+                    }
+                    .disabled(model.steamIdentityStatus?.available != true)
+                }
+
+                HStack(spacing: 10) {
+                    Button("Sign Out This Profile") {
+                        pendingSteamIdentityAction = .signOut(selectedSteamIdentityBottle)
+                        showSteamIdentityConfirmation = true
+                    }
+                    Button("Forget Steam Login", role: .destructive) {
+                        pendingSteamIdentityAction = .forget
+                        showSteamIdentityConfirmation = true
+                    }
+                    .disabled(model.steamIdentityStatus?.available != true)
+                }
+
+                Text("NASE copies only the required Steam authentication metadata while every Windows Steam instance is stopped. Bottles, renderers, registries, caches, and logs stay isolated. Steam may still request your password or Steam Guard when it invalidates a session.")
+                    .font(.caption)
+                    .foregroundStyle(themeMutedForeground)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var steamIdentityStatusDetail: String {
+        guard let status = model.steamIdentityStatus else { return "Checking protected login status…" }
+        guard status.available else { return "Sign in normally in one bottle, enable Remember Me, then fully close Steam." }
+        let source = status.sourceBottle ?? "a Steam profile"
+        return "Captured from \(source) • applied to \(status.provisionedProfiles.count) profile(s)"
+    }
+
+    private var steamIdentityConfirmationButton: String {
+        switch pendingSteamIdentityAction {
+        case .capture: return "Save Login"
+        case .provision: return "Apply Login"
+        case .signOut: return "Sign Out"
+        case .forget: return "Forget Login"
+        case nil: return "Continue"
+        }
+    }
+
+    private var steamIdentityConfirmationMessage: String {
+        switch pendingSteamIdentityAction {
+        case .capture(let bottle):
+            return "Save the remembered Steam login from \(bottle)? Every Windows Steam instance must be fully closed. Existing protected login data will be replaced."
+        case .provision(let bottle):
+            return "Apply the protected login to \(bottle)? Steam must be stopped in every profile. Steam Guard may still be required."
+        case .signOut(let bottle):
+            return "Remove remembered Steam authentication from \(bottle) only? Other profile logins and NASE's protected copy will remain."
+        case .forget:
+            return "Delete NASE's protected Steam login? Existing bottles remain signed in until you sign them out separately."
+        case nil:
+            return ""
+        }
+    }
+
+    private func performPendingSteamIdentityAction() {
+        switch pendingSteamIdentityAction {
+        case .capture(let bottle): model.captureSteamIdentity(from: bottle)
+        case .provision(let bottle): model.provisionSteamIdentity(to: bottle)
+        case .signOut(let bottle): model.signOutSteamProfile(bottle)
+        case .forget: model.forgetSteamIdentity()
+        case nil: break
+        }
+        pendingSteamIdentityAction = nil
     }
 
     private var settingsTargetPanel: some View {

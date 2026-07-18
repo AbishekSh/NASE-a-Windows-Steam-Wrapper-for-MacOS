@@ -32,6 +32,16 @@ struct BackendResponse {
     let jobs: [BackendJob]
     let job: BackendJob?
     let structured: BackendStructuredResult?
+    let steamIdentity: SteamIdentityStatus?
+}
+
+struct SteamIdentityStatus {
+    let available: Bool
+    let sourceBottle: String?
+    let capturedAt: Double?
+    let accountCount: Int
+    let provisionedProfiles: [String]
+    let activeSteamProfiles: [String]
 }
 
 private actor BackendStreamAccumulator {
@@ -114,6 +124,12 @@ private struct BackendJSONData: Decodable {
     let jobs: [BackendJSONJob]?
     let gptk_wine_path: String?
     let d3dmetal_source: String?
+    let available: Bool?
+    let source_bottle: String?
+    let captured_at: Double?
+    let account_count: Int?
+    let provisioned_profiles: [String]?
+    let active_steam_profiles: [String]?
 }
 
 private struct BackendJSONJob: Decodable {
@@ -352,6 +368,11 @@ struct BackendContext {
 }
 
 enum BackendAction {
+    case steamIdentityStatus
+    case captureSteamIdentity(sourceBottle: String)
+    case provisionSteamIdentity(targetBottle: String)
+    case forgetSteamIdentity
+    case signOutSteamProfile(targetBottle: String)
     case listJobs
     case cancelJob(id: String)
     case dependencyStatus
@@ -494,6 +515,16 @@ enum BackendBridge {
         let base = context.targetArguments + ["--wine", context.winePath, "--jsonl"]
 
         switch action {
+        case .steamIdentityStatus:
+            return context.targetArguments + ["--jsonl", "steam-identity-status"]
+        case .captureSteamIdentity(let sourceBottle):
+            return context.targetArguments + ["--jsonl", "capture-steam-identity", "--source-bottle", sourceBottle, "--confirm"]
+        case .provisionSteamIdentity(let targetBottle):
+            return context.targetArguments + ["--jsonl", "provision-steam-identity", "--target-bottle", targetBottle]
+        case .forgetSteamIdentity:
+            return context.targetArguments + ["--jsonl", "forget-steam-identity", "--confirm"]
+        case .signOutSteamProfile(let targetBottle):
+            return context.targetArguments + ["--jsonl", "sign-out-steam-profile", "--target-bottle", targetBottle, "--confirm"]
         case .dependencyStatus:
             return base + ["dependency-status", "--gptk-wine", context.gptkWinePath, "--d3dmetal-source", context.d3dMetalSource]
         case .listJobs:
@@ -763,7 +794,8 @@ enum BackendBridge {
             sessions: [],
             jobs: [],
             job: nil,
-            structured: nil
+            structured: nil,
+            steamIdentity: nil
         )
     }
 
@@ -790,7 +822,20 @@ enum BackendBridge {
             sessions: sessions,
             jobs: jobs,
             job: job,
-            structured: structured
+            structured: structured,
+            steamIdentity: makeSteamIdentity(from: payload.data)
+        )
+    }
+
+    private static func makeSteamIdentity(from data: BackendJSONData?) -> SteamIdentityStatus? {
+        guard let available = data?.available else { return nil }
+        return SteamIdentityStatus(
+            available: available,
+            sourceBottle: data?.source_bottle,
+            capturedAt: data?.captured_at,
+            accountCount: data?.account_count ?? 0,
+            provisionedProfiles: data?.provisioned_profiles ?? [],
+            activeSteamProfiles: data?.active_steam_profiles ?? []
         )
     }
 

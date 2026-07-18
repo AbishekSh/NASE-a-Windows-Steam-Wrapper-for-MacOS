@@ -128,6 +128,8 @@ Ready compatibility profiles can attach those canonical libraries from Settings 
 
 NASE also keeps a persistent activity owner for each shared library. Only one profile may run Windows Steam against a library at a time, preventing two clients from updating the same files concurrently. The owning profile may launch additional games without restarting Steam; other profiles may still use direct executable launches while the shared files are idle, and a stale owner is replaced automatically after its Steam process exits.
 
+Settings → Steam Login provides an opt-in shared authentication store. After a successful remembered login, close Windows Steam in every NASE profile and choose **Save Login From Profile**. NASE stores only the bounded login metadata and account authentication subtrees under `~/Library/Application Support/MySteamWine/steam-identity` with `0700` directory and `0600` file permissions, an integrity checksum, and no token values in status output. **Apply Login** merges those fields into another stopped managed bottle; it never shares a prefix or copies renderer DLLs, unrelated registry values, caches, shader data, or logs. **Sign Out This Profile** removes authentication from one bottle, while **Forget Steam Login** deletes only NASE's protected copy. Steam remains authoritative and may fall back to password or Steam Guard when it expires or rejects a remembered session.
+
 ```bash
 python3 mysteamwine.py --bottle Default-DXMT --json attach-steam-library --all
 ```
@@ -159,6 +161,7 @@ Key Python modules:
 
 - `mysteamwine/runtime.py`: process execution, downloads, executable resolution, Wine runtime detection
 - `mysteamwine/steam_libraries.py`: cross-bottle Steam library discovery and the canonical read-only registry
+- `mysteamwine/steam_identity.py`: permission-locked, integrity-checked Steam authentication capture, per-profile provisioning, sign-out, and forget operations
 - `mysteamwine/catalog.py`: managed runtime catalog, downloads, checksum verification, extraction, and install records
 - `mysteamwine/bottle.py`: managed bottle and external-prefix paths
 - `mysteamwine/steam.py`: Steam installer/runner, VDF parsing, manifest discovery, Steam/direct game launch helpers
