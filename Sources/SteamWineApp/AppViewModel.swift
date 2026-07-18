@@ -39,6 +39,8 @@ struct StoredGameSettings: Codable {
     var collection: GameCollection = .none
     var assignedBottleName: String = ""
     var assignedExternalPrefix: String = ""
+    var legacyDirectXEnabled: Bool?
+    var legacyDirectXSource: String?
 }
 
 fileprivate struct SteamLocalMetadata {
@@ -1514,6 +1516,24 @@ final class AppViewModel {
         )
     }
 
+    func resetLegacyDirectXOverlay(for game: LibraryGame) {
+        let settings = settings(for: game)
+        let context = effectiveBackendContext(
+            backendContext
+                .overridingTarget(
+                    bottleName: settings.assignedBottleName,
+                    externalPrefix: settings.assignedExternalPrefix
+                )
+                .compatibilityContext(for: settings.graphicsBackend)
+        )
+        executeDetached(
+            .resetGameOverlay(gameID: game.backendID ?? game.pinID),
+            successMessage: "Removed the private legacy DirectX overlay.",
+            context: context,
+            game: game
+        )
+    }
+
     func discoverD3DMetal() {
         guard !isD3DMetalDiscoveryRunning else { return }
         rightPanelMessage = "Searching mounted volumes for a compatible D3DMetal runtime..."
@@ -2250,7 +2270,9 @@ final class AppViewModel {
         customBannerPath: String,
         collection: GameCollection,
         assignedBottleName: String,
-        assignedExternalPrefix: String
+        assignedExternalPrefix: String,
+        legacyDirectXEnabled: Bool,
+        legacyDirectXSource: String
     ) {
         gameSettingsByPinID[game.pinID] = StoredGameSettings(
             launchArguments: launchArguments,
@@ -2261,7 +2283,9 @@ final class AppViewModel {
             customBannerPath: customBannerPath,
             collection: collection,
             assignedBottleName: assignedBottleName,
-            assignedExternalPrefix: assignedExternalPrefix
+            assignedExternalPrefix: assignedExternalPrefix,
+            legacyDirectXEnabled: legacyDirectXEnabled,
+            legacyDirectXSource: legacyDirectXSource
         )
         persistGameSettings()
         selectedGame = filteredGames.first(where: { $0.pinID == game.pinID }) ?? selectedGame
@@ -2507,6 +2531,8 @@ final class AppViewModel {
             return "Set Up Compatibility Profile"
         case .resetCompatibilityProfile:
             return "Reset Compatibility Profile"
+        case .resetGameOverlay:
+            return "Reset Game Overlay"
         case .attachSteamLibraries:
             return "Attach Shared Steam Libraries"
         case .setupMetal:
@@ -2566,6 +2592,8 @@ final class AppViewModel {
             return "Compatibility profile is ready."
         case .resetCompatibilityProfile:
             return "Compatibility profile was reset."
+        case .resetGameOverlay:
+            return "Per-game overlay was reset."
         case .attachSteamLibraries:
             return "Shared Steam libraries attached."
         case .setupMetal:
@@ -2630,7 +2658,8 @@ final class AppViewModel {
                         graphicsBackend: settings.graphicsBackend,
                         workingDirectory: cwd,
                         environment: env,
-                        wineDebug: "-all"
+                        wineDebug: "-all",
+                        legacyDirectXSource: settings.legacyDirectXEnabled == true ? settings.legacyDirectXSource : nil
                     ),
                     successMessage: "Launched \(game.title).",
                     context: context,
@@ -2644,7 +2673,8 @@ final class AppViewModel {
                         graphicsBackend: settings.graphicsBackend,
                         workingDirectory: cwd,
                         environment: env,
-                        wineDebug: "-all"
+                        wineDebug: "-all",
+                        legacyDirectXSource: settings.legacyDirectXEnabled == true ? settings.legacyDirectXSource : nil
                     ),
                     successMessage: "Launched \(game.title).",
                     context: context,
@@ -2669,6 +2699,7 @@ final class AppViewModel {
         || !settings.launchExecutablePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         || !settings.assignedBottleName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         || !settings.assignedExternalPrefix.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        || settings.legacyDirectXEnabled == true
     }
 
     private func effectiveContext(for game: LibraryGame) -> BackendContext {

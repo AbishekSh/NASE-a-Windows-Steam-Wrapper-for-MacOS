@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import shutil
 import subprocess
 import textwrap
 import time
 import uuid
+import zipfile
 from pathlib import Path
 
 from . import APP_NAME, DEFAULT_BOTTLE_NAME
@@ -26,6 +28,7 @@ from .dxvk_macos import (
 )
 from .gptk import discover_gptk_installations, import_managed_gptk, prepare_sikarugir_native_dependencies
 from .library_activity import acquire_steam_activity, assert_direct_launch_safe, release_steam_activity
+from .legacy_directx import prepare_legacy_directx_overlay, reset_legacy_directx_overlay
 from .profiles import PROFILES, bind_profile, list_profiles, mark_profile_ready, migrate_imported_d3dmetal_profiles
 from .runtime import detect_wine_runtime, is_apple_silicon, resolve_executable, resolve_with_fallback, run_logged
 from .scanner import scan_game_dir
@@ -37,6 +40,7 @@ from .steam import (
     launch_app,
     probe_steam_stability,
     run_game_executable,
+    steam_client_is_ready,
     validate_executable_compatibility,
     run_steam,
     steam_windows_path,
@@ -2135,13 +2139,100 @@ def cmd_debug_game(args: argparse.Namespace) -> None:
                 )
                 raise SystemExit(code)
             _json_error(args, action="debug-game", message=f"D3DMetal restore failed (exit {code}). Tail:\n{tail}", code=code)
-    debug_app = resolve_registered_app(bottle, args.appid)[0] if args.appid else None
+    debug_app = None
+    debug_library_id = ""
+    if args.appid:
+        debug_app, debug_library_id = resolve_registered_app(bottle, args.appid)
     try:
         validate_executable_compatibility(
             executable=executable, wine_path=wine64, graphics_backend=graphics_backend
         )
     except RuntimeError as exc:
         _json_error(args, action="debug-game", message=str(exc))
+    launch_cwd = Path(args.cwd) if args.cwd else executable.parent
+    overlay: dict[str, str] | None = None
+    if args.legacy_directx_source:
+        try:
+            overlay = prepare_legacy_directx_overlay(
+                bottle=bottle,
+                game_id=args.appid or hashlib.sha256(str(executable.resolve()).encode()).hexdigest()[:16],
+                game_dir=debug_app.install_dir if debug_app else executable.parent,
+                executable=executable,
+                source=Path(args.legacy_directx_source),
+            )
+        except (OSError, RuntimeError, zipfile.BadZipFile) as exc:
+            _json_error(args, action="debug-game", message=f"Legacy DirectX overlay could not be prepared: {exc}")
+        executable = Path(overlay["overlay_executable"])
+        launch_cwd = Path(overlay["overlay_root"])
+        extra_env["WINEDLLOVERRIDES"] = "ddraw=n;d3dimm=n"
+    steam_was_running = steam_is_running(str(bottle.prefix))
+    steam_started_by_nase = False
+    steam_connection_offset: int | None = None
+    if args.ensure_steam:
+        if not args.appid:
+            _json_error(args, action="debug-game", message="Starting Steam automatically requires a Steam AppID.")
+        _acquire_library_or_error(
+            args,
+            action="debug-game",
+            library_id=debug_library_id,
+            prefix=str(bottle.prefix),
+            bottle=bottle.name,
+            profile_id=profile_id,
+            appid=args.appid,
+        )
+        if not steam_was_running:
+            connection_log = (
+                bottle.prefix
+                / "drive_c"
+                / "Program Files (x86)"
+                / "Steam"
+                / "logs"
+                / "connection_log.txt"
+            )
+            steam_connection_offset = connection_log.stat().st_size if connection_log.is_file() else 0
+            code, tail = run_steam(
+                bottle=bottle,
+                wine64_path=wine64,
+                extra_args=["-silent"],
+                wait=False,
+                graphics_backend=graphics_backend,
+                restart_existing=False,
+                graphics_source=(
+                    Path(args.d3dmetal_source)
+                    if graphics_backend == "d3dmetal" and args.d3dmetal_source
+                    else None
+                ),
+            )
+            if code != 0:
+                release_steam_activity(library_id=debug_library_id, prefix=str(bottle.prefix))
+                _json_error(
+                    args,
+                    action="debug-game",
+                    message=f"The matching Windows Steam could not be started (exit {code}). Tail:\n{tail}",
+                    code=code,
+                )
+            steam_started_by_nase = True
+        # Steam.exe appears well before login and the local Steam API are ready.
+        # Waiting for the connection log's current state avoids racing games
+        # that call SteamAPI_Init immediately during process startup.
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            if steam_is_running(str(bottle.prefix)) and steam_client_is_ready(
+                bottle, after_offset=steam_connection_offset
+            ):
+                break
+            time.sleep(0.5)
+        else:
+            if steam_started_by_nase:
+                release_steam_activity(library_id=debug_library_id, prefix=str(bottle.prefix))
+            _json_error(
+                args,
+                action="debug-game",
+                message=(
+                    "Windows Steam opened but did not finish signing in within one minute. "
+                    "Open Steam for this compatibility profile, finish any login or update prompt, then try again."
+                ),
+            )
     launch_session = create_session(
         bottle=bottle,
         appid=args.appid,
@@ -2152,6 +2243,9 @@ def cmd_debug_game(args: argparse.Namespace) -> None:
         strategy="direct",
         profile_id=profile_id,
         wine_path=wine64,
+        library_id=debug_library_id or None,
+        steam_started_by_nase=steam_started_by_nase,
+        steam_was_running=steam_was_running,
     )
     code, tail = run_game_executable(
         bottle=bottle,
@@ -2159,7 +2253,7 @@ def cmd_debug_game(args: argparse.Namespace) -> None:
         executable=executable,
         extra_args=extra_args,
         extra_env=extra_env or None,
-        cwd=Path(args.cwd) if args.cwd else None,
+        cwd=launch_cwd,
         wine_debug=args.wine_debug,
         wait=not args.no_wait,
         graphics_backend=graphics_backend,
@@ -2263,6 +2357,19 @@ def cmd_advise_game(args: argparse.Namespace) -> None:
         return
     for rec in recommendations:
         print(f"{rec.verb}\t{rec.reason}")
+
+
+def cmd_reset_game_overlay(args: argparse.Namespace) -> None:
+    if not args.confirm:
+        _json_error(args, action="reset-game-overlay", message="Reset requires --confirm.")
+    bottle = _resolve_bottle(args)
+    removed = reset_legacy_directx_overlay(bottle=bottle, game_id=args.game_id)
+    message = "Removed the per-game legacy DirectX overlay." if removed else "No per-game overlay was installed."
+    data = {"game_id": args.game_id, "removed": removed}
+    if _json_enabled(args) or _stream_enabled(args):
+        _emit_json(action="reset-game-overlay", ok=True, message=message, data=data)
+    else:
+        print(message)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -2482,11 +2589,25 @@ def build_parser() -> argparse.ArgumentParser:
     smart_launch_cmd.add_argument("--no-wait", action="store_true", help="Return immediately after a healthy launch path is found")
     smart_launch_cmd.set_defaults(func=cmd_smart_launch_game)
 
+    reset_overlay_cmd = sub.add_parser("reset-game-overlay", help="Remove one private per-game compatibility overlay")
+    reset_overlay_cmd.add_argument("--game-id", required=True, help="Steam AppID or stable game identifier")
+    reset_overlay_cmd.add_argument("--confirm", action="store_true", help="Confirm removal of the overlay")
+    reset_overlay_cmd.set_defaults(func=cmd_reset_game_overlay)
+
     debug_cmd = sub.add_parser("debug-game", help="Launch a game executable directly with Wine debug logging")
     debug_cmd.add_argument("--appid", help="Steam AppID to resolve to an installed game executable")
     debug_cmd.add_argument("--exe", help="Explicit path to a Windows game executable inside the bottle")
     debug_cmd.add_argument("--cwd", help="Optional working directory override")
     debug_cmd.add_argument("--env", action="append", default=[], help="Extra environment override in KEY=VALUE form")
+    debug_cmd.add_argument(
+        "--legacy-directx-source",
+        help="User-provided dgVoodoo2 ZIP or directory used to build a private per-game DirectDraw overlay",
+    )
+    debug_cmd.add_argument(
+        "--ensure-steam",
+        action="store_true",
+        help="Start Windows Steam in the selected profile before a Steam-backed direct launch",
+    )
     debug_cmd.add_argument("--dxmt-source", help="Optional DXMT directory or tar.gz archive to restore DXMT before launch")
     debug_cmd.add_argument(
         "--allow-unrecommended-dxmt",

@@ -6,10 +6,20 @@ from pathlib import Path
 from unittest.mock import patch
 
 from mysteamwine.bottle import Bottle
-from mysteamwine.steam import run_steam, validate_executable_compatibility
+from mysteamwine.steam import run_steam, steam_client_is_ready, validate_executable_compatibility
 
 
 class SteamLaunchTests(unittest.TestCase):
+    def make_bottle(self, root: Path) -> Bottle:
+        return Bottle(
+            "Test",
+            root,
+            root / "prefix",
+            root / "logs",
+            root / "downloads",
+            root / "cache",
+        )
+
     def make_x86_executable(self, root: Path) -> Path:
         executable = root / "game.exe"
         payload = bytearray(256)
@@ -78,6 +88,23 @@ class SteamLaunchTests(unittest.TestCase):
                 graphics_backend="dxmt",
             )
         self.assertEqual(architecture, "x86")
+
+    def test_steam_readiness_uses_latest_connection_state(self) -> None:
+        root = Path(tempfile.mkdtemp(prefix="nase-steam-test-"))
+        bottle = self.make_bottle(root)
+        log = bottle.prefix / "drive_c" / "Program Files (x86)" / "Steam" / "logs" / "connection_log.txt"
+        log.parent.mkdir(parents=True)
+        log.write_text("[Logged On, 4, 7] ready\n", encoding="utf-8")
+        self.assertTrue(steam_client_is_ready(bottle))
+
+        log.write_text("[Logged On, 4, 7] ready\n[Logged Off, 0, 0] stopped\n", encoding="utf-8")
+        self.assertFalse(steam_client_is_ready(bottle))
+
+        offset = log.stat().st_size
+        self.assertFalse(steam_client_is_ready(bottle, after_offset=offset))
+        with log.open("a", encoding="utf-8") as handle:
+            handle.write("[Logged On, 4, 7] fresh session\n")
+        self.assertTrue(steam_client_is_ready(bottle, after_offset=offset))
 
 
 if __name__ == "__main__":

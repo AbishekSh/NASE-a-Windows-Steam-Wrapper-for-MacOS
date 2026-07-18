@@ -338,6 +338,7 @@ enum BackendAction {
     case installHostDependency(id: String, confirmLicense: Bool)
     case setupCompatibilityProfile(GraphicsBackendOption)
     case resetCompatibilityProfile(GraphicsBackendOption)
+    case resetGameOverlay(gameID: String)
     case attachSteamLibraries(GraphicsBackendOption)
     case setupMetal
     case doctor
@@ -363,7 +364,8 @@ enum BackendAction {
         graphicsBackend: GraphicsBackendOption = .dxmt,
         workingDirectory: String? = nil,
         environment: [String] = [],
-        wineDebug: String = "+timestamp,+seh,+loaddll"
+        wineDebug: String = "+timestamp,+seh,+loaddll",
+        legacyDirectXSource: String? = nil
     )
     case debugExecutable(
         path: String,
@@ -371,7 +373,8 @@ enum BackendAction {
         graphicsBackend: GraphicsBackendOption = .dxmt,
         workingDirectory: String? = nil,
         environment: [String] = [],
-        wineDebug: String = "+timestamp,+seh,+loaddll"
+        wineDebug: String = "+timestamp,+seh,+loaddll",
+        legacyDirectXSource: String? = nil
     )
 }
 
@@ -489,6 +492,8 @@ enum BackendBridge {
             return args
         case .resetCompatibilityProfile(let profile):
             return base + ["reset-compatibility-profile", "--profile", profile.compatibilityProfileID, "--confirm"]
+        case .resetGameOverlay(let gameID):
+            return base + ["reset-game-overlay", "--game-id", gameID, "--confirm"]
         case .attachSteamLibraries:
             return base + ["attach-steam-library", "--all"]
         case .setupMetal:
@@ -540,7 +545,7 @@ enum BackendBridge {
             }
             args += ["--probe-seconds", "8", "--no-wait"]
             return args
-        case .debugGame(let appid, let gameArgs, let graphicsBackend, let workingDirectory, let environment, let wineDebug):
+        case .debugGame(let appid, let gameArgs, let graphicsBackend, let workingDirectory, let environment, let wineDebug, let legacyDirectXSource):
             var args = base
             args += ["--graphics-backend", graphicsBackend.cliValue, "--compatibility-profile", graphicsBackend.compatibilityProfileID, "debug-game", "--appid", appid]
             if graphicsBackend == .dxmt {
@@ -553,9 +558,13 @@ enum BackendBridge {
             args += ["--no-wait", "--wine-debug=\(wineDebug)"]
             args += workingDirectoryArguments(workingDirectory)
             args += environmentArguments(environment)
+            if let legacyDirectXSource, !legacyDirectXSource.isEmpty {
+                args += ["--legacy-directx-source", legacyDirectXSource]
+                args += ["--ensure-steam"]
+            }
             args += passthroughArguments(gameArgs)
             return args
-        case .debugExecutable(let path, let gameArgs, let graphicsBackend, let workingDirectory, let environment, let wineDebug):
+        case .debugExecutable(let path, let gameArgs, let graphicsBackend, let workingDirectory, let environment, let wineDebug, let legacyDirectXSource):
             var args = base
             args += ["--graphics-backend", graphicsBackend.cliValue, "--compatibility-profile", graphicsBackend.compatibilityProfileID, "debug-game", "--exe", path]
             if graphicsBackend == .dxmt {
@@ -568,6 +577,9 @@ enum BackendBridge {
             args += ["--no-wait", "--wine-debug=\(wineDebug)"]
             args += workingDirectoryArguments(workingDirectory)
             args += environmentArguments(environment)
+            if let legacyDirectXSource, !legacyDirectXSource.isEmpty {
+                args += ["--legacy-directx-source", legacyDirectXSource]
+            }
             args += passthroughArguments(gameArgs)
             return args
         }

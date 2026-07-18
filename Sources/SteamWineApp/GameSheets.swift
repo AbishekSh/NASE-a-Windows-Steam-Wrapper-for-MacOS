@@ -29,6 +29,8 @@ struct GameSettingsSheet: View {
     @State private var collection: GameCollection = .none
     @State private var assignedBottleName: String = ""
     @State private var assignedExternalPrefix: String = ""
+    @State private var legacyDirectXEnabled: Bool = false
+    @State private var legacyDirectXSource: String = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -226,6 +228,24 @@ struct GameSettingsSheet: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         }
                     }
+
+                    settingsSection("Legacy DirectX Acceleration", subtitle: "Translate 32-bit DirectDraw/Direct3D 1–7 through a private D3D11 overlay without modifying Steam's game files.") {
+                        Toggle("Enable per-game dgVoodoo2 overlay", isOn: $legacyDirectXEnabled)
+                        labeledField("dgVoodoo2 ZIP or Folder", text: $legacyDirectXSource, browse: pickLegacyDirectXSource)
+                            .disabled(!legacyDirectXEnabled)
+                        Text("You must obtain dgVoodoo2 yourself. Enabling this confirms that you accept its license. NASE copies only the 32-bit wrapper DLLs into a removable overlay; the shared installation is left untouched.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if legacyDirectXEnabled && graphicsBackend == .d3dmetal {
+                            Text("Legacy acceleration requires a 32-bit D3D11 backend. Choose DXMT or None, not D3DMetal.")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.orange)
+                        }
+                        Button("Reset Installed Overlay", role: .destructive) {
+                            model.resetLegacyDirectXOverlay(for: game)
+                        }
+                        .disabled(model.isBusy)
+                    }
                 }
                 .padding(24)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -251,12 +271,19 @@ struct GameSettingsSheet: View {
                         customBannerPath: customBannerPath,
                         collection: collection,
                         assignedBottleName: assignedBottleName,
-                        assignedExternalPrefix: assignedExternalPrefix
+                        assignedExternalPrefix: assignedExternalPrefix,
+                        legacyDirectXEnabled: legacyDirectXEnabled,
+                        legacyDirectXSource: legacyDirectXSource
                     )
                     model.closeGameSettings()
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
+                .disabled(
+                    legacyDirectXEnabled
+                        && (legacyDirectXSource.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            || graphicsBackend == .d3dmetal)
+                )
             }
             .padding(24)
             .background(.regularMaterial)
@@ -273,6 +300,8 @@ struct GameSettingsSheet: View {
             collection = settings.collection
             assignedBottleName = settings.assignedBottleName
             assignedExternalPrefix = settings.assignedExternalPrefix
+            legacyDirectXEnabled = settings.legacyDirectXEnabled == true
+            legacyDirectXSource = settings.legacyDirectXSource ?? ""
         }
     }
 
@@ -344,6 +373,17 @@ struct GameSettingsSheet: View {
             UTType(filenameExtension: "msi"),
         ].compactMap { $0 }
         panel.allowsMultipleSelection = false
+        return panel.runModal() == .OK ? panel.url?.path : nil
+    }
+
+    private func pickLegacyDirectXSource() -> String? {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.allowedContentTypes = [UTType.zip]
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Select dgVoodoo2"
+        panel.message = "Choose the official dgVoodoo2 ZIP archive or extracted folder."
         return panel.runModal() == .OK ? panel.url?.path : nil
     }
 

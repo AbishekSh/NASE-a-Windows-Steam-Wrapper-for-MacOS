@@ -314,6 +314,30 @@ def run_steam(
     return wait_code, combined_tail
 
 
+def steam_client_is_ready(bottle: Bottle, *, after_offset: int | None = None) -> bool:
+    """Return whether the current Steam session reached its logged-on state."""
+    connection_log = steam_prefix_root(bottle) / "logs" / "connection_log.txt"
+    if not connection_log.is_file():
+        return False
+    try:
+        with connection_log.open("rb") as handle:
+            size = handle.seek(0, os.SEEK_END)
+            if after_offset is not None:
+                handle.seek(after_offset if after_offset <= size else 0)
+            else:
+                handle.seek(max(0, size - 256 * 1024))
+            text = handle.read().decode("utf-8", errors="replace")
+    except OSError:
+        return False
+    logged_on = text.rfind("[Logged On,")
+    disconnected = max(
+        text.rfind("[Logged Off,"),
+        text.rfind("[Logging Off,"),
+        text.rfind("Log session ended"),
+    )
+    return logged_on >= 0 and logged_on > disconnected
+
+
 def probe_steam_stability(
     *,
     bottle: Bottle,
@@ -488,7 +512,12 @@ def run_game_executable(
     graphics_source: Path | None = None,
 ) -> tuple[int, str]:
     ensure_bottle_dirs(bottle)
-    exe_path = executable.expanduser().resolve()
+    # Keep the caller's lexical path intact. Per-game overlays intentionally use
+    # a symlink to the shared executable so wrapper DLLs can live beside that
+    # overlay path without modifying the Steam installation. Resolving the
+    # symlink here silently bypasses the overlay and Windows searches for DLLs
+    # in the original game directory instead.
+    exe_path = executable.expanduser().absolute()
     if not exe_path.exists():
         raise FileNotFoundError(f"Game executable not found: {exe_path}")
 
@@ -506,7 +535,11 @@ def run_game_executable(
     if architecture == "x86":
         env["NASE_EXECUTABLE_ARCH"] = "x86"
     if extra_env:
+        existing_overrides = env.get("WINEDLLOVERRIDES")
+        custom_overrides = extra_env.get("WINEDLLOVERRIDES")
         env.update(extra_env)
+        if existing_overrides and custom_overrides:
+            env["WINEDLLOVERRIDES"] = f"{existing_overrides};{custom_overrides}"
 
     runner = run_logged if wait else run_logged_detached
     code, tail = runner(
