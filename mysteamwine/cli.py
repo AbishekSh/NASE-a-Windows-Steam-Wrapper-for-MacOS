@@ -6,6 +6,7 @@ import json
 import signal
 import shutil
 import subprocess
+import sys
 import textwrap
 import time
 import uuid
@@ -36,6 +37,7 @@ from .runtime import detect_wine_runtime, is_apple_silicon, resolve_executable, 
 from .scanner import scan_game_dir
 from .sessions import create_session, mark_steam_opened_by_user, reconcile_sessions, steam_is_running, stop_session, update_session
 from .steam import (
+    graphics_launch_environment,
     guess_game_executable,
     install_steam,
     kill_wine_processes,
@@ -1227,8 +1229,9 @@ def cmd_list_source_games(args: argparse.Namespace) -> None:
 
 def cmd_epic_auth(args: argparse.Namespace) -> None:
     action = "epic-auth"
+    authorization_code = sys.stdin.readline().strip() if args.authorization_code_stdin else args.authorization_code
     try:
-        status = _epic_source(args).authenticate(authorization_code=args.authorization_code)
+        status = _epic_source(args).authenticate(authorization_code=authorization_code or "")
     except (OSError, RuntimeError, ValueError) as exc:
         _json_error(args, action=action, message=str(exc))
     _identity_result(args, action=action, message="Epic Games account connected.", data={"source_status": status.as_dict()})
@@ -1243,6 +1246,95 @@ def cmd_epic_logout(args: argparse.Namespace) -> None:
     except (OSError, RuntimeError, ValueError) as exc:
         _json_error(args, action=action, message=str(exc))
     _identity_result(args, action=action, message="Epic Games account signed out.", data={"source_status": status.as_dict()})
+
+
+def cmd_source_game_action(args: argparse.Namespace) -> None:
+    action = f"epic-{args.operation}"
+    source = _epic_source(args)
+    if args.operation == "uninstall" and not args.confirm:
+        _json_error(args, action=action, message="Epic uninstall requires --confirm.")
+    job_id = _stream_start(action=action, message=f"Epic {args.operation} started for {args.game_id}...") if _stream_enabled(args) else None
+    try:
+        if args.operation == "install":
+            destination = Path(args.install_root).expanduser() if args.install_root else app_support_root() / "game-libraries" / "epic"
+            source.install(args.game_id, base_path=destination)
+        elif args.operation == "update":
+            source.update(args.game_id)
+        elif args.operation == "verify":
+            source.verify(args.game_id)
+        elif args.operation == "repair":
+            source.repair(args.game_id)
+        else:
+            source.uninstall(args.game_id, keep_files=args.keep_files)
+    except (OSError, RuntimeError, ValueError) as exc:
+        if job_id:
+            _stream_result(action=action, job_id=job_id, ok=False, status="failed", message=str(exc), errors=[str(exc)])
+            raise SystemExit(1)
+        _json_error(args, action=action, message=str(exc))
+    if job_id:
+        _stream_result(
+            action=action,
+            job_id=job_id,
+            ok=True,
+            status="completed",
+            message=f"Epic {args.operation} completed for {args.game_id}.",
+            data={"source_id": "epic", "game_id": args.game_id, "operation": args.operation},
+        )
+        return
+    _identity_result(
+        args,
+        action=action,
+        message=f"Epic {args.operation} completed for {args.game_id}.",
+        data={"source_id": "epic", "game_id": args.game_id, "operation": args.operation},
+    )
+
+
+def cmd_launch_source_game(args: argparse.Namespace) -> None:
+    action = "launch-source-game"
+    bottle = _resolve_bottle(args)
+    wine_path = _require_wine64(args)
+    graphics_backend = _resolved_graphics_backend(args, for_steam=False)
+    _bind_launch_profile(args, action=action, bottle=bottle, wine_path=wine_path, graphics_backend=graphics_backend)
+    graphics_source_value = {
+        "dxmt": args.dxmt_source,
+        "dxvk": args.dxvk_source,
+        "d3dmetal": args.d3dmetal_source,
+        "none": None,
+    }[graphics_backend]
+    job_id = _stream_start(action=action, message=f"Preparing Epic launch for {args.game_id}...") if _stream_enabled(args) else None
+    try:
+        environment = graphics_launch_environment(
+            bottle,
+            graphics_backend,
+            Path(graphics_source_value) if graphics_source_value else None,
+        )
+        _epic_source(args).launch(
+            args.game_id,
+            wine_path=wine_path,
+            wine_prefix=bottle.prefix,
+            environment=environment,
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        if job_id:
+            _stream_result(action=action, job_id=job_id, ok=False, status="failed", message=str(exc), errors=[str(exc)])
+            raise SystemExit(1)
+        _json_error(args, action=action, message=str(exc))
+    if job_id:
+        _stream_result(
+            action=action,
+            job_id=job_id,
+            ok=True,
+            status="completed",
+            message=f"Epic launch request sent for {args.game_id}.",
+            data={"source_id": "epic", "game_id": args.game_id, "graphics_backend": graphics_backend},
+        )
+        return
+    _identity_result(
+        args,
+        action=action,
+        message=f"Epic launch request sent for {args.game_id}.",
+        data={"source_id": "epic", "game_id": args.game_id, "graphics_backend": graphics_backend},
+    )
 
 
 def cmd_stop_game(args: argparse.Namespace) -> None:
@@ -2688,11 +2780,28 @@ def build_parser() -> argparse.ArgumentParser:
     list_source_games.add_argument("--force-refresh", action="store_true", help="Refresh Epic metadata from the service")
     list_source_games.set_defaults(func=cmd_list_source_games)
     epic_auth = sub.add_parser("epic-auth", help="Connect Epic using an authorization code")
-    epic_auth.add_argument("--authorization-code", required=True, help="Short-lived code copied from Epic's authorization response")
+    epic_auth_input = epic_auth.add_mutually_exclusive_group(required=True)
+    epic_auth_input.add_argument("--authorization-code", help="Short-lived code copied from Epic's authorization response")
+    epic_auth_input.add_argument("--authorization-code-stdin", action="store_true", help="Read the short-lived code from standard input")
     epic_auth.set_defaults(func=cmd_epic_auth)
     epic_logout = sub.add_parser("epic-logout", help="Remove the Epic authentication stored by Legendary")
     epic_logout.add_argument("--confirm", action="store_true", help="Confirm Epic sign-out")
     epic_logout.set_defaults(func=cmd_epic_logout)
+    source_game_action = sub.add_parser("source-game-action", help="Install, update, verify, repair, or uninstall a store game")
+    source_game_action.add_argument("--source", choices=("epic",), required=True)
+    source_game_action.add_argument("--game-id", required=True, help="Provider-specific game id")
+    source_game_action.add_argument("--operation", choices=("install", "update", "verify", "repair", "uninstall"), required=True)
+    source_game_action.add_argument("--install-root", help="Shared host directory used for Epic game files")
+    source_game_action.add_argument("--keep-files", action="store_true", help="Remove Legendary metadata without deleting game files")
+    source_game_action.add_argument("--confirm", action="store_true", help="Confirm uninstall")
+    source_game_action.set_defaults(func=cmd_source_game_action)
+    launch_source_game = sub.add_parser("launch-source-game", help="Launch an installed store game through a compatibility profile")
+    launch_source_game.add_argument("--source", choices=("epic",), required=True)
+    launch_source_game.add_argument("--game-id", required=True, help="Provider-specific game id")
+    launch_source_game.add_argument("--dxmt-source", help="DXMT source for the selected profile")
+    launch_source_game.add_argument("--dxvk-source", help="DXVK-macOS source for the selected profile")
+    launch_source_game.add_argument("--d3dmetal-source", help="D3DMetal source for the selected profile")
+    launch_source_game.set_defaults(func=cmd_launch_source_game)
     sub.add_parser("list-compatibility-profiles", help="List pinned graphics/runtime profiles").set_defaults(func=cmd_list_compatibility_profiles)
     discover_d3dmetal = sub.add_parser("discover-d3dmetal", help="Find a matched local GPTK Wine and D3DMetal installation")
     discover_d3dmetal.add_argument("--gptk-wine", help="Previously selected GPTK Wine executable")

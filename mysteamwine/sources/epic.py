@@ -46,7 +46,13 @@ class EpicSource:
         candidate = Path(self.requested_client).expanduser()
         if candidate.is_file() and os.access(candidate, os.X_OK):
             return str(candidate.resolve())
-        return shutil.which(self.requested_client)
+        resolved = shutil.which(self.requested_client)
+        if resolved:
+            return resolved
+        managed = app_support_root() / "runtimes" / "source-client" / "legendary-0.20.34-macos" / "legendary"
+        if managed.is_file() and os.access(managed, os.X_OK):
+            return str(managed)
+        return None
 
     def _environment(self) -> dict[str, str]:
         self.config_root.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -124,6 +130,13 @@ class EpicSource:
 
     def authenticate(self, *, authorization_code: str) -> SourceStatus:
         code = authorization_code.strip()
+        if code.startswith("{"):
+            try:
+                payload = json.loads(code)
+                code = str(payload.get("authorizationCode") or "").strip()
+            except json.JSONDecodeError as exc:
+                raise ValueError("Epic returned unreadable authorization data. Copy the response again.") from exc
+        code = code.strip('"')
         if not code or any(character.isspace() for character in code):
             raise ValueError("Paste the authorization code from Epic without spaces.")
         self._run(["auth", "--code", code, "--disable-webview"], timeout=120)
@@ -132,6 +145,57 @@ class EpicSource:
     def sign_out(self) -> SourceStatus:
         self._run(["auth", "--delete"], timeout=30)
         return self.status()
+
+    def install(self, game_id: str, *, base_path: Path) -> None:
+        base_path = base_path.expanduser().resolve()
+        base_path.mkdir(parents=True, exist_ok=True)
+        self._run(
+            ["-y", "install", _game_id(game_id), "--base-path", str(base_path), "--platform", "Windows", "--skip-sdl", "--skip-dlcs"],
+            timeout=24 * 60 * 60,
+        )
+
+    def update(self, game_id: str) -> None:
+        self._run(["-y", "install", _game_id(game_id), "--update-only", "--platform", "Windows", "--skip-sdl", "--skip-dlcs"], timeout=24 * 60 * 60)
+
+    def verify(self, game_id: str) -> None:
+        self._run(["verify", _game_id(game_id)], timeout=4 * 60 * 60)
+
+    def repair(self, game_id: str) -> None:
+        self._run(["-y", "install", _game_id(game_id), "--repair-and-update", "--platform", "Windows", "--skip-sdl", "--skip-dlcs"], timeout=24 * 60 * 60)
+
+    def uninstall(self, game_id: str, *, keep_files: bool = False) -> None:
+        arguments = ["-y", "uninstall", _game_id(game_id)]
+        if keep_files:
+            arguments.append("--keep-files")
+        self._run(arguments, timeout=60 * 60)
+
+    def launch(self, game_id: str, *, wine_path: Path, wine_prefix: Path, environment: dict[str, str]) -> None:
+        client = self._client_path()
+        if not client:
+            raise RuntimeError("Epic support requires the managed Legendary client.")
+        command = [
+            client,
+            "launch",
+            _game_id(game_id),
+            "--wine",
+            str(wine_path.expanduser().resolve()),
+            "--wine-prefix",
+            str(wine_prefix.expanduser().resolve()),
+        ]
+        launch_environment = self._environment()
+        launch_environment.update(environment)
+        with self._lock():
+            result = self.runner(command, launch_environment, 300)
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout).strip().splitlines()
+            raise RuntimeError(f"Epic game launch failed: {detail[-1] if detail else 'unknown error'}")
+
+
+def _game_id(value: str) -> str:
+    game_id = value.strip()
+    if not game_id or any(character.isspace() for character in game_id):
+        raise ValueError("Epic game id is invalid.")
+    return game_id
 
 
 def _authenticated_from_status(payload: Any) -> bool:

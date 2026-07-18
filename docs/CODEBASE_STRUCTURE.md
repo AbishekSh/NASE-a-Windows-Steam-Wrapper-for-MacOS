@@ -97,6 +97,9 @@ The CLI is the compatibility contract. Existing commands should keep working eve
 - `steam_identity.py`: a locked shared-auth boundary that extracts and merges only Steam login metadata and bounded account-auth subtrees. It refuses mutation while any managed Windows Steam process is running and never shares entire prefixes or configuration files.
 - `sources/base.py`: source-neutral status and game records used by future store adapters.
 - `sources/epic.py`: Legendary-backed Epic status, authentication, and library discovery. It forces Windows catalog resolution on macOS, stores provider state beneath NASE app support, locks API operations to prevent refresh-token races, and never exposes authorization codes in structured results.
+  - The managed Legendary client is checksum-pinned in `catalog.py`.
+  - Epic installs use a shared host directory; update, verify, repair, and uninstall remain provider jobs.
+  - Launch delegates Epic online-auth parameter generation to Legendary while NASE supplies the selected Wine prefix and complete graphics-profile environment.
 - `library_activity.py`: locked persistent ownership for shared libraries. It permits one Windows Steam owner per library, supports multiple games under that owner, and replaces stale ownership only after the previous Steam process exits.
 - `catalog.py`: managed runtime catalog for Wine, DXVK, and DXMT. It owns pinned download URLs/checksums, archive extraction, install records, and one-button install helpers that can apply graphics payloads to the selected bottle.
 - `bottle.py`: managed and external-prefix path model.

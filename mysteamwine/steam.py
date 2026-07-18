@@ -185,6 +185,15 @@ def _graphics_launch_env(
     return env
 
 
+def graphics_launch_environment(
+    bottle: Bottle,
+    graphics_backend: str,
+    graphics_source: Path | None = None,
+) -> dict[str, str]:
+    """Return the complete profile environment for non-Steam store launchers."""
+    return _graphics_launch_env(bottle, "-all", graphics_backend, graphics_source)
+
+
 def install_steam(*, bottle: Bottle, wine64_path: Path) -> tuple[int, str]:
     ensure_bottle_dirs(bottle)
     installer = steam_setup_exe(bottle)

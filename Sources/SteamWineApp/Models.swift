@@ -390,6 +390,8 @@ struct ManagedRuntime: Identifiable, Codable, Hashable {
             return "DXMT"
         case "d3dmetal":
             return "D3DMetal"
+        case "source-client":
+            return "Store Client"
         default:
             return kind.capitalized
         }

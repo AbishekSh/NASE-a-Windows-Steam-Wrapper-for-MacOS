@@ -37,6 +37,9 @@ struct ContentView: View {
             SetupWizardSheet(model: model)
                 .interactiveDismissDisabled()
         }
+        .sheet(isPresented: $model.isShowingEpicSetup) {
+            EpicSetupSheet(model: model)
+        }
     }
 
     private var sidebar: some View {
@@ -291,7 +294,11 @@ struct ContentView: View {
                                     },
                                     onRemoveFromLibrary: {
                                         model.removeGameFromLibrary(game)
-                                    }
+                                    },
+                                    onUpdateSourceGame: { model.updateEpicGame(game) },
+                                    onVerifySourceGame: { model.verifyEpicGame(game) },
+                                    onRepairSourceGame: { model.repairEpicGame(game) },
+                                    onUninstallSourceGame: { model.uninstallEpicGame(game) }
                                 )
                                     .onDrag {
                                         draggedGame = game
@@ -351,6 +358,14 @@ struct ContentView: View {
 
     private var primaryActionControls: some View {
         HStack(spacing: 10) {
+            if model.selectedRunner == .epic {
+                Button {
+                    model.openEpicSetup()
+                } label: {
+                    toolbarButtonLabel("Epic Setup", systemImage: "person.badge.key")
+                }
+                .buttonStyle(.plain)
+            }
             Button {
                 model.openSettings()
             } label: {

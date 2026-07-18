@@ -51,6 +51,10 @@ struct GameCard: View {
     let onDebugLaunch: () -> Void
     let onChangeIcon: () -> Void
     let onRemoveFromLibrary: () -> Void
+    let onUpdateSourceGame: () -> Void
+    let onVerifySourceGame: () -> Void
+    let onRepairSourceGame: () -> Void
+    let onUninstallSourceGame: () -> Void
 
     @State private var isHovered: Bool = false
 
@@ -83,7 +87,7 @@ struct GameCard: View {
                             onLaunch()
                         }
                     } label: {
-                        Image(systemName: canStop ? "stop.fill" : "play.fill")
+                        Image(systemName: canStop ? "stop.fill" : (game.runner == .epic && game.installURL == nil ? "arrow.down" : "play.fill"))
                             .font(.subheadline.weight(.bold))
                             .foregroundStyle(Color.black)
                             .frame(width: 34, height: 34)
@@ -93,7 +97,7 @@ struct GameCard: View {
                     .buttonStyle(.plain)
                     .opacity(isBusy ? 0.55 : 1)
                     .disabled(launchStatus?.phase == .launching)
-                    .help(canStop ? "Stop \(game.title)" : "Play \(game.title)")
+                    .help(canStop ? "Stop \(game.title)" : (game.runner == .epic && game.installURL == nil ? "Install \(game.title)" : "Play \(game.title)"))
                 }
                 .frame(height: 36)
 
@@ -202,6 +206,13 @@ struct GameCard: View {
                 Button("Debug Launch") {
                     onDebugLaunch()
                 }
+            }
+            if game.runner == .epic, game.installURL != nil {
+                Divider()
+                Button("Update") { onUpdateSourceGame() }
+                Button("Verify Files") { onVerifySourceGame() }
+                Button("Repair and Update") { onRepairSourceGame() }
+                Button("Uninstall", role: .destructive) { onUninstallSourceGame() }
             }
             Button("Game Settings") {
                 onGameSettings()

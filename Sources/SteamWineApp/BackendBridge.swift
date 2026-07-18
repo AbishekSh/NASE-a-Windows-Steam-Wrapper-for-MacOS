@@ -417,6 +417,10 @@ struct BackendContext {
 enum BackendAction {
     case sourceStatus(source: String)
     case listSourceGames(source: String, forceRefresh: Bool)
+    case epicAuthenticate(code: String)
+    case epicLogout
+    case sourceGameAction(gameID: String, operation: String, confirm: Bool = false)
+    case launchSourceGame(gameID: String, graphicsBackend: GraphicsBackendOption)
     case steamIdentityStatus
     case captureSteamIdentity(sourceBottle: String)
     case provisionSteamIdentity(targetBottle: String)
@@ -555,7 +559,21 @@ enum BackendBridge {
         process.standardOutput = output
         process.standardError = output
 
+        let input: Pipe?
+        if case .epicAuthenticate(let code) = action {
+            let pipe = Pipe()
+            process.standardInput = pipe
+            input = pipe
+            _ = code
+        } else {
+            input = nil
+        }
+
         try process.run()
+        if case .epicAuthenticate(let code) = action {
+            input?.fileHandleForWriting.write(Data((code + "\n").utf8))
+            try? input?.fileHandleForWriting.close()
+        }
         let result = try await collectStreamingResult(
             from: process,
             output: output,
@@ -574,6 +592,27 @@ enum BackendBridge {
         case .listSourceGames(let source, let forceRefresh):
             return context.targetArguments + ["--jsonl", "list-source-games", "--source", source]
                 + (forceRefresh ? ["--force-refresh"] : [])
+        case .epicAuthenticate:
+            return context.targetArguments + ["--jsonl", "epic-auth", "--authorization-code-stdin"]
+        case .epicLogout:
+            return context.targetArguments + ["--jsonl", "epic-logout", "--confirm"]
+        case .sourceGameAction(let gameID, let operation, let confirm):
+            return context.targetArguments + ["--jsonl", "source-game-action", "--source", "epic", "--game-id", gameID, "--operation", operation]
+                + (confirm ? ["--confirm"] : [])
+        case .launchSourceGame(let gameID, let graphicsBackend):
+            var args = base + [
+                "--graphics-backend", graphicsBackend.cliValue,
+                "--compatibility-profile", graphicsBackend.compatibilityProfileID,
+                "launch-source-game", "--source", "epic", "--game-id", gameID,
+            ]
+            if graphicsBackend == .dxmt {
+                args += ["--dxmt-source", context.dxmtSource]
+            } else if graphicsBackend == .dxvk {
+                args += ["--dxvk-source", context.dxvkSource]
+            } else if graphicsBackend == .d3dmetal {
+                args += ["--d3dmetal-source", context.d3dMetalSource]
+            }
+            return args
         case .steamIdentityStatus:
             return context.targetArguments + ["--jsonl", "steam-identity-status"]
         case .captureSteamIdentity(let sourceBottle):

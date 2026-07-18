@@ -78,6 +78,72 @@ class EpicSourceTests(unittest.TestCase):
                 source.authenticate(authorization_code="super-secret-code")
             self.assertNotIn("super-secret-code", str(raised.exception))
 
+    def test_auth_accepts_complete_epic_json_response(self) -> None:
+        commands: list[list[str]] = []
+        with tempfile.TemporaryDirectory() as temporary:
+            client = Path(temporary) / "legendary"
+            client.write_text("", encoding="utf-8")
+            client.chmod(0o755)
+
+            def runner(command, environment, timeout):
+                commands.append(command)
+                if command[1] == "status":
+                    return subprocess.CompletedProcess(command, 0, '{"account_id":"123"}', "")
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            status = EpicSource(str(client), runner=runner).authenticate(
+                authorization_code='{"authorizationCode": "short-code"}'
+            )
+        self.assertTrue(status.authenticated)
+        self.assertIn("short-code", commands[0])
+
+    def test_game_operations_are_non_shell_commands(self) -> None:
+        commands: list[list[str]] = []
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            client = root / "legendary"
+            client.write_text("", encoding="utf-8")
+            client.chmod(0o755)
+
+            def runner(command, environment, timeout):
+                commands.append(command)
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            source = EpicSource(str(client), runner=runner)
+            source.install("Anemone", base_path=root / "games")
+            source.update("Anemone")
+            source.verify("Anemone")
+            source.repair("Anemone")
+            source.uninstall("Anemone")
+        self.assertIn("--platform", commands[0])
+        self.assertIn("Windows", commands[0])
+        self.assertIn("--update-only", commands[1])
+        self.assertEqual(commands[2][1:3], ["verify", "Anemone"])
+        self.assertIn("--repair-and-update", commands[3])
+        self.assertEqual(commands[4][1:4], ["-y", "uninstall", "Anemone"])
+
+    def test_launch_receives_profile_environment(self) -> None:
+        captured: dict[str, object] = {}
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            client = root / "legendary"
+            client.write_text("", encoding="utf-8")
+            client.chmod(0o755)
+
+            def runner(command, environment, timeout):
+                captured["command"] = command
+                captured["environment"] = environment
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            EpicSource(str(client), runner=runner).launch(
+                "Anemone",
+                wine_path=root / "wine",
+                wine_prefix=root / "prefix",
+                environment={"WINEDLLOVERRIDES": "d3d11=n,b"},
+            )
+        self.assertIn("--wine-prefix", captured["command"])
+        self.assertEqual(captured["environment"]["WINEDLLOVERRIDES"], "d3d11=n,b")
+
 
 if __name__ == "__main__":
     unittest.main()

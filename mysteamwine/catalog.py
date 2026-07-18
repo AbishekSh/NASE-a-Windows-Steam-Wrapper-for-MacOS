@@ -48,6 +48,19 @@ StepCallback = Callable[[str, str, str], None]
 
 CATALOG: tuple[RuntimeCatalogEntry, ...] = (
     RuntimeCatalogEntry(
+        id="legendary-0.20.34-macos",
+        name="Legendary Epic Client",
+        version="0.20.34",
+        kind="source-client",
+        source="legendary-gl/legendary",
+        download_url="https://github.com/legendary-gl/legendary/releases/download/0.20.34/legendary_macOS.zip",
+        sha256="875e5977697d1fe1bc49ae5fe4a38d904bf62b01eead42f21538c68dc5e0409c",
+        archive_type="zip",
+        install_layout="legendary-macos",
+        license="GPL-3.0",
+        notes="Pinned standalone macOS client used for Epic authentication, library management, downloads, repair, and launch metadata.",
+    ),
+    RuntimeCatalogEntry(
         id="dxvk-macos-1.10.3-20230507-repack",
         name="DXVK-macOS Async",
         version="1.10.3-20230507 repack",
@@ -350,6 +363,16 @@ def install_runtime(
 
     notes: list[str] = []
     executable = _find_wine_executable(extracted) if entry.kind == "wine" else None
+    if entry.install_layout == "legendary-macos":
+        legendary = extracted / "legendary"
+        if not legendary.is_file():
+            raise RuntimeError("Legendary archive is missing its macOS executable.")
+        legendary.chmod(0o700)
+        result = subprocess.run([str(legendary), "--version"], capture_output=True, text=True, timeout=15, check=False)
+        version = (result.stdout or result.stderr).strip()
+        if result.returncode != 0 or "0.20.34" not in version:
+            raise RuntimeError(f"Unexpected Legendary version: {version or 'unknown'}")
+        executable = str(legendary)
     if entry.id == "wine-sikarugir-10.0-r6":
         if executable is None or not (extracted / "bin" / "wineserver").is_file():
             raise RuntimeError("Sikarugir Wine archive is missing bin/wine or bin/wineserver.")
@@ -380,5 +403,7 @@ def install_runtime(
         notes.append(f"Wine executable: {executable}")
     elif entry.kind == "wine":
         notes.append("Wine archive installed, but no bin/wine executable was detected.")
+    elif entry.kind == "source-client" and executable:
+        notes.append(f"Source client executable: {executable}")
 
     return installed, notes

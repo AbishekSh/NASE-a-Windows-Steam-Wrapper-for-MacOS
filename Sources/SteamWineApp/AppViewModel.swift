@@ -120,6 +120,7 @@ final class AppViewModel {
     var isShowingLogViewer: Bool = false
     var isShowingWinetricks: Bool = false
     var isShowingSetupWizard: Bool = false
+    var isShowingEpicSetup: Bool = false
     var isCheckingForUpdates: Bool = false
     var isDownloadingUpdate: Bool = false
     var updateStatusMessage: String = "Updates have not been checked yet."
@@ -304,7 +305,9 @@ final class AppViewModel {
             return "Add Windows games, folders, or installers with the + button."
         case .mac:
             return "Add native macOS apps with the + button."
-        case .epic, .gog:
+        case .epic:
+            return epicSourceStatus?.message ?? "Use Epic Setup to install the source client and connect your account."
+        case .gog:
             return "This source is planned but not wired yet."
         }
     }
@@ -487,6 +490,72 @@ final class AppViewModel {
 
     func openSetupWizard() {
         isShowingSetupWizard = true
+    }
+
+    func openEpicSetup() {
+        isShowingEpicSetup = true
+        refreshEpicSourceStatus()
+    }
+
+    func refreshEpicSourceStatus() {
+        Task {
+            do {
+                let response = try await BackendBridge.execute(.sourceStatus(source: "epic"), context: backendContext)
+                epicSourceStatus = response.sourceStatus
+            } catch {
+                rightPanelMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func installLegendary() {
+        guard let runtime = runtimeCatalog.first(where: { $0.id == "legendary-0.20.34-macos" }) else {
+            refreshRuntimeCenter()
+            rightPanelMessage = "Loading the Legendary runtime…"
+            return
+        }
+        let action = BackendAction.installRuntime(id: runtime.id)
+        executeDetached(action, successMessage: "Legendary installed. Continue with Epic sign-in.", context: backendContext)
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            refreshRuntimeCenter()
+            refreshEpicSourceStatus()
+        }
+    }
+
+    func authenticateEpic(code: String) {
+        let cleaned = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else {
+            rightPanelMessage = "Paste the authorization code from Epic first."
+            return
+        }
+        Task {
+            do {
+                let response = try await BackendBridge.executeStreaming(.epicAuthenticate(code: cleaned), context: backendContext) { _ in }
+                epicSourceStatus = response.sourceStatus
+                appendLog(response.output)
+                rightPanelMessage = "Epic Games account connected."
+                refreshEpicLibrary(forceRefresh: true)
+            } catch {
+                appendLog("Epic sign-in failed:\n\(error.localizedDescription)")
+                rightPanelMessage = error.localizedDescription
+                refreshEpicSourceStatus()
+            }
+        }
+    }
+
+    func logoutEpic() {
+        Task {
+            do {
+                let response = try await BackendBridge.executeStreaming(.epicLogout, context: backendContext) { _ in }
+                epicSourceStatus = response.sourceStatus
+                epicGames = []
+                appendLog(response.output)
+                rightPanelMessage = "Epic Games account signed out."
+            } catch {
+                rightPanelMessage = error.localizedDescription
+            }
+        }
     }
 
     func closeSetupWizard() {
@@ -1383,9 +1452,60 @@ final class AppViewModel {
             if let sourceGame = underlyingGame(for: game) {
                 launch(sourceGame)
             }
-        case .epic, .gog:
+        case .epic:
+            guard let gameID = game.backendID else { return }
+            if game.installURL == nil {
+                executeDetached(
+                    .sourceGameAction(gameID: gameID, operation: "install"),
+                    successMessage: "Installed \(game.title). Refresh Epic when the download completes.",
+                    context: backendContext,
+                    game: game
+                )
+            } else {
+                let graphics = settings(for: game).graphicsBackend
+                let context = effectiveBackendContext(backendContext.compatibilityContext(for: graphics))
+                executeDetached(
+                    .launchSourceGame(gameID: gameID, graphicsBackend: graphics),
+                    successMessage: "Launched \(game.title).",
+                    context: context,
+                    game: game
+                )
+            }
+        case .gog:
             break
         }
+    }
+
+    func updateEpicGame(_ game: LibraryGame) {
+        runEpicMaintenance(game, operation: "update")
+    }
+
+    func verifyEpicGame(_ game: LibraryGame) {
+        runEpicMaintenance(game, operation: "verify")
+    }
+
+    func repairEpicGame(_ game: LibraryGame) {
+        runEpicMaintenance(game, operation: "repair")
+    }
+
+    func uninstallEpicGame(_ game: LibraryGame) {
+        let alert = NSAlert()
+        alert.messageText = "Uninstall \(game.title)?"
+        alert.informativeText = "This deletes the Epic game files. The game remains in your owned library and can be installed again."
+        alert.addButton(withTitle: "Uninstall")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        runEpicMaintenance(game, operation: "uninstall", confirm: true)
+    }
+
+    private func runEpicMaintenance(_ game: LibraryGame, operation: String, confirm: Bool = false) {
+        guard game.runner == .epic, let gameID = game.backendID else { return }
+        executeDetached(
+            .sourceGameAction(gameID: gameID, operation: operation, confirm: confirm),
+            successMessage: "Epic \(operation) completed for \(game.title).",
+            context: backendContext,
+            game: game
+        )
     }
 
     func debugLaunch(_ game: LibraryGame) {
@@ -2737,6 +2857,14 @@ final class AppViewModel {
             return "Check Game Source"
         case .listSourceGames:
             return "Refresh Store Library"
+        case .epicAuthenticate:
+            return "Connect Epic Games"
+        case .epicLogout:
+            return "Sign Out Epic Games"
+        case .sourceGameAction(_, let operation, _):
+            return "Epic \(operation.capitalized)"
+        case .launchSourceGame:
+            return "Launch Epic Game"
         case .steamIdentityStatus:
             return "Refresh Steam Login"
         case .captureSteamIdentity:
@@ -2818,6 +2946,14 @@ final class AppViewModel {
             return "Game source status refreshed."
         case .listSourceGames:
             return "Store library refreshed."
+        case .epicAuthenticate:
+            return "Epic Games account connected."
+        case .epicLogout:
+            return "Epic Games account signed out."
+        case .sourceGameAction(_, let operation, _):
+            return "Epic \(operation) completed."
+        case .launchSourceGame:
+            return "Epic game launch sent."
         case .steamIdentityStatus:
             return "Shared Steam login status refreshed."
         case .captureSteamIdentity:
