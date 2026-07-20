@@ -32,6 +32,36 @@ class EpicSourceTests(unittest.TestCase):
         self.assertEqual(world.install_path, "/Games/WorldOfGoo")
         self.assertEqual(world.version, "1.2")
 
+    def test_normalizes_official_epic_wide_artwork(self) -> None:
+        wide = "https://cdn1.epicgames.com/item/game-wide.jpg"
+        tall = "https://cdn1.epicgames.com/item/game-tall.jpg"
+        owned = [{
+            "app_name": "Mushroom",
+            "app_title": "Among Friends",
+            "metadata": {
+                "keyImages": [
+                    {"type": "DieselGameBoxTall", "width": 1200, "height": 1600, "url": tall},
+                    {"type": "DieselGameBox", "width": 2560, "height": 1440, "url": wide},
+                ]
+            },
+        }]
+        self.assertEqual(normalize_epic_games(owned, [])[0].art_url, wide)
+
+    def test_artwork_falls_back_to_a_safe_available_image(self) -> None:
+        fallback = "https://cdn2.unrealengine.com/item/fallback.jpg"
+        owned = [{
+            "app_name": "Fallback",
+            "metadata": {
+                "title": "Fallback Game",
+                "keyImages": [
+                    {"type": "Logo", "url": "file:///tmp/private.png"},
+                    {"type": "UnknownArtwork", "width": 800, "height": 450, "url": fallback},
+                ],
+            },
+        }]
+        games = normalize_epic_games(owned, [])
+        self.assertEqual(games[0].art_url, fallback)
+
     def test_missing_client_has_friendly_status(self) -> None:
         with tempfile.TemporaryDirectory() as temporary, \
              patch("mysteamwine.sources.epic.shutil.which", return_value=None), \

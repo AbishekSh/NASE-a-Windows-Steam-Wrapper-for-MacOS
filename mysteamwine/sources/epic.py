@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+from urllib.parse import urlparse
 from typing import Any, Callable, Iterator
 
 from ..bottle import app_support_root
@@ -238,6 +239,65 @@ def _value(item: dict[str, Any], *keys: str) -> Any:
     return None
 
 
+def _safe_art_url(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    candidate = value.strip()
+    parsed = urlparse(candidate)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+    return candidate
+
+
+def _epic_art_url(item: dict[str, Any], metadata: dict[str, Any]) -> str | None:
+    """Choose the best card artwork exposed by Epic/Legendary metadata."""
+    direct = _safe_art_url(
+        _value(item, "art_url", "artUrl") or _value(metadata, "art_url", "artUrl")
+    )
+    if direct:
+        return direct
+
+    raw_images = (
+        _value(metadata, "keyImages", "key_images")
+        or _value(item, "keyImages", "key_images")
+        or []
+    )
+    if not isinstance(raw_images, list):
+        return None
+
+    preferred_types = {
+        "dieselstorefrontwide": 700,
+        "offerimagewide": 650,
+        "dieselgamebox": 600,
+        "featured": 550,
+        "hero": 500,
+        "vaultclosed": 450,
+        "comingsoon": 400,
+        "thumbnail": 250,
+        "dieselgameboxtall": 100,
+        "offerimagetall": 100,
+    }
+    candidates: list[tuple[float, str]] = []
+    for image in raw_images:
+        if not isinstance(image, dict):
+            continue
+        url = _safe_art_url(_value(image, "url", "imageUrl", "image_url"))
+        if not url:
+            continue
+        try:
+            width = max(float(_value(image, "width") or 0), 0)
+            height = max(float(_value(image, "height") or 0), 0)
+        except (TypeError, ValueError):
+            width = height = 0
+        image_type = str(_value(image, "type") or "").replace("_", "").casefold()
+        aspect = width / height if height else 0
+        # Wide artwork fits NASE's landscape cards; resolution breaks ties.
+        shape_score = 300 if aspect >= 1.45 else (100 if aspect >= 1 else 0)
+        size_score = min((width * height) / 1_000_000, 20)
+        candidates.append((preferred_types.get(image_type, 200) + shape_score + size_score, url))
+    return max(candidates, default=(0, None), key=lambda candidate: candidate[0])[1]
+
+
 def normalize_epic_games(owned_payload: Any, installed_payload: Any) -> list[SourceGame]:
     installed: dict[str, dict[str, Any]] = {}
     for item in _items(installed_payload):
@@ -256,7 +316,7 @@ def normalize_epic_games(owned_payload: Any, installed_payload: Any) -> list[Sou
         if local:
             install_path = _value(local, "install_path", "installPath", "path")
         metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
-        art_url = _value(item, "art_url", "artUrl") or _value(metadata, "art_url", "artUrl")
+        art_url = _epic_art_url(item, metadata)
         games.append(
             SourceGame(
                 source="epic",
@@ -267,7 +327,7 @@ def normalize_epic_games(owned_payload: Any, installed_payload: Any) -> list[Sou
                 install_path=str(install_path) if install_path else None,
                 version=str(_value(local or {}, "version", "app_version") or "") or None,
                 update_available=bool(_value(local or {}, "update_available", "updateAvailable") or False),
-                art_url=str(art_url) if art_url else None,
+                art_url=art_url,
             )
         )
     return sorted(games, key=lambda game: (game.title.casefold(), game.store_id))
