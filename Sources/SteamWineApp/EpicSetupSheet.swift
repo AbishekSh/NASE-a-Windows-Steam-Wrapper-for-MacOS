@@ -36,10 +36,17 @@ struct EpicSetupSheet: View {
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button(legendaryRuntime?.installed == true ? "Installed" : "Install") {
-                        model.installLegendary()
+                    Button { model.installLegendary() } label: {
+                        if model.installingRuntimeID == "legendary-python-0.20.34-macos" {
+                            HStack(spacing: 7) {
+                                ProgressView().controlSize(.small)
+                                Text("Installing…")
+                            }
+                        } else {
+                            Text(legendaryRuntime?.installed == true ? "Installed" : "Install")
+                        }
                     }
-                    .disabled(legendaryRuntime?.installed == true)
+                    .disabled(legendaryRuntime?.installed == true || model.installingRuntimeID != nil)
                 }
                 .padding(8)
             }

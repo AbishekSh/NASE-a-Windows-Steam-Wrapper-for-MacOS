@@ -6,6 +6,7 @@ struct ContentView: View {
     @Bindable var model: AppViewModel
     @Environment(\.colorScheme) private var colorScheme
     @State private var draggedGame: LibraryGame?
+    @AppStorage("libraryDisplayMode") private var libraryDisplayMode: LibraryDisplayMode = .grid
 
     var body: some View {
         NavigationSplitView {
@@ -94,55 +95,8 @@ struct ContentView: View {
                 .padding(.vertical, 12)
             }
 
-            if shouldShowSidebarFooter {
-                Divider()
-
-                VStack(spacing: 8) {
-                    if model.selectedRunner == .steam {
-                        Button {
-                            model.perform(
-                                OperationCard(
-                                    kind: .openSteam,
-                                    title: "Open Steam",
-                                    detail: "Launch Windows Steam without waiting for it to exit.",
-                                    symbolName: "play.circle"
-                                )
-                            )
-                        } label: {
-                            sidebarFooterLabel("Open Steam", systemImage: "play.circle")
-                        }
-                        .buttonStyle(.plain)
-
-                        Button {
-                            model.refreshGames()
-                        } label: {
-                            sidebarFooterLabel("Refresh", systemImage: "arrow.clockwise")
-                        }
-                        .buttonStyle(.plain)
-                    }
-
-                    if model.selectedRunner == .epic {
-                        Button {
-                            model.refreshEpicLibrary()
-                        } label: {
-                            sidebarFooterLabel("Refresh Epic", systemImage: "arrow.clockwise")
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    if model.selectedRunner == .gog {
-                        Button {
-                            model.refreshGOGLibrary()
-                        } label: {
-                            sidebarFooterLabel("Refresh GOG", systemImage: "arrow.clockwise")
-                        }
-                        .buttonStyle(.plain)
-                    }
-
-                    addGameControl
-                }
-                .padding(10)
-                .background(themePanel)
-            }
+            Divider()
+            sidebarCommandCenter
         }
         .background(themeSidebar)
         .navigationTitle("Sources")
@@ -235,6 +189,18 @@ struct ContentView: View {
                             .fixedSize()
                         }
 
+                        Picker("Library layout", selection: $libraryDisplayMode) {
+                            Label("Grid", systemImage: "square.grid.2x2")
+                                .labelStyle(.iconOnly)
+                                .tag(LibraryDisplayMode.grid)
+                            Label("List", systemImage: "list.bullet")
+                                .labelStyle(.iconOnly)
+                                .tag(LibraryDisplayMode.list)
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(width: 76)
+                        .help(libraryDisplayMode == .grid ? "Switch to list view" : "Switch to grid view")
+
                         Spacer(minLength: 0)
                     }
                 }
@@ -261,73 +227,30 @@ struct ContentView: View {
                             }
                         )
                         .padding(20)
-                    } else {
-                        LazyVGrid(columns: gridColumns(for: geometry.size.width), spacing: 24) {
+                    } else if libraryDisplayMode == .grid {
+                        LazyVGrid(
+                            columns: gridColumns(for: geometry.size.width),
+                            alignment: .leading,
+                            spacing: libraryGridSpacing
+                        ) {
                             ForEach(model.filteredGames) { game in
-                                GameCard(
-                                    game: game,
-                                    isBusy: model.isBusy,
-                                    isDragging: draggedGame?.pinID == game.pinID,
-                                    collection: model.settings(for: game).collection,
-                                    launchStatus: model.launchStatus(for: game),
-                                    canStop: model.canStop(game),
-                                    steamCacheURL: model.steamLibraryCacheURL,
-                                    onLaunch: {
-                                        model.launch(game)
-                                    },
-                                    onStop: {
-                                        model.stop(game)
-                                    },
-                                    isPinned: model.isPinned(game),
-                                    onTogglePin: {
-                                        model.togglePin(for: game)
-                                    },
-                                    onOpenStore: {
-                                        model.openSteamStorePage(for: game)
-                                    },
-                                    onRevealFiles: {
-                                        model.revealLocalFiles(for: game)
-                                    },
-                                    onOpenDetails: {
-                                        model.openGameDetails(for: game)
-                                    },
-                                    onGameSettings: {
-                                        model.openGameSettings(for: game)
-                                    },
-                                    onRevealLogs: {
-                                        model.openLogViewer(for: game)
-                                    },
-                                    onDebugLaunch: {
-                                        model.debugLaunch(game)
-                                    },
-                                    onChangeIcon: {
-                                        model.changeAppIcon()
-                                    },
-                                    onRemoveFromLibrary: {
-                                        model.removeGameFromLibrary(game)
-                                    },
-                                    onUpdateSourceGame: { game.runner == .gog ? model.updateGOGGame(game) : model.updateEpicGame(game) },
-                                    onVerifySourceGame: { game.runner == .gog ? model.verifyGOGGame(game) : model.verifyEpicGame(game) },
-                                    onRepairSourceGame: { game.runner == .gog ? model.repairGOGGame(game) : model.repairEpicGame(game) },
-                                    onUninstallSourceGame: { game.runner == .gog ? model.uninstallGOGGame(game) : model.uninstallEpicGame(game) }
-                                )
-                                    .onDrag {
-                                        draggedGame = game
-                                        return NSItemProvider(object: game.pinID as NSString)
-                                    } preview: {
-                                        DragBadge(title: game.title)
-                                    }
-                                    .onDrop(
-                                        of: [UTType.text],
-                                        delegate: GameDropDelegate(
-                                            targetGame: game,
-                                            draggedGame: $draggedGame,
-                                            model: model
-                                        )
-                                    )
+                                GeometryReader { cell in
+                                    gameCard(for: game)
+                                        .frame(width: cell.size.width)
+                                }
+                                .frame(height: libraryCardHeight)
                             }
                         }
-                        .padding(24)
+                        .padding(.horizontal, libraryGridPadding)
+                        .padding(.vertical, libraryGridSpacing)
+                    } else {
+                        LazyVStack(spacing: 12) {
+                            ForEach(model.filteredGames) { game in
+                                gameCard(for: game)
+                            }
+                        }
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 18)
                     }
                 }
                 .background(themeBackground)
@@ -348,27 +271,70 @@ struct ContentView: View {
     private var themeControlBackground: Color { colorScheme == .dark ? Color(hex: "#20251F") : Color(hex: "#F4F8F2") }
     private var themeControlBorder: Color { colorScheme == .dark ? Color.white.opacity(0.07) : Color.black.opacity(0.08) }
 
+    private let libraryGridSpacing: CGFloat = 20
+    private let libraryGridPadding: CGFloat = 20
+    private let libraryCardHeight: CGFloat = 196
+
     private func gridColumns(for availableWidth: CGFloat) -> [GridItem] {
-        let spacing: CGFloat = 28
-        let minimumCardWidth: CGFloat = availableWidth < 760 ? 320 : 420
-        return [
-            GridItem(.adaptive(minimum: minimumCardWidth, maximum: 620), spacing: spacing)
-        ]
+        let preferredCardWidth: CGFloat = 360
+        let usableWidth = max(260, availableWidth - (libraryGridPadding * 2))
+        let columnCount = max(
+            1,
+            Int((usableWidth + libraryGridSpacing) / (preferredCardWidth + libraryGridSpacing))
+        )
+
+        return Array(
+            repeating: GridItem(
+                .flexible(minimum: 260, maximum: 420),
+                spacing: libraryGridSpacing,
+                alignment: .top
+            ),
+            count: columnCount
+        )
     }
 
     private var libraryTitleBlock: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(model.selectedRunner?.rawValue ?? "Library")
                 .font(.system(size: 22, weight: .bold, design: .rounded))
-            Text(model.settingsSummary)
+            Text(librarySubtitle)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
         }
     }
 
+    private var librarySubtitle: String {
+        let count = model.filteredGames.count
+        let noun = count == 1 ? "game" : "games"
+        let description = model.selectedRunner?.subtitle ?? "Your game library"
+        return "\(count) \(noun)  •  \(description)"
+    }
+
     private var primaryActionControls: some View {
         HStack(spacing: 10) {
+            if model.selectedRunner == .steam {
+                Button { model.perform(OperationCard(kind: .openSteam, title: "Open Steam", detail: "Open Windows Steam.", symbolName: "play.circle")) } label: {
+                    toolbarButtonLabel("Open Steam", systemImage: "play.circle")
+                }
+                .buttonStyle(.plain)
+            }
+            if model.shouldShowAddButton {
+                if model.shouldShowWineAddMenu {
+                    Menu {
+                        Button("Add Windows Game") { model.performPrimaryAddAction() }
+                        Button("Open Installer") { model.openWineInstaller() }
+                    } label: {
+                        toolbarButtonLabel("Add", systemImage: "plus")
+                    }
+                    .menuStyle(.borderlessButton)
+                } else {
+                    Button { model.performPrimaryAddAction() } label: {
+                        toolbarButtonLabel(model.selectedRunnerActionTitle, systemImage: "plus")
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
             if model.selectedRunner == .epic {
                 Button {
                     model.openEpicSetup()
@@ -385,6 +351,13 @@ struct ContentView: View {
                 }
                 .buttonStyle(.plain)
             }
+            if let runner = model.selectedRunner, [.steam, .epic, .gog].contains(runner) {
+                Button { refreshSelectedSource() } label: {
+                    toolbarButtonLabel("Refresh", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.plain)
+                .help("Refresh the selected library")
+            }
             Button {
                 model.openSettings()
             } label: {
@@ -394,52 +367,95 @@ struct ContentView: View {
         }
     }
 
-    private var shouldShowSidebarFooter: Bool {
-        model.selectedRunner == .steam || model.selectedRunner == .epic || model.selectedRunner == .gog || model.shouldShowAddButton
+    private var sidebarCommandCenter: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let job = model.currentOperationJob {
+                HStack(spacing: 9) {
+                    ProgressView().controlSize(.small)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(job.action).font(.caption.weight(.semibold)).lineLimit(1)
+                        Text(job.message).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+            } else {
+                Label("Ready", systemImage: "checkmark.circle.fill")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+            }
+
+            Button {
+                model.stopAllWineProcesses()
+            } label: {
+                Label("Stop Wine Processes", systemImage: "stop.circle.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 11)
+                    .frame(height: 34)
+                    .foregroundStyle(Color(hex: "#F2B0AD"))
+                    .background(Color(hex: "#7F3432").opacity(0.34))
+                    .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .disabled(model.hasActiveBackendWork && model.currentOperationJob?.action == "Kill Wine")
+            .help("Emergency stop for Wine processes in the current bottle or prefix")
+        }
+        .padding(12)
+        .background(themeSidebar)
+        .animation(.easeInOut(duration: 0.18), value: model.currentOperationJob?.id)
     }
 
-    @ViewBuilder
-    private var addGameControl: some View {
-        if model.shouldShowAddButton {
-            if model.shouldShowWineAddMenu {
-                Menu {
-                    Button("Add Windows Game") {
-                        model.performPrimaryAddAction()
-                    }
-                    Button("Open Installer") {
-                        model.openWineInstaller()
-                    }
-                } label: {
-                    sidebarFooterLabel("Add", systemImage: "plus")
-                }
-                .menuStyle(.borderlessButton)
-            } else {
-                Button {
-                    model.performPrimaryAddAction()
-                } label: {
-                    sidebarFooterLabel(model.selectedRunnerActionTitle, systemImage: "plus")
-                }
-                .buttonStyle(.plain)
-            }
+    private func refreshSelectedSource() {
+        switch model.selectedRunner {
+        case .steam: model.refreshGames()
+        case .epic: model.refreshEpicLibrary()
+        case .gog: model.refreshGOGLibrary()
+        default: break
         }
     }
 
     @ViewBuilder
-    private func sidebarFooterLabel(_ title: String, systemImage: String) -> some View {
-        Label(title, systemImage: systemImage)
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(colorScheme == .dark ? Color(hex: "#E6ECE6") : Color(hex: "#162019"))
-            .lineLimit(1)
-            .minimumScaleFactor(0.9)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 12)
-            .frame(height: 34)
-            .background(themeControlBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .stroke(themeControlBorder, lineWidth: 1)
-            )
+    private func gameCard(for game: LibraryGame) -> some View {
+        if model.selectedRunner == .home {
+            configuredGameCard(for: game)
+                .onDrop(
+                    of: [UTType.text],
+                    delegate: GameDropDelegate(targetGame: game, draggedGame: $draggedGame, model: model)
+                )
+        } else {
+            configuredGameCard(for: game)
+        }
+    }
+
+    private func configuredGameCard(for game: LibraryGame) -> some View {
+        GameCard(
+            game: game,
+            isBusy: model.isBusy,
+            isDragging: draggedGame?.pinID == game.pinID,
+            collection: model.settings(for: game).collection,
+            launchStatus: model.launchStatus(for: game),
+            canStop: model.canStop(game),
+            steamCacheURL: model.steamLibraryCacheURL,
+            displayMode: libraryDisplayMode,
+            allowsReordering: model.selectedRunner == .home,
+            onDragStarted: { draggedGame = game },
+            onLaunch: { model.launch(game) },
+            onStop: { model.stop(game) },
+            isPinned: model.isPinned(game),
+            onTogglePin: { model.togglePin(for: game) },
+            onOpenStore: { model.openSteamStorePage(for: game) },
+            onRevealFiles: { model.revealLocalFiles(for: game) },
+            onOpenDetails: { model.openGameDetails(for: game) },
+            onGameSettings: { model.openGameSettings(for: game) },
+            onRevealLogs: { model.openLogViewer(for: game) },
+            onDebugLaunch: { model.debugLaunch(game) },
+            onChangeIcon: { model.changeAppIcon() },
+            onRemoveFromLibrary: { model.removeGameFromLibrary(game) },
+            onUpdateSourceGame: { game.runner == .gog ? model.updateGOGGame(game) : model.updateEpicGame(game) },
+            onVerifySourceGame: { game.runner == .gog ? model.verifyGOGGame(game) : model.verifyEpicGame(game) },
+            onRepairSourceGame: { game.runner == .gog ? model.repairGOGGame(game) : model.repairEpicGame(game) },
+            onUninstallSourceGame: { game.runner == .gog ? model.uninstallGOGGame(game) : model.uninstallEpicGame(game) }
+        )
     }
 
     @ViewBuilder

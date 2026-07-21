@@ -29,8 +29,17 @@ struct GOGSetupSheet: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button(model.gogSourceStatus?.available == true ? "Installed" : "Install") { model.installGOGClient() }
-                        .disabled(model.gogSourceStatus?.available == true)
+                    Button { model.installGOGClient() } label: {
+                        if model.installingRuntimeID?.hasPrefix("gogdl-1.2.2") == true {
+                            HStack(spacing: 7) {
+                                ProgressView().controlSize(.small)
+                                Text("Installing…")
+                            }
+                        } else {
+                            Text(model.gogSourceStatus?.available == true ? "Installed" : "Install")
+                        }
+                    }
+                    .disabled(model.gogSourceStatus?.available == true || model.installingRuntimeID != nil)
                 }.padding(8)
             }
 

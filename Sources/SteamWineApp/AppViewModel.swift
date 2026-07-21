@@ -158,6 +158,8 @@ final class AppViewModel {
     private(set) var gogGames: [LibraryGame] = []
     private(set) var gogSourceStatus: BackendSourceStatus?
     private(set) var gogSetupMessage: String = "Checking GOG setup…"
+    private(set) var installingDependencyID: String?
+    private(set) var installingRuntimeID: String?
     private(set) var nativeApps: [LibraryGame] = []
     private(set) var wineApps: [LibraryGame] = []
     private(set) var pinnedGameIDs: [String] = []
@@ -312,7 +314,7 @@ final class AppViewModel {
         case .epic:
             return epicSourceStatus?.message ?? "Use Epic Setup to install the source client and connect your account."
         case .gog:
-            return "This source is planned but not wired yet."
+            return gogSourceStatus?.message ?? "Use GOG Setup to install the source client and connect your account."
         }
     }
 
@@ -345,6 +347,10 @@ final class AppViewModel {
 
     var currentOperationJob: BackendJob? {
         activeBackendJobs.first
+    }
+
+    var hasActiveBackendWork: Bool {
+        activeBackendJobs.contains { [.queued, .started, .cancelling].contains($0.status) }
     }
 
     var currentOperationResult: BackendStructuredResult? {
@@ -531,6 +537,7 @@ final class AppViewModel {
             rightPanelMessage = "Loading the GOG client runtime…"
             return
         }
+        installingRuntimeID = runtimeID
         executeDetached(.installRuntime(id: runtimeID), successMessage: "GOG client installed. Continue with sign-in.", context: backendContext)
         gogSetupMessage = "Installing and verifying the GOG client…"
         Task {
@@ -597,6 +604,7 @@ final class AppViewModel {
             return
         }
         let action = BackendAction.installRuntime(id: runtime.id)
+        installingRuntimeID = runtime.id
         executeDetached(action, successMessage: "Legendary installed. Continue with Epic sign-in.", context: backendContext)
         epicSetupMessage = "Installing and verifying Legendary…"
         Task {
@@ -805,6 +813,8 @@ final class AppViewModel {
     }
 
     func installHostDependency(id: String, confirmLicense: Bool = false) {
+        guard installingDependencyID == nil else { return }
+        installingDependencyID = id
         executeDetached(
             .installHostDependency(id: id, confirmLicense: confirmLicense),
             successMessage: "Installed \(id).",
@@ -1026,6 +1036,7 @@ final class AppViewModel {
     func installManagedRuntime(_ runtime: ManagedRuntime) {
         let action = BackendAction.installRuntime(id: runtime.id)
         guard !isActionRunning(action) else { return }
+        installingRuntimeID = runtime.id
         appendLog("== Install Runtime ==\n\(BackendBridge.preview(action, context: backendContext))")
         rightPanelMessage = "Installing \(runtime.displayName)..."
         let activeJobID = beginBackendJob(for: action, message: "Installing \(runtime.displayName)...")
@@ -1047,6 +1058,7 @@ final class AppViewModel {
                     }
                     self.appendLog(response.output)
                     self.rightPanelMessage = "Installed \(runtime.displayName)."
+                    self.installingRuntimeID = nil
                     self.refreshRuntimeCenter()
                     self.refreshWineRuntimes()
                     self.refreshDependencyStatus()
@@ -1058,6 +1070,7 @@ final class AppViewModel {
                     self.completeBackendJob(activeJobID, finalJob: fallbackJob)
                     self.appendLog("Runtime install failed:\n\(message)")
                     self.rightPanelMessage = "Runtime install failed."
+                    self.installingRuntimeID = nil
                 }
             }
         }
@@ -1812,6 +1825,15 @@ final class AppViewModel {
                 }
             }
         }
+    }
+
+    func stopAllWineProcesses() {
+        perform(OperationCard(
+            kind: .killWine,
+            title: "Stop Wine",
+            detail: "Force-stop Wine processes for the current bottle or prefix.",
+            symbolName: "stop.circle"
+        ))
     }
 
     func setupCompatibilityProfile(_ profile: GraphicsBackendOption) {
@@ -3338,6 +3360,10 @@ final class AppViewModel {
                         }
                         self.refreshWineRuntimes()
                         self.refreshDependencyStatus()
+                        self.installingDependencyID = nil
+                    }
+                    if case .installRuntime = action {
+                        self.installingRuntimeID = nil
                     }
                     if let game {
                         if case .sourceGameAction = action {
@@ -3365,6 +3391,12 @@ final class AppViewModel {
                     let fullError = error.localizedDescription
                     self.appendLog("Command failed:\n\(fullError)")
                     self.rightPanelMessage = "Action failed."
+                    if case .installHostDependency = action {
+                        self.installingDependencyID = nil
+                    }
+                    if case .installRuntime = action {
+                        self.installingRuntimeID = nil
+                    }
                     if let game {
                         self.setLaunchStatus(.failed, for: game, message: self.launchFailureSummary(from: fullError))
                     }
@@ -3787,6 +3819,10 @@ final class AppViewModel {
             return game.runner == .steam
         case .wine:
             return game.runner == .wine
+        case .epic:
+            return game.runner == .epic
+        case .gog:
+            return game.runner == .gog
         }
     }
 
