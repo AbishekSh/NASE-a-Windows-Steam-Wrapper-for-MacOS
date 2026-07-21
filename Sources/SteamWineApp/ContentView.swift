@@ -6,6 +6,7 @@ struct ContentView: View {
     @Bindable var model: AppViewModel
     @Environment(\.colorScheme) private var colorScheme
     @State private var draggedGame: LibraryGame?
+    @AppStorage("libraryDisplayMode") private var libraryDisplayMode: LibraryDisplayMode = .grid
 
     var body: some View {
         NavigationSplitView {
@@ -188,6 +189,18 @@ struct ContentView: View {
                             .fixedSize()
                         }
 
+                        Picker("Library layout", selection: $libraryDisplayMode) {
+                            Label("Grid", systemImage: "square.grid.2x2")
+                                .labelStyle(.iconOnly)
+                                .tag(LibraryDisplayMode.grid)
+                            Label("List", systemImage: "list.bullet")
+                                .labelStyle(.iconOnly)
+                                .tag(LibraryDisplayMode.list)
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(width: 76)
+                        .help(libraryDisplayMode == .grid ? "Switch to list view" : "Switch to grid view")
+
                         Spacer(minLength: 0)
                     }
                 }
@@ -214,16 +227,30 @@ struct ContentView: View {
                             }
                         )
                         .padding(20)
-                    } else {
-                        LazyVGrid(columns: gridColumns(for: geometry.size.width), alignment: .leading, spacing: 24) {
+                    } else if libraryDisplayMode == .grid {
+                        LazyVGrid(
+                            columns: gridColumns(for: geometry.size.width),
+                            alignment: .leading,
+                            spacing: libraryGridSpacing
+                        ) {
                             ForEach(model.filteredGames) { game in
-                                gameCard(for: game)
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 6)
+                                GeometryReader { cell in
+                                    gameCard(for: game)
+                                        .frame(width: cell.size.width)
+                                }
+                                .frame(height: libraryCardHeight)
                             }
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 14)
+                        .padding(.horizontal, libraryGridPadding)
+                        .padding(.vertical, libraryGridSpacing)
+                    } else {
+                        LazyVStack(spacing: 12) {
+                            ForEach(model.filteredGames) { game in
+                                gameCard(for: game)
+                            }
+                        }
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 18)
                     }
                 }
                 .background(themeBackground)
@@ -244,15 +271,24 @@ struct ContentView: View {
     private var themeControlBackground: Color { colorScheme == .dark ? Color(hex: "#20251F") : Color(hex: "#F4F8F2") }
     private var themeControlBorder: Color { colorScheme == .dark ? Color.white.opacity(0.07) : Color.black.opacity(0.08) }
 
+    private let libraryGridSpacing: CGFloat = 20
+    private let libraryGridPadding: CGFloat = 20
+    private let libraryCardHeight: CGFloat = 196
+
     private func gridColumns(for availableWidth: CGFloat) -> [GridItem] {
-        let spacing: CGFloat = 24
-        let horizontalPadding: CGFloat = 40
         let preferredCardWidth: CGFloat = 360
-        let usableWidth = max(260, availableWidth - horizontalPadding)
-        let columnCount = max(1, Int((usableWidth + spacing) / (preferredCardWidth + spacing)))
+        let usableWidth = max(260, availableWidth - (libraryGridPadding * 2))
+        let columnCount = max(
+            1,
+            Int((usableWidth + libraryGridSpacing) / (preferredCardWidth + libraryGridSpacing))
+        )
 
         return Array(
-            repeating: GridItem(.flexible(minimum: 260, maximum: 420), spacing: spacing, alignment: .top),
+            repeating: GridItem(
+                .flexible(minimum: 260, maximum: 420),
+                spacing: libraryGridSpacing,
+                alignment: .top
+            ),
             count: columnCount
         )
     }
@@ -400,6 +436,7 @@ struct ContentView: View {
             launchStatus: model.launchStatus(for: game),
             canStop: model.canStop(game),
             steamCacheURL: model.steamLibraryCacheURL,
+            displayMode: libraryDisplayMode,
             allowsReordering: model.selectedRunner == .home,
             onDragStarted: { draggedGame = game },
             onLaunch: { model.launch(game) },

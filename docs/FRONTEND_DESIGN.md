@@ -39,6 +39,8 @@ Only the Home library supports drag reordering. Store libraries do not attach dr
 
 The default grid favors compact cards capped at 420 points rather than stretching artwork across the available row. It calculates an explicit responsive column count and preserves spacing both between grid tracks and inside every cell, preventing expansive card content from consuming the visible gutter. Wide library windows therefore show more games at once, while the grid still collapses cleanly on narrow windows.
 
+The library toolbar also offers a persistent Grid/List control. List mode uses compact artwork rows with title, source, status, collection, size, overflow actions, and the same primary Play/Install/Stop control. The selected layout applies consistently across sources and is remembered between launches.
+
 ## Progress and feedback
 
 Every long-running action must have visible feedback:
@@ -87,7 +89,7 @@ Provider-owned games cannot be removed from the account, so Epic and GOG cards d
 
 ## Next polish phases
 
-1. Add a compact/list library view and a user-selectable card density.
+1. Add user-selectable card density for grid mode.
 2. Add skeleton artwork placeholders and an image cache for remote provider art.
 3. Add NASE-local hide/unhide for Epic and GOG titles.
 4. Add keyboard shortcuts for Search, Play, Refresh, Settings, and Stop Wine.

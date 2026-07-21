@@ -30,6 +30,13 @@ struct SidebarRow: View {
     }
 }
 
+enum LibraryDisplayMode: String, CaseIterable, Identifiable {
+    case grid
+    case list
+
+    var id: Self { self }
+}
+
 struct GameCard: View {
     @Environment(\.colorScheme) private var colorScheme
     let game: LibraryGame
@@ -39,6 +46,7 @@ struct GameCard: View {
     let launchStatus: GameLaunchStatus?
     let canStop: Bool
     let steamCacheURL: URL?
+    let displayMode: LibraryDisplayMode
     let allowsReordering: Bool
     let onDragStarted: () -> Void
     let onLaunch: () -> Void
@@ -60,7 +68,16 @@ struct GameCard: View {
 
     @State private var isHovered: Bool = false
 
+    @ViewBuilder
     var body: some View {
+        if displayMode == .list {
+            listCard
+        } else {
+            gridCard
+        }
+    }
+
+    private var gridCard: some View {
         VStack(alignment: .leading, spacing: 0) {
             ZStack(alignment: .bottomTrailing) {
                 BannerArtwork(
@@ -162,6 +179,101 @@ struct GameCard: View {
         )
         .shadow(color: .black.opacity(isHovered ? 0.2 : 0.08), radius: isHovered ? 16 : 7, y: isHovered ? 8 : 3)
         .scaleEffect(isHovered ? 1.008 : 1)
+        .opacity(isDragging ? 0.3 : 1)
+        .animation(.easeOut(duration: 0.16), value: isHovered)
+        .onHover { hovering in
+            isHovered = hovering
+        }
+    }
+
+    private var listCard: some View {
+        HStack(spacing: 0) {
+            BannerArtwork(
+                url: game.bannerURL,
+                title: game.title,
+                height: 88,
+                installURL: game.installURL,
+                runner: game.runner,
+                appid: game.backendID,
+                steamCacheURL: steamCacheURL,
+                showsTitleOverlay: false
+            )
+            .frame(width: 176)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text(game.title)
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .foregroundStyle(themeForeground)
+                    .lineLimit(1)
+
+                HStack(spacing: 8) {
+                    Label(game.runner.rawValue, systemImage: game.runner.symbolName)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(themeMutedForeground)
+                    Text(game.status)
+                        .font(.caption)
+                        .foregroundStyle(themeMutedForeground)
+                    if collection != .none {
+                        Pill(text: collection.rawValue, tint: collection.color.opacity(0.18), foreground: collection.color)
+                    }
+                    if let launchStatus {
+                        Pill(text: launchStatus.phase.rawValue, tint: launchTint(for: launchStatus.phase), foreground: launchForeground(for: launchStatus.phase))
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+
+            Spacer(minLength: 12)
+
+            if let statsText = game.statsText, !statsText.isEmpty {
+                Text(statsText)
+                    .font(.caption)
+                    .foregroundStyle(themeMutedForeground)
+                    .lineLimit(1)
+                    .padding(.trailing, 8)
+            }
+
+            if allowsReordering {
+                Image(systemName: "line.3.horizontal")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(themeMutedForeground)
+                    .frame(width: 32, height: 32)
+                    .contentShape(Rectangle())
+                    .onDrag {
+                        onDragStarted()
+                        return NSItemProvider(object: game.pinID as NSString)
+                    } preview: {
+                        DragBadge(title: game.title)
+                    }
+                    .help("Drag to reorder")
+            }
+
+            cardActionMenu
+                .padding(.horizontal, 6)
+
+            Button {
+                canStop ? onStop() : onLaunch()
+            } label: {
+                Image(systemName: primaryActionSymbol)
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(canStop ? Color.white : Color.black)
+                    .frame(width: 38, height: 38)
+                    .background(canStop ? Color(hex: "#C85353") : themePrimary)
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(launchStatus?.phase == .launching)
+            .help(primaryActionHelp)
+            .padding(.trailing, 14)
+        }
+        .frame(maxWidth: .infinity, minHeight: 88, alignment: .leading)
+        .background(themePanel)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(isHovered ? themePrimary.opacity(0.55) : themeBorder, lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(isHovered ? 0.16 : 0.06), radius: isHovered ? 10 : 4, y: 3)
         .opacity(isDragging ? 0.3 : 1)
         .animation(.easeOut(duration: 0.16), value: isHovered)
         .onHover { hovering in
@@ -337,85 +449,87 @@ struct BannerArtwork: View {
     var showsTitleOverlay: Bool = true
 
     var body: some View {
-        ZStack(alignment: .bottomLeading) {
-            if let customImage {
-                artworkLayer(Image(nsImage: customImage))
-            } else if let localSteamBannerImage {
-                artworkLayer(Image(nsImage: localSteamBannerImage))
-            } else if let url {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .empty:
-                        placeholder
-                    case .success(let image):
-                        artworkLayer(image)
-                    case .failure:
-                        placeholder
-                    @unknown default:
-                        placeholder
+        GeometryReader { geometry in
+            ZStack(alignment: .bottomLeading) {
+                if let customImage {
+                    artworkLayer(Image(nsImage: customImage))
+                } else if let localSteamBannerImage {
+                    artworkLayer(Image(nsImage: localSteamBannerImage))
+                } else if let url {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .empty:
+                            placeholder
+                        case .success(let image):
+                            artworkLayer(image)
+                        case .failure:
+                            placeholder
+                        @unknown default:
+                            placeholder
+                        }
                     }
+                } else {
+                    localFallbackArtwork
                 }
-            } else {
-                localFallbackArtwork
+
+                Rectangle()
+                    .fill(.black.opacity(0.18))
+
+                LinearGradient(
+                    colors: [
+                        .black.opacity(0.55),
+                        .black.opacity(0.26),
+                        .clear,
+                    ],
+                    startPoint: .bottomLeading,
+                    endPoint: .topTrailing
+                )
+
+                if showsTitleOverlay, let steamLogoImage {
+                    Image(nsImage: steamLogoImage)
+                        .resizable()
+                        .interpolation(.high)
+                        .scaledToFit()
+                        .frame(maxWidth: min(320, height * 2.7), maxHeight: height * 0.58, alignment: .leading)
+                        .shadow(color: .black.opacity(0.48), radius: 7, y: 3)
+                        .padding(.leading, steamIconImage == nil ? 16 : 80)
+                        .padding(.trailing, 16)
+                        .padding(.bottom, 14)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                } else if showsTitleOverlay {
+                    Text(title)
+                        .font(.system(size: 22, weight: .heavy, design: .rounded))
+                        .foregroundStyle(.white)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.72)
+                        .shadow(color: .black.opacity(0.55), radius: 7, y: 3)
+                        .padding(.leading, steamIconImage == nil ? 16 : 80)
+                        .padding(.trailing, 16)
+                        .padding(.bottom, 14)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                }
+
+                if let steamIcon = steamIconImage {
+                    Image(nsImage: steamIcon)
+                        .resizable()
+                        .interpolation(.high)
+                        .scaledToFit()
+                        .frame(width: 42, height: 42)
+                        .padding(8)
+                        .background(.black.opacity(0.28))
+                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .stroke(.white.opacity(0.16), lineWidth: 1)
+                        )
+                        .padding(14)
+                        .shadow(color: .black.opacity(0.28), radius: 8, y: 3)
+                }
             }
-
-            Rectangle()
-                .fill(.black.opacity(0.18))
-
-            LinearGradient(
-                colors: [
-                    .black.opacity(0.55),
-                    .black.opacity(0.26),
-                    .clear,
-                ],
-                startPoint: .bottomLeading,
-                endPoint: .topTrailing
-            )
-
-            if showsTitleOverlay, let steamLogoImage {
-                Image(nsImage: steamLogoImage)
-                    .resizable()
-                    .interpolation(.high)
-                    .scaledToFit()
-                    .frame(maxWidth: min(320, height * 2.7), maxHeight: height * 0.58, alignment: .leading)
-                    .shadow(color: .black.opacity(0.48), radius: 7, y: 3)
-                    .padding(.leading, steamIconImage == nil ? 16 : 80)
-                    .padding(.trailing, 16)
-                    .padding(.bottom, 14)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-            } else if showsTitleOverlay {
-                Text(title)
-                    .font(.system(size: 22, weight: .heavy, design: .rounded))
-                    .foregroundStyle(.white)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.72)
-                    .shadow(color: .black.opacity(0.55), radius: 7, y: 3)
-                    .padding(.leading, steamIconImage == nil ? 16 : 80)
-                    .padding(.trailing, 16)
-                    .padding(.bottom, 14)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-            }
-
-            if let steamIcon = steamIconImage {
-                Image(nsImage: steamIcon)
-                    .resizable()
-                    .interpolation(.high)
-                    .scaledToFit()
-                    .frame(width: 42, height: 42)
-                    .padding(8)
-                    .background(.black.opacity(0.28))
-                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .stroke(.white.opacity(0.16), lineWidth: 1)
-                    )
-                    .padding(14)
-                    .shadow(color: .black.opacity(0.28), radius: 8, y: 3)
-            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+            .clipped()
         }
-        .frame(maxWidth: .infinity)
         .frame(height: height)
-        .clipped()
         .background(themePanel)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
