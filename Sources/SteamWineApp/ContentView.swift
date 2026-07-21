@@ -215,7 +215,7 @@ struct ContentView: View {
                         )
                         .padding(20)
                     } else {
-                        LazyVGrid(columns: gridColumns(for: geometry.size.width), alignment: .leading, spacing: 18) {
+                        LazyVGrid(columns: gridColumns(for: geometry.size.width), alignment: .leading, spacing: 24) {
                             ForEach(model.filteredGames) { game in gameCard(for: game) }
                         }
                         .padding(20)
@@ -240,11 +240,16 @@ struct ContentView: View {
     private var themeControlBorder: Color { colorScheme == .dark ? Color.white.opacity(0.07) : Color.black.opacity(0.08) }
 
     private func gridColumns(for availableWidth: CGFloat) -> [GridItem] {
-        let spacing: CGFloat = 18
-        let minimumCardWidth: CGFloat = availableWidth < 700 ? 260 : 300
-        return [
-            GridItem(.adaptive(minimum: minimumCardWidth, maximum: 420), spacing: spacing, alignment: .top)
-        ]
+        let spacing: CGFloat = 24
+        let horizontalPadding: CGFloat = 40
+        let preferredCardWidth: CGFloat = 360
+        let usableWidth = max(260, availableWidth - horizontalPadding)
+        let columnCount = max(1, Int((usableWidth + spacing) / (preferredCardWidth + spacing)))
+
+        return Array(
+            repeating: GridItem(.flexible(minimum: 260, maximum: 420), spacing: spacing, alignment: .top),
+            count: columnCount
+        )
     }
 
     private var libraryTitleBlock: some View {
