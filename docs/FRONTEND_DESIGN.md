@@ -37,6 +37,8 @@ The title is not repeated over the artwork and again in the metadata area. Cards
 
 Only the Home library supports drag reordering. Store libraries do not attach drag gestures to cards, which keeps menus and buttons reliable.
 
+The default grid favors compact cards capped at 420 points rather than stretching artwork across the available row. Wide library windows therefore show more games at once, while the adaptive grid still collapses cleanly on narrow windows.
+
 ## Progress and feedback
 
 Every long-running action must have visible feedback:

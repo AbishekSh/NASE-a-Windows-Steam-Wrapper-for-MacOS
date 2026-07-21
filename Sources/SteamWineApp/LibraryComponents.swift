@@ -66,7 +66,7 @@ struct GameCard: View {
                 BannerArtwork(
                     url: game.bannerURL,
                     title: game.title,
-                    height: 156,
+                    height: 128,
                     installURL: game.installURL,
                     runner: game.runner,
                     appid: game.backendID,
@@ -91,9 +91,9 @@ struct GameCard: View {
                     canStop ? onStop() : onLaunch()
                 } label: {
                     Image(systemName: primaryActionSymbol)
-                        .font(.system(size: 15, weight: .bold))
+                        .font(.system(size: 14, weight: .bold))
                         .foregroundStyle(canStop ? Color.white : Color.black)
-                        .frame(width: 42, height: 42)
+                        .frame(width: 38, height: 38)
                         .background(canStop ? Color(hex: "#C85353") : themePrimary)
                         .clipShape(Circle())
                         .overlay(Circle().stroke(.white.opacity(0.22), lineWidth: 1))
@@ -102,13 +102,13 @@ struct GameCard: View {
                 .buttonStyle(.plain)
                 .disabled(launchStatus?.phase == .launching)
                 .help(primaryActionHelp)
-                .padding(12)
+                .padding(10)
             }
 
-            VStack(alignment: .leading, spacing: 9) {
+            VStack(alignment: .leading, spacing: 7) {
                 HStack(alignment: .center, spacing: 10) {
                     Text(game.title)
-                        .font(.system(size: 16, weight: .semibold, design: .rounded))
+                        .font(.system(size: 15, weight: .semibold, design: .rounded))
                         .foregroundStyle(themeForeground)
                         .lineLimit(1)
                     Spacer(minLength: 8)
@@ -148,9 +148,9 @@ struct GameCard: View {
                     }
                 }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .frame(maxWidth: .infinity, minHeight: 78, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, minHeight: 68, alignment: .leading)
             .background(themePanel)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
