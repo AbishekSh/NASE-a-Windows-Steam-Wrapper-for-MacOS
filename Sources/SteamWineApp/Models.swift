@@ -401,6 +401,8 @@ enum LibrarySourceFilter: String, CaseIterable, Identifiable {
     case mac = "macOS"
     case steam = "Steam"
     case wine = "Wine"
+    case epic = "Epic Games"
+    case gog = "GOG"
 
     var id: String { rawValue }
 }

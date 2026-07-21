@@ -183,6 +183,7 @@ Key Python modules:
 More detail lives in:
 
 - [`docs/CODEBASE_STRUCTURE.md`](docs/CODEBASE_STRUCTURE.md): architecture principles, SwiftUI/Python boundaries, multi-store normalization, security and storage decisions, data flows, module map, and the rationale for JSON/JSONL instead of an AST-based runtime protocol.
+- [`docs/FRONTEND_DESIGN.md`](docs/FRONTEND_DESIGN.md): UI hierarchy, action placement, card design, progress feedback, menus, visual language, and the staged frontend-polish roadmap.
 
 ## Backend Contract
 

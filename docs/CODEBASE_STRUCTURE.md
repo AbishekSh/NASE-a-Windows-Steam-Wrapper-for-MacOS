@@ -2,6 +2,8 @@
 
 This document describes the current repository organization and the boundaries that should stay clear as the app evolves.
 
+Product-facing layout and interaction rules are documented separately in [`FRONTEND_DESIGN.md`](FRONTEND_DESIGN.md).
+
 ## Product Shape
 
 SteamWineWrapper is currently split into two layers:

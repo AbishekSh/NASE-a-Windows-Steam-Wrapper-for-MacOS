@@ -664,6 +664,13 @@ struct SettingsSheet: View {
 
             if let result = model.latestDependencyResult {
                 ForEach(result.checks) { check in
+                    let dependencyID = dependencyID(for: check.name)
+                    let isInstalling = dependencyID != nil && (
+                        model.installingDependencyID == dependencyID
+                        || model.installingRuntimeID == dependencyID
+                        || (model.isDependencyBootstrapRunning
+                            && model.dependencyBootstrapMessage.localizedCaseInsensitiveContains(check.name))
+                    )
                     HStack(alignment: .top, spacing: 10) {
                         Image(systemName: check.status == "ok" ? "checkmark.circle.fill" : (check.status == "warn" ? "exclamationmark.triangle.fill" : "xmark.circle.fill"))
                             .foregroundStyle(check.status == "ok" ? .green : (check.status == "warn" ? .orange : .red))
@@ -680,11 +687,17 @@ struct SettingsSheet: View {
                             }
                         }
                         Spacer()
-                        if check.status == "fail" {
+                        if isInstalling {
+                            HStack(spacing: 7) {
+                                ProgressView().controlSize(.small)
+                                Text("Installing…").font(.caption.weight(.semibold))
+                            }
+                            .foregroundStyle(themeMutedForeground)
+                        } else if check.status == "fail" {
                             Button("Fix") {
                                 beginDependencyInstall(for: check.name)
                             }
-                            .disabled(model.isBusy)
+                            .disabled(model.isBusy || model.installingDependencyID != nil)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -743,6 +756,17 @@ struct SettingsSheet: View {
             showDependencyConfirmation = true
         default:
             break
+        }
+    }
+
+    private func dependencyID(for checkName: String) -> String? {
+        switch checkName {
+        case "DXMT 0.71": "dxmt-0.71"
+        case "Rosetta 2": "rosetta"
+        case "Wine Stable 11": "wine-stable"
+        case "Winetricks": "winetricks"
+        case "Python": "python"
+        default: nil
         }
     }
 
@@ -851,9 +875,7 @@ struct SettingsSheet: View {
     private func runtimeCatalogRow(_ runtime: ManagedRuntime) -> some View {
         let installedRuntime = model.installedManagedRuntimes.first(where: { $0.id == runtime.id })
         let isInstalled = runtime.installed || installedRuntime != nil
-        let isInstalling = model.activeBackendJobs.contains {
-            $0.action == "Install Runtime" && ($0.status == .queued || $0.status == .started)
-        }
+        let isInstalling = model.installingRuntimeID == runtime.id
 
         return HStack(alignment: .top, spacing: 12) {
             Image(systemName: runtime.kind == "wine" ? "wineglass" : "shippingbox")
@@ -891,7 +913,7 @@ struct SettingsSheet: View {
                     Text(isInstalled ? "Installed" : "Install")
                 }
             }
-            .disabled(isInstalled || isInstalling)
+            .disabled(isInstalled || model.installingRuntimeID != nil)
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
