@@ -182,7 +182,7 @@ Key Python modules:
 
 More detail lives in:
 
-- [`docs/CODEBASE_STRUCTURE.md`](docs/CODEBASE_STRUCTURE.md): current SwiftUI/Python module map, data flow, organization notes, and where hidden-Steam launch work should fit.
+- [`docs/CODEBASE_STRUCTURE.md`](docs/CODEBASE_STRUCTURE.md): architecture principles, SwiftUI/Python boundaries, multi-store normalization, security and storage decisions, data flows, module map, and the rationale for JSON/JSONL instead of an AST-based runtime protocol.
 
 ## Backend Contract
 

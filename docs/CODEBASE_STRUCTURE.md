@@ -11,6 +11,37 @@ SteamWineWrapper is currently split into two layers:
 
 The SwiftUI app is the user-facing product. The Python backend is the implementation engine. The app/backend contract is moving toward structured JSON/JSONL so the UI can react to real state instead of parsing human terminal output.
 
+## Architectural Principles And Design Choices
+
+The architecture is intentionally hybrid. Swift and Python are not competing implementations; each owns the work it is best suited to perform.
+
+1. **SwiftUI owns product behavior.** Window state, navigation, sheets, user confirmation, approachable errors, and presentation belong in the native app.
+2. **Python owns compatibility behavior.** Wine invocation, process inspection, prefix mutation, provider CLIs, downloads, file-format parsing, repair, and diagnostics remain independently testable backend operations.
+3. **The bridge is a typed boundary.** Swift creates a `BackendAction`; only `BackendBridge.swift` converts that action into command arguments. Python responds with JSON or streamed JSONL records rather than UI-oriented prose.
+4. **Profiles are complete launch environments.** A renderer selection binds a tested Wine engine, graphics stack, environment, fingerprint, and bottle. It is not treated as a loose DLL toggle.
+5. **Large immutable game files may be shared; mutable runtime state is isolated.** Prefixes, registries, Steam configuration, renderer DLLs, caches, logs, and tokens must not leak between profiles.
+6. **Store-specific behavior stops at the provider boundary.** Epic, GOG, Steam, native apps, and personal executables are normalized into the same library-facing concepts before reaching the grid.
+7. **Operations must be observable and recoverable.** Long work is represented as durable jobs with progress, cancellation, final results, and repair/rollback state.
+8. **Downloaded runtimes are reproducible.** Runtime Center entries pin an exact version and checksum. Readiness requires verification of the installed layout, not merely the presence of a downloaded file.
+
+The resulting dependency direction is:
+
+```text
+SwiftUI views
+    ↓ user intent
+AppViewModel / coordinators
+    ↓ BackendAction
+BackendBridge (JSON/JSONL process boundary)
+    ↓
+Python CLI command handlers
+    ↓
+domain modules: sources, profiles, bottles, Steam, graphics, jobs
+    ↓
+Wine runtimes, provider clients, files, processes, and network services
+```
+
+Lower layers do not import or manipulate SwiftUI state. Provider adapters do not decide how cards should look. Views do not construct Wine commands.
+
 ## Top-Level Files
 
 - `Package.swift`: Swift Package manifest for the macOS app target.
@@ -104,6 +135,7 @@ The CLI is the compatibility contract. Existing commands should keep working eve
   - Authentication tokens live under `sources/gog/auth.json` with owner-only permissions; prefixes are never shared.
   - Owned games and official artwork come from GOG Galaxy/GamesDB metadata, while the checksum-pinned architecture-specific `gogdl` client handles Windows downloads, updates, repair, and launch task resolution.
   - Installed game files live in a shared GOG host library and launch through the selected isolated NASE compatibility-profile bottle.
+  - Galaxy may return hidden, retailer-specific, or duplicate release entitlements. The adapter accepts only visible `game`/`mod` records, groups releases by canonical GOG `game_id`, and prefers the installed or artwork-complete release. The UI therefore receives one card per canonical game.
 - `library_activity.py`: locked persistent ownership for shared libraries. It permits one Windows Steam owner per library, supports multiple games under that owner, and replaces stale ownership only after the previous Steam process exits.
 - `catalog.py`: managed runtime catalog for Wine, DXVK, and DXMT. It owns pinned download URLs/checksums, archive extraction, install records, and one-button install helpers that can apply graphics payloads to the selected bottle.
 - `bottle.py`: managed and external-prefix path model.
@@ -168,6 +200,71 @@ is documented in `docs/RELEASING.md`.
 
 - `webui.py`: simple local browser frontend. This predates the richer SwiftUI product but remains useful for quick manual operation and backend debugging.
 - `gui.py`: thin GUI/browser launcher glue.
+
+## Multi-Store Source Architecture
+
+`sources/base.py` defines the narrow normalized contract shared by store adapters:
+
+- `SourceStatus`: client availability, authentication state, version, and a friendly message.
+- `SourceGame`: stable source/store/library identifiers, title, install state/path, version/update state, and artwork URL.
+- `GameSource`: status, library refresh, authentication, and sign-out behavior.
+
+The normalized model deliberately does not contain Legendary, Galaxy, GOG certificate, Steam VDF, or Wine-specific fields. Provider-only details remain inside their adapter. This keeps `LibraryGame` and the game-card UI source-neutral.
+
+The store workflow is:
+
+```text
+Provider account/API
+    ↓ provider-specific records
+EpicSource / GOGSource
+    ↓ validate, filter, deduplicate, normalize
+SourceGame JSON
+    ↓ BackendBridge
+LibraryGame
+    ↓
+one searchable card with shared settings and launch state
+```
+
+### Provider storage and trust boundaries
+
+- Epic credentials and Legendary configuration live under `sources/epic/`.
+- GOG tokens and the NASE-owned install registry live under `sources/gog/`.
+- Authentication directories use `0700`; sensitive files use `0600`.
+- Provider locks serialize token refreshes and metadata mutations.
+- Tokens, authorization responses, and certificates are never returned in structured status or library results.
+- Game files are installed under `game-libraries/<source>/`, outside compatibility bottles.
+- At launch, the provider resolves the game task while NASE supplies the selected Wine executable, isolated prefix, and complete renderer environment.
+
+This separation allows the same installed game to move between compatibility profiles without redownloading it or sharing the profiles themselves.
+
+## Why JSON/JSONL Instead Of An AST
+
+An **Abstract Syntax Tree (AST)** is a tree representation of source code after parsing. For example, the expression `total + tax * 2` becomes nodes such as “addition,” “name,” “multiplication,” and “number,” preserving program meaning rather than formatting. Compilers, formatters, linters, refactoring tools, and code generators use ASTs to inspect or transform code safely.
+
+NASE's Swift/Python boundary exchanges commands, state, progress events, and results—not programming-language syntax. An AST would add a compiler-like intermediate model without solving job progress, schema validation, cancellation, versioning, or process isolation. The existing typed `BackendAction` plus versionable JSON/JSONL records is the correct abstraction.
+
+ASTs may still be useful in narrow development tooling:
+
+- a SwiftSyntax rule that verifies every `BackendAction` has argument, display-name, and success-message handling;
+- a Python `ast` check that rejects unsafe shell construction or enforces command-handler conventions;
+- automated refactoring of the large `AppViewModel.swift` when coordinators are extracted.
+
+These should be optional lint/test tools. They should not become a runtime dependency, a new service, or the app/backend protocol. Before adding AST tooling, the higher-value contract improvement is a small explicit JSON schema version plus decoding/contract tests shared by both sides.
+
+## Decision Summary
+
+| Concern | Current decision | Reason |
+| --- | --- | --- |
+| User interface | Native SwiftUI | Native macOS behavior and approachable workflows |
+| Compatibility engine | Python modules | Faster iteration and direct testability for Wine/provider automation |
+| Cross-language contract | Typed actions plus JSON/JSONL | Observable, debuggable, versionable process boundary |
+| Graphics selection | Dedicated compatibility profiles | Prevents incompatible Wine/renderer combinations and state leakage |
+| Store integration | Provider adapters normalized to `SourceGame` | Keeps store details out of the library UI |
+| Game storage | Shared per-source host libraries | Avoids downloading large game files once per profile |
+| Mutable runtime state | Isolated bottles and provider state | Avoids registry, cache, config, token, and process conflicts |
+| Long-running work | Durable structured jobs | Supports progress, restart recovery, repair, rollback, and cancellation |
+| Runtime distribution | Version and checksum pinned | Makes setup reproducible and verifiable |
+| AST tooling | Optional development linting only | The runtime boundary transports data, not source-code syntax |
 
 ## Current Data Flow
 
