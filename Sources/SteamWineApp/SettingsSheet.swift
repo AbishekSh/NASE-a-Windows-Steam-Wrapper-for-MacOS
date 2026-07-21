@@ -16,6 +16,45 @@ private enum SteamIdentityAction {
     }
 }
 
+private enum SettingsSection: String, CaseIterable, Identifiable {
+    case general = "General"
+    case accounts = "Accounts"
+    case compatibility = "Compatibility"
+    case runtimes = "Runtimes"
+    case jobs = "Jobs"
+    case advanced = "Advanced"
+
+    var id: Self { self }
+
+    var symbolName: String {
+        switch self {
+        case .general: return "gearshape"
+        case .accounts: return "person.crop.circle"
+        case .compatibility: return "checkmark.shield"
+        case .runtimes: return "shippingbox"
+        case .jobs: return "clock.arrow.circlepath"
+        case .advanced: return "wrench.and.screwdriver"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .general:
+            return "Updates and the default launch target"
+        case .accounts:
+            return "Shared sign-in and account controls"
+        case .compatibility:
+            return "System readiness and graphics profiles"
+        case .runtimes:
+            return "Install and manage Wine engines"
+        case .jobs:
+            return "Current work, results, and history"
+        case .advanced:
+            return "Repair tools, paths, commands, and logs"
+        }
+    }
+}
+
 struct SettingsSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
@@ -30,7 +69,6 @@ struct SettingsSheet: View {
     @State private var externalPrefix: String = ""
     @State private var useExternalPrefix: Bool = false
     @State private var validationMessage: String = ""
-    @State private var showAdvancedSettings: Bool = false
     @State private var pendingDependencyInstall: String?
     @State private var showDependencyConfirmation: Bool = false
     @State private var showRecommendedBootstrapConfirmation: Bool = false
@@ -40,35 +78,31 @@ struct SettingsSheet: View {
     @State private var selectedSteamIdentityBottle: String = ""
     @State private var pendingSteamIdentityAction: SteamIdentityAction?
     @State private var showSteamIdentityConfirmation: Bool = false
+    @State private var selectedSection: SettingsSection = .general
 
     var body: some View {
         VStack(spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    settingsHeader
+            settingsHeader
+                .padding(.horizontal, 24)
+                .padding(.vertical, 18)
 
-                    settingsReleasePanel
+            Divider()
 
-                    settingsTargetPanel
+            HStack(spacing: 0) {
+                settingsNavigation
 
-                    settingsSteamIdentityPanel
+                Divider()
 
-                    settingsDependencyPanel
-
-                    settingsCompatibilityProfilesPanel
-
-                    settingsRuntimeCenterPanel
-
-                    settingsOperationsPanel
-
-                    settingsAdvancedPanel
-
-                    if !validationMessage.isEmpty {
-                        settingsValidationPanel
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 18) {
+                        settingsSectionHeader
+                        settingsSelectedContent
                     }
+                    .padding(24)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
-                .padding(24)
             }
+
             Divider()
             HStack {
                 Button("Cancel") {
@@ -87,6 +121,7 @@ struct SettingsSheet: View {
                     + model.validateDXVKSourceForWizard(dxvkSource).joined(separator: "\n")
                     + "\n"
                     + model.validateD3DMetalSourceForWizard(d3dMetalSource).joined(separator: "\n")
+                    selectedSection = .advanced
                 }
                 Button("Save Settings") {
                     model.applySettings(
@@ -103,9 +138,10 @@ struct SettingsSheet: View {
                 }
                 .buttonStyle(.borderedProminent)
             }
-            .padding(24)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 16)
         }
-        .frame(width: 820, height: 760)
+        .frame(width: 980, height: 740)
         .background(themeBackground)
         .task {
             model.refreshWineRuntimes()
@@ -218,6 +254,102 @@ struct SettingsSheet: View {
             Button("Setup Wizard") {
                 dismiss()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { model.openSetupWizard() }
+            }
+        }
+    }
+
+    private var settingsNavigation: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(SettingsSection.allCases) { section in
+                Button {
+                    selectedSection = section
+                } label: {
+                    HStack(spacing: 11) {
+                        Image(systemName: section.symbolName)
+                            .font(.system(size: 15, weight: .semibold))
+                            .frame(width: 22)
+                        Text(section.rawValue)
+                            .font(.subheadline.weight(.semibold))
+                        Spacer(minLength: 0)
+                    }
+                    .foregroundStyle(selectedSection == section ? themeForeground : themeMutedForeground)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(selectedSection == section ? themePanelRaised : Color.clear)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+
+            Spacer()
+
+            if let job = model.currentOperationJob {
+                HStack(spacing: 9) {
+                    ProgressView()
+                        .controlSize(.small)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Working")
+                            .font(.caption.weight(.semibold))
+                        Text(job.message)
+                            .font(.caption2)
+                            .lineLimit(2)
+                    }
+                }
+                .foregroundStyle(themeMutedForeground)
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(themePanel)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .onTapGesture { selectedSection = .jobs }
+            }
+        }
+        .padding(14)
+        .frame(width: 205)
+        .frame(maxHeight: .infinity, alignment: .topLeading)
+        .background(themePanel.opacity(0.55))
+    }
+
+    private var settingsSectionHeader: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(selectedSection.rawValue)
+                .font(.system(size: 23, weight: .bold, design: .rounded))
+                .foregroundStyle(themeForeground)
+            Text(selectedSection.detail)
+                .font(.subheadline)
+                .foregroundStyle(themeMutedForeground)
+        }
+    }
+
+    @ViewBuilder
+    private var settingsSelectedContent: some View {
+        switch selectedSection {
+        case .general:
+            settingsReleasePanel
+            settingsTargetPanel
+        case .accounts:
+            settingsSteamIdentityPanel
+        case .compatibility:
+            settingsDependencyPanel
+            settingsCompatibilityProfilesPanel
+        case .runtimes:
+            settingsRuntimeCenterPanel
+        case .jobs:
+            if model.currentOperationJob != nil {
+                settingsCurrentOperationPanel
+            }
+            if model.latestDoctorResult != nil || model.latestSetupResult != nil {
+                settingsResultsPanel
+            }
+            settingsJobsPanel
+        case .advanced:
+            settingsOperationsPanel
+            settingsAdvancedTargetPanel
+            settingsGraphicsPanel
+            settingsCommandPanel
+            settingsActivityPanel
+            if !validationMessage.isEmpty {
+                settingsValidationPanel
             }
         }
     }
@@ -379,26 +511,6 @@ struct SettingsSheet: View {
         }
     }
 
-    private var settingsAdvancedPanel: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            DisclosureGroup(isExpanded: $showAdvancedSettings) {
-                VStack(alignment: .leading, spacing: 14) {
-                    settingsAdvancedTargetPanel
-                    settingsGraphicsPanel
-                    settingsDiagnosticsPanel
-                }
-                .padding(.top, 10)
-            } label: {
-                Label("Advanced Settings", systemImage: "slider.horizontal.3")
-                    .font(.headline)
-                    .foregroundStyle(themeForeground)
-            }
-        }
-        .padding(16)
-        .background(themePanelRaised)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-    }
-
     private var settingsAdvancedTargetPanel: some View {
         settingsSection("Backend Target") {
             settingsControlRow("Target Mode") {
@@ -472,34 +584,6 @@ struct SettingsSheet: View {
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-    }
-
-    @ViewBuilder
-    private var settingsDiagnosticsPanel: some View {
-        if model.currentOperationJob != nil
-            || model.latestDoctorResult != nil
-            || model.latestSetupResult != nil
-            || model.activeBackendJobs.isEmpty == false
-            || model.recentBackendJobs.isEmpty == false {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Diagnostics")
-                    .font(.headline)
-                    .foregroundStyle(themeForeground)
-
-                if model.currentOperationJob != nil {
-                    settingsCurrentOperationPanel
-                }
-                if model.latestDoctorResult != nil || model.latestSetupResult != nil {
-                    settingsResultsPanel
-                }
-                if model.activeBackendJobs.isEmpty == false || model.recentBackendJobs.isEmpty == false {
-                    settingsJobsPanel
-                }
-            }
-        }
-
-        settingsCommandPanel
-        settingsActivityPanel
     }
 
     private func settingsSection<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
@@ -652,7 +736,7 @@ struct SettingsSheet: View {
                             model.openRecommendedBootstrapLogs()
                         }
                         Button("Choose Existing Installation") {
-                            showAdvancedSettings = true
+                            selectedSection = .advanced
                         }
                     }
                     .buttonStyle(.borderless)

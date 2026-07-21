@@ -49,6 +49,19 @@ Every long-running action must have visible feedback:
 
 Indeterminate progress is correct while a provider or system installer cannot report bytes or phases. Determinate progress should be used when the backend supplies a reliable fraction.
 
+## Settings organization
+
+Settings use a persistent section sidebar so users work with one concern at a time instead of navigating a single technical document:
+
+- **General** contains application updates and the default Wine/bottle target.
+- **Accounts** contains protected shared sign-in controls.
+- **Compatibility** contains host readiness and graphics profiles.
+- **Runtimes** contains managed engine installation and verification.
+- **Jobs** contains current operations, structured results, cancellation, and recent history.
+- **Advanced** contains repair tools, explicit paths, raw commands, logs, and validation output.
+
+The Setup Wizard remains a global entry point. Testing settings automatically opens Advanced so validation output is visible, and active work can be opened directly from the section sidebar.
+
 ## Menus
 
 The card overflow menu contains secondary operations only:
@@ -72,9 +85,8 @@ Provider-owned games cannot be removed from the account, so Epic and GOG cards d
 
 ## Next polish phases
 
-1. Split the long Settings sheet into a sidebar or tabbed structure: General, Runtimes, Compatibility, Accounts, Jobs, and Advanced.
-2. Add a compact/list library view and a user-selectable card density.
-3. Add skeleton artwork placeholders and an image cache for remote provider art.
-4. Add NASE-local hide/unhide for Epic and GOG titles.
-5. Add keyboard shortcuts for Search, Play, Refresh, Settings, and Stop Wine.
-6. Test VoiceOver, keyboard-only navigation, light appearance, reduced motion, and small window sizes.
+1. Add a compact/list library view and a user-selectable card density.
+2. Add skeleton artwork placeholders and an image cache for remote provider art.
+3. Add NASE-local hide/unhide for Epic and GOG titles.
+4. Add keyboard shortcuts for Search, Play, Refresh, Settings, and Stop Wine.
+5. Test VoiceOver, keyboard-only navigation, light appearance, reduced motion, and small window sizes.
