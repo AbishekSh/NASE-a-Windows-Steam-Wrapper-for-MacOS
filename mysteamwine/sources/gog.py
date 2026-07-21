@@ -151,7 +151,7 @@ class GOGSource:
             if not page_token:
                 break
         installed = self._installed()
-        games: list[SourceGame] = []
+        games_by_canonical_id: dict[str, SourceGame] = {}
         for entry in entries:
             game_id = str(entry.get("external_id") or "")
             if not game_id:
@@ -160,12 +160,18 @@ class GOGSource:
                 **headers, "X-GOG-Library-Cert": str(entry.get("certificate") or ""),
             })
             game = metadata.get("game", {}) if isinstance(metadata, dict) else {}
+            if metadata.get("type") not in {"game", "mod"} or game.get("visible_in_library") is False:
+                continue
             title = _localized(metadata.get("title")) or _localized(game.get("title")) or game_id
             local = installed.get(game_id)
-            games.append(SourceGame("gog", game_id, f"gog:{game_id}", title, local is not None,
+            normalized = SourceGame("gog", game_id, f"gog:{game_id}", title, local is not None,
                                     local.get("install_path") if local else None,
-                                    local.get("version") if local else None, False, _art_url(game)))
-        return sorted(games, key=lambda game: (game.title.casefold(), game.store_id))
+                                    local.get("version") if local else None, False, _art_url(game))
+            canonical_id = str(metadata.get("game_id") or game.get("id") or game_id)
+            existing = games_by_canonical_id.get(canonical_id)
+            if existing is None or (normalized.installed and not existing.installed) or (normalized.art_url and not existing.art_url):
+                games_by_canonical_id[canonical_id] = normalized
+        return sorted(games_by_canonical_id.values(), key=lambda game: (game.title.casefold(), game.store_id))
 
     def _installed(self) -> dict[str, dict[str, str]]:
         try:

@@ -67,8 +67,10 @@ class GOGSourceTests(unittest.TestCase):
                 if "galaxy-library" in url:
                     return {"items": [{"platform_id": "gog", "external_id": "123", "certificate": "cert"}]}
                 return {
+                    "type": "game",
+                    "game_id": "canonical-123",
                     "title": {"*": "Good Old Game"},
-                    "game": {"background": {"url_format": "https://images.gog.com/banner.{ext}"}},
+                    "game": {"visible_in_library": True, "background": {"url_format": "https://images.gog.com/banner.{ext}"}},
                 }
 
             with patch("mysteamwine.sources.gog.app_support_root", return_value=root / "support"):
@@ -81,6 +83,37 @@ class GOGSourceTests(unittest.TestCase):
         self.assertEqual(games[0].library_id, "gog:123")
         self.assertTrue(games[0].installed)
         self.assertEqual(games[0].art_url, "https://images.gog.com/banner.jpg")
+
+    def test_filters_hidden_spam_entitlements_and_duplicate_canonical_releases(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            client = root / "gogdl"
+            client.write_text("", encoding="utf-8")
+            client.chmod(0o755)
+
+            def runner(command, environment, timeout):
+                return subprocess.CompletedProcess(command, 0, '{"access_token":"token","user_id":"42"}', "")
+
+            def fetch(url, headers):
+                if "galaxy-library" in url:
+                    return {"items": [
+                        {"platform_id": "gog", "external_id": "100"},
+                        {"platform_id": "gog", "external_id": "101"},
+                        {"platform_id": "gog", "external_id": "102"},
+                    ]}
+                game_id = url.rsplit("/", 1)[-1]
+                if game_id == "102":
+                    return {"type": "spam", "game_id": "junk", "title": {"*": "Game - Amazon Prime"},
+                            "game": {"visible_in_library": False}}
+                return {"type": "game", "game_id": "canonical-game", "title": {"*": "Game"},
+                        "game": {"visible_in_library": True}}
+
+            with patch("mysteamwine.sources.gog.app_support_root", return_value=root / "support"):
+                source = GOGSource(str(client), runner=runner, fetch_json=fetch)
+                source.root.mkdir(parents=True)
+                source.auth_path.write_text("{}", encoding="utf-8")
+                games = source.list_games()
+        self.assertEqual([(game.store_id, game.title) for game in games], [("100", "Game")])
 
     def test_install_and_launch_use_windows_profile(self) -> None:
         commands: list[list[str]] = []
