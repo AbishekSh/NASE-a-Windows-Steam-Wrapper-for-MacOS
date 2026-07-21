@@ -48,6 +48,32 @@ StepCallback = Callable[[str, str, str], None]
 
 CATALOG: tuple[RuntimeCatalogEntry, ...] = (
     RuntimeCatalogEntry(
+        id="gogdl-1.2.2-macos-arm64",
+        name="GOG Download Client",
+        version="1.2.2 (Apple Silicon)",
+        kind="source-client",
+        source="Heroic-Games-Launcher/heroic-gogdl",
+        download_url="https://github.com/Heroic-Games-Launcher/heroic-gogdl/releases/download/v1.2.2/gogdl_macos_arm64",
+        sha256="9780a374c4571b637606dd9ffc64594816a9f3d905e8848f4b3b9172f4987aa9",
+        archive_type="binary",
+        install_layout="source-client-binary",
+        license="GPL-3.0",
+        notes="Pinned native gogdl client used for GOG authentication, Windows game downloads, repair, and compatibility-profile launching.",
+    ),
+    RuntimeCatalogEntry(
+        id="gogdl-1.2.2-macos-x86_64",
+        name="GOG Download Client",
+        version="1.2.2 (Intel)",
+        kind="source-client",
+        source="Heroic-Games-Launcher/heroic-gogdl",
+        download_url="https://github.com/Heroic-Games-Launcher/heroic-gogdl/releases/download/v1.2.2/gogdl_macos_x86_64",
+        sha256="6dd43638d759e9883ac4210d30d7d257a9354e2cab2432ed5307cbd24721662e",
+        archive_type="binary",
+        install_layout="source-client-binary",
+        license="GPL-3.0",
+        notes="Pinned native gogdl client used for GOG authentication, Windows game downloads, repair, and compatibility-profile launching.",
+    ),
+    RuntimeCatalogEntry(
         id="legendary-python-0.20.34-macos",
         name="Legendary Epic Client",
         version="0.20.34",
@@ -372,6 +398,25 @@ def _install_legendary_venv(archive: Path, entry: RuntimeCatalogEntry, callback:
     return destination, str(executable)
 
 
+def _install_source_client_binary(
+    archive: Path, entry: RuntimeCatalogEntry, callback: StepCallback | None
+) -> tuple[Path, str]:
+    destination = runtime_root() / entry.kind / entry.id
+    executable = destination / "bin" / "gogdl"
+    destination.mkdir(parents=True, exist_ok=True)
+    executable.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(archive, executable)
+    executable.chmod(0o755)
+    check = subprocess.run([str(executable), "--version"], capture_output=True, text=True, check=False, timeout=30)
+    version = (check.stdout or check.stderr).strip()
+    if check.returncode != 0 or entry.version.split()[0] not in version:
+        shutil.rmtree(destination, ignore_errors=True)
+        raise RuntimeError(f"Unexpected GOG client version: {version or 'unknown'}")
+    if callback:
+        callback("extract", "ok", f"Installed the verified {entry.name} executable.")
+    return destination, str(executable)
+
+
 def _record_install(entry: RuntimeCatalogEntry, path: Path, executable: str | None) -> InstalledRuntime:
     runtimes = [runtime for runtime in list_installed_runtimes() if runtime.id != entry.id]
     installed = InstalledRuntime(
@@ -402,6 +447,8 @@ def install_runtime(
     _verify(archive, entry.sha256, callback)
     if entry.install_layout == "legendary-python-venv":
         extracted, executable = _install_legendary_venv(archive, entry, callback)
+    elif entry.install_layout == "source-client-binary":
+        extracted, executable = _install_source_client_binary(archive, entry, callback)
     else:
         extracted = _extract(archive, entry, callback)
         executable = _find_wine_executable(extracted) if entry.kind == "wine" else None

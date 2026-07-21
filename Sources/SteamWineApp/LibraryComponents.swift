@@ -87,7 +87,7 @@ struct GameCard: View {
                             onLaunch()
                         }
                     } label: {
-                        Image(systemName: canStop ? "stop.fill" : (game.runner == .epic && game.installURL == nil ? "arrow.down" : "play.fill"))
+                        Image(systemName: canStop ? "stop.fill" : ([.epic, .gog].contains(game.runner) && game.installURL == nil ? "arrow.down" : "play.fill"))
                             .font(.subheadline.weight(.bold))
                             .foregroundStyle(Color.black)
                             .frame(width: 34, height: 34)
@@ -97,7 +97,7 @@ struct GameCard: View {
                     .buttonStyle(.plain)
                     .opacity(isBusy ? 0.55 : 1)
                     .disabled(launchStatus?.phase == .launching)
-                    .help(canStop ? "Stop \(game.title)" : (game.runner == .epic && game.installURL == nil ? "Install \(game.title)" : "Play \(game.title)"))
+                    .help(canStop ? "Stop \(game.title)" : ([.epic, .gog].contains(game.runner) && game.installURL == nil ? "Install \(game.title)" : "Play \(game.title)"))
                 }
                 .frame(height: 36)
 
@@ -207,7 +207,7 @@ struct GameCard: View {
                     onDebugLaunch()
                 }
             }
-            if game.runner == .epic, game.installURL != nil {
+            if [.epic, .gog].contains(game.runner), game.installURL != nil {
                 Divider()
                 Button("Update") { onUpdateSourceGame() }
                 Button("Verify Files") { onVerifySourceGame() }

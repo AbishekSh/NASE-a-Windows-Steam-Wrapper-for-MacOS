@@ -6,6 +6,12 @@ from mysteamwine.catalog import CATALOG
 
 
 class RuntimeCatalogTests(unittest.TestCase):
+    def test_gog_clients_are_checksum_pinned_for_both_mac_architectures(self) -> None:
+        entries = [item for item in CATALOG if item.id.startswith("gogdl-1.2.2-macos-")]
+        self.assertEqual({entry.id.rsplit("-", 1)[-1] for entry in entries}, {"arm64", "x86_64"})
+        self.assertTrue(all(entry.sha256 and len(entry.sha256) == 64 for entry in entries))
+        self.assertTrue(all(entry.install_layout == "source-client-binary" for entry in entries))
+
     def test_legendary_epic_client_is_checksum_pinned(self) -> None:
         entry = next(item for item in CATALOG if item.id == "legendary-python-0.20.34-macos")
         self.assertEqual(entry.kind, "source-client")

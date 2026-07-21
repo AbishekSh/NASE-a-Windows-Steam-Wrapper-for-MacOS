@@ -40,6 +40,9 @@ struct ContentView: View {
         .sheet(isPresented: $model.isShowingEpicSetup) {
             EpicSetupSheet(model: model)
         }
+        .sheet(isPresented: $model.isShowingGOGSetup) {
+            GOGSetupSheet(model: model)
+        }
     }
 
     private var sidebar: some View {
@@ -123,6 +126,14 @@ struct ContentView: View {
                             model.refreshEpicLibrary()
                         } label: {
                             sidebarFooterLabel("Refresh Epic", systemImage: "arrow.clockwise")
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    if model.selectedRunner == .gog {
+                        Button {
+                            model.refreshGOGLibrary()
+                        } label: {
+                            sidebarFooterLabel("Refresh GOG", systemImage: "arrow.clockwise")
                         }
                         .buttonStyle(.plain)
                     }
@@ -295,10 +306,10 @@ struct ContentView: View {
                                     onRemoveFromLibrary: {
                                         model.removeGameFromLibrary(game)
                                     },
-                                    onUpdateSourceGame: { model.updateEpicGame(game) },
-                                    onVerifySourceGame: { model.verifyEpicGame(game) },
-                                    onRepairSourceGame: { model.repairEpicGame(game) },
-                                    onUninstallSourceGame: { model.uninstallEpicGame(game) }
+                                    onUpdateSourceGame: { game.runner == .gog ? model.updateGOGGame(game) : model.updateEpicGame(game) },
+                                    onVerifySourceGame: { game.runner == .gog ? model.verifyGOGGame(game) : model.verifyEpicGame(game) },
+                                    onRepairSourceGame: { game.runner == .gog ? model.repairGOGGame(game) : model.repairEpicGame(game) },
+                                    onUninstallSourceGame: { game.runner == .gog ? model.uninstallGOGGame(game) : model.uninstallEpicGame(game) }
                                 )
                                     .onDrag {
                                         draggedGame = game
@@ -366,6 +377,14 @@ struct ContentView: View {
                 }
                 .buttonStyle(.plain)
             }
+            if model.selectedRunner == .gog {
+                Button {
+                    model.openGOGSetup()
+                } label: {
+                    toolbarButtonLabel("GOG Setup", systemImage: "person.badge.key")
+                }
+                .buttonStyle(.plain)
+            }
             Button {
                 model.openSettings()
             } label: {
@@ -376,7 +395,7 @@ struct ContentView: View {
     }
 
     private var shouldShowSidebarFooter: Bool {
-        model.selectedRunner == .steam || model.selectedRunner == .epic || model.shouldShowAddButton
+        model.selectedRunner == .steam || model.selectedRunner == .epic || model.selectedRunner == .gog || model.shouldShowAddButton
     }
 
     @ViewBuilder

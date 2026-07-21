@@ -419,8 +419,10 @@ enum BackendAction {
     case listSourceGames(source: String, forceRefresh: Bool)
     case epicAuthenticate(code: String)
     case epicLogout
-    case sourceGameAction(gameID: String, operation: String, confirm: Bool = false)
-    case launchSourceGame(gameID: String, graphicsBackend: GraphicsBackendOption)
+    case gogAuthenticate(code: String)
+    case gogLogout
+    case sourceGameAction(source: String, gameID: String, operation: String, confirm: Bool = false)
+    case launchSourceGame(source: String, gameID: String, graphicsBackend: GraphicsBackendOption)
     case steamIdentityStatus
     case captureSteamIdentity(sourceBottle: String)
     case provisionSteamIdentity(targetBottle: String)
@@ -531,7 +533,8 @@ enum BackendBridge {
             ]
         case .gog:
             return [
-                BackendCommand(title: "Planned", command: "Store integration is not wired yet."),
+                BackendCommand(title: "GOG Status", command: preview(.sourceStatus(source: "gog"), context: context)),
+                BackendCommand(title: "Refresh GOG Library", command: preview(.listSourceGames(source: "gog", forceRefresh: true), context: context)),
             ]
         }
     }
@@ -565,12 +568,20 @@ enum BackendBridge {
             process.standardInput = pipe
             input = pipe
             _ = code
+        } else if case .gogAuthenticate(let code) = action {
+            let pipe = Pipe()
+            process.standardInput = pipe
+            input = pipe
+            _ = code
         } else {
             input = nil
         }
 
         try process.run()
         if case .epicAuthenticate(let code) = action {
+            input?.fileHandleForWriting.write(Data((code + "\n").utf8))
+            try? input?.fileHandleForWriting.close()
+        } else if case .gogAuthenticate(let code) = action {
             input?.fileHandleForWriting.write(Data((code + "\n").utf8))
             try? input?.fileHandleForWriting.close()
         }
@@ -596,14 +607,18 @@ enum BackendBridge {
             return context.targetArguments + ["--jsonl", "epic-auth", "--authorization-code-stdin"]
         case .epicLogout:
             return context.targetArguments + ["--jsonl", "epic-logout", "--confirm"]
-        case .sourceGameAction(let gameID, let operation, let confirm):
-            return context.targetArguments + ["--jsonl", "source-game-action", "--source", "epic", "--game-id", gameID, "--operation", operation]
+        case .gogAuthenticate:
+            return context.targetArguments + ["--jsonl", "gog-auth", "--authorization-code-stdin"]
+        case .gogLogout:
+            return context.targetArguments + ["--jsonl", "gog-logout", "--confirm"]
+        case .sourceGameAction(let source, let gameID, let operation, let confirm):
+            return context.targetArguments + ["--jsonl", "source-game-action", "--source", source, "--game-id", gameID, "--operation", operation]
                 + (confirm ? ["--confirm"] : [])
-        case .launchSourceGame(let gameID, let graphicsBackend):
+        case .launchSourceGame(let source, let gameID, let graphicsBackend):
             var args = base + [
                 "--graphics-backend", graphicsBackend.cliValue,
                 "--compatibility-profile", graphicsBackend.compatibilityProfileID,
-                "launch-source-game", "--source", "epic", "--game-id", gameID,
+                "launch-source-game", "--source", source, "--game-id", gameID,
             ]
             if graphicsBackend == .dxmt {
                 args += ["--dxmt-source", context.dxmtSource]

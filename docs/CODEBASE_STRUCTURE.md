@@ -100,6 +100,10 @@ The CLI is the compatibility contract. Existing commands should keep working eve
   - The managed Legendary wheel is checksum-pinned in `catalog.py` and installed into a native Python 3.10–3.13 virtual environment; the incompatible legacy x86 standalone is not selected.
   - Epic installs use a shared host directory; update, verify, repair, and uninstall remain provider jobs.
   - Launch delegates Epic online-auth parameter generation to Legendary while NASE supplies the selected Wine prefix and complete graphics-profile environment.
+- `sources/gog.py`: GOG account, library, install registry, and `gogdl` adapter.
+  - Authentication tokens live under `sources/gog/auth.json` with owner-only permissions; prefixes are never shared.
+  - Owned games and official artwork come from GOG Galaxy/GamesDB metadata, while the checksum-pinned architecture-specific `gogdl` client handles Windows downloads, updates, repair, and launch task resolution.
+  - Installed game files live in a shared GOG host library and launch through the selected isolated NASE compatibility-profile bottle.
 - `library_activity.py`: locked persistent ownership for shared libraries. It permits one Windows Steam owner per library, supports multiple games under that owner, and replaces stale ownership only after the previous Steam process exits.
 - `catalog.py`: managed runtime catalog for Wine, DXVK, and DXMT. It owns pinned download URLs/checksums, archive extraction, install records, and one-button install helpers that can apply graphics payloads to the selected bottle.
 - `bottle.py`: managed and external-prefix path model.

@@ -78,8 +78,7 @@ enum BackendDebugSection: String, CaseIterable, Identifiable {
 @Observable
 final class AppViewModel {
     let sidebarSections: [SidebarSection] = [
-        SidebarSection(id: "libraries", title: "Libraries", runners: [.home, .mac, .steam, .wine, .epic]),
-        SidebarSection(id: "coming-soon", title: "Coming Soon", runners: [.gog]),
+        SidebarSection(id: "libraries", title: "Libraries", runners: [.home, .mac, .steam, .wine, .epic, .gog]),
     ]
 
     var selectedRunner: RunnerKind? = .home
@@ -121,6 +120,7 @@ final class AppViewModel {
     var isShowingWinetricks: Bool = false
     var isShowingSetupWizard: Bool = false
     var isShowingEpicSetup: Bool = false
+    var isShowingGOGSetup: Bool = false
     var isCheckingForUpdates: Bool = false
     var isDownloadingUpdate: Bool = false
     var updateStatusMessage: String = "Updates have not been checked yet."
@@ -155,6 +155,9 @@ final class AppViewModel {
     private(set) var epicGames: [LibraryGame] = []
     private(set) var epicSourceStatus: BackendSourceStatus?
     private(set) var epicSetupMessage: String = "Checking Epic setup…"
+    private(set) var gogGames: [LibraryGame] = []
+    private(set) var gogSourceStatus: BackendSourceStatus?
+    private(set) var gogSetupMessage: String = "Checking GOG setup…"
     private(set) var nativeApps: [LibraryGame] = []
     private(set) var wineApps: [LibraryGame] = []
     private(set) var pinnedGameIDs: [String] = []
@@ -477,7 +480,8 @@ final class AppViewModel {
             rightPanelMessage = "Checking Epic Games support…"
             refreshEpicLibrary(forceRefresh: false)
         case .gog:
-            rightPanelMessage = "GOG support is planned after the Epic source workflow."
+            rightPanelMessage = "Checking GOG support…"
+            refreshGOGLibrary(forceRefresh: false)
         }
     }
 
@@ -496,6 +500,81 @@ final class AppViewModel {
     func openEpicSetup() {
         isShowingEpicSetup = true
         refreshEpicSourceStatus()
+    }
+
+    func openGOGSetup() {
+        isShowingGOGSetup = true
+        refreshGOGSourceStatus()
+    }
+
+    func refreshGOGSourceStatus() {
+        Task {
+            do {
+                let response = try await BackendBridge.execute(.sourceStatus(source: "gog"), context: backendContext)
+                gogSourceStatus = response.sourceStatus
+                gogSetupMessage = response.sourceStatus?.message ?? "GOG status is unavailable."
+            } catch {
+                rightPanelMessage = error.localizedDescription
+                gogSetupMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func installGOGClient() {
+#if arch(arm64)
+        let runtimeID = "gogdl-1.2.2-macos-arm64"
+#else
+        let runtimeID = "gogdl-1.2.2-macos-x86_64"
+#endif
+        guard runtimeCatalog.contains(where: { $0.id == runtimeID }) else {
+            refreshRuntimeCenter()
+            rightPanelMessage = "Loading the GOG client runtime…"
+            return
+        }
+        executeDetached(.installRuntime(id: runtimeID), successMessage: "GOG client installed. Continue with sign-in.", context: backendContext)
+        gogSetupMessage = "Installing and verifying the GOG client…"
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            refreshRuntimeCenter()
+            refreshGOGSourceStatus()
+        }
+    }
+
+    func authenticateGOG(code: String) {
+        let cleaned = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else {
+            gogSetupMessage = "Paste the callback URL from GOG first."
+            return
+        }
+        gogSetupMessage = "Connecting to GOG…"
+        Task {
+            do {
+                let response = try await BackendBridge.executeStreaming(.gogAuthenticate(code: cleaned), context: backendContext) { _ in }
+                gogSourceStatus = response.sourceStatus
+                gogSetupMessage = "GOG account connected."
+                rightPanelMessage = "GOG account connected."
+                refreshGOGLibrary(forceRefresh: true)
+            } catch {
+                appendLog("GOG sign-in failed:\n\(error.localizedDescription)")
+                gogSetupMessage = error.localizedDescription
+                rightPanelMessage = error.localizedDescription
+                refreshGOGSourceStatus()
+            }
+        }
+    }
+
+    func logoutGOG() {
+        Task {
+            do {
+                let response = try await BackendBridge.executeStreaming(.gogLogout, context: backendContext) { _ in }
+                gogSourceStatus = response.sourceStatus
+                gogGames = []
+                gogSetupMessage = "GOG account signed out."
+                rightPanelMessage = "GOG account signed out."
+            } catch {
+                gogSetupMessage = error.localizedDescription
+            }
+        }
     }
 
     func refreshEpicSourceStatus() {
@@ -1465,7 +1544,7 @@ final class AppViewModel {
             guard let gameID = game.backendID else { return }
             if game.installURL == nil {
                 executeDetached(
-                    .sourceGameAction(gameID: gameID, operation: "install"),
+                    .sourceGameAction(source: "epic", gameID: gameID, operation: "install"),
                     successMessage: "Installed \(game.title). Refresh Epic when the download completes.",
                     context: backendContext,
                     game: game
@@ -1474,14 +1553,23 @@ final class AppViewModel {
                 let graphics = settings(for: game).graphicsBackend
                 let context = effectiveBackendContext(backendContext.compatibilityContext(for: graphics))
                 executeDetached(
-                    .launchSourceGame(gameID: gameID, graphicsBackend: graphics),
+                    .launchSourceGame(source: "epic", gameID: gameID, graphicsBackend: graphics),
                     successMessage: "Launched \(game.title).",
                     context: context,
                     game: game
                 )
             }
         case .gog:
-            break
+            guard let gameID = game.backendID else { return }
+            if game.installURL == nil {
+                executeDetached(.sourceGameAction(source: "gog", gameID: gameID, operation: "install"),
+                                successMessage: "Installed \(game.title).", context: backendContext, game: game)
+            } else {
+                let graphics = settings(for: game).graphicsBackend
+                let context = effectiveBackendContext(backendContext.compatibilityContext(for: graphics))
+                executeDetached(.launchSourceGame(source: "gog", gameID: gameID, graphicsBackend: graphics),
+                                successMessage: "Launched \(game.title).", context: context, game: game)
+            }
         }
     }
 
@@ -1510,11 +1598,31 @@ final class AppViewModel {
     private func runEpicMaintenance(_ game: LibraryGame, operation: String, confirm: Bool = false) {
         guard game.runner == .epic, let gameID = game.backendID else { return }
         executeDetached(
-            .sourceGameAction(gameID: gameID, operation: operation, confirm: confirm),
+            .sourceGameAction(source: "epic", gameID: gameID, operation: operation, confirm: confirm),
             successMessage: "Epic \(operation) completed for \(game.title).",
             context: backendContext,
             game: game
         )
+    }
+
+    func updateGOGGame(_ game: LibraryGame) { runGOGMaintenance(game, operation: "update") }
+    func verifyGOGGame(_ game: LibraryGame) { runGOGMaintenance(game, operation: "verify") }
+    func repairGOGGame(_ game: LibraryGame) { runGOGMaintenance(game, operation: "repair") }
+
+    func uninstallGOGGame(_ game: LibraryGame) {
+        let alert = NSAlert()
+        alert.messageText = "Uninstall \(game.title)?"
+        alert.informativeText = "This deletes the GOG game files. The game remains in your account."
+        alert.addButton(withTitle: "Uninstall")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        runGOGMaintenance(game, operation: "uninstall", confirm: true)
+    }
+
+    private func runGOGMaintenance(_ game: LibraryGame, operation: String, confirm: Bool = false) {
+        guard game.runner == .gog, let gameID = game.backendID else { return }
+        executeDetached(.sourceGameAction(source: "gog", gameID: gameID, operation: operation, confirm: confirm),
+                        successMessage: "GOG \(operation) completed for \(game.title).", context: backendContext, game: game)
     }
 
     func debugLaunch(_ game: LibraryGame) {
@@ -2217,13 +2325,15 @@ final class AppViewModel {
             discoveredSteamGames
         case .wine:
             wineApps
-        case .epic, .gog:
-            selectedRunner == .epic ? epicGames : []
+        case .epic:
+            epicGames
+        case .gog:
+            gogGames
         }
     }
 
     private var pinnedGames: [LibraryGame] {
-        let all = nativeApps + discoveredSteamGames + wineApps + epicGames
+        let all = nativeApps + discoveredSteamGames + wineApps + epicGames + gogGames
         let byID = Dictionary(uniqueKeysWithValues: all.map { ($0.pinID, $0) })
         return pinnedGameIDs.compactMap { byID[$0] }
     }
@@ -2357,6 +2467,40 @@ final class AppViewModel {
                 epicGames = []
                 selectedGame = nil
                 appendLog("Epic library refresh failed:\n\(error.localizedDescription)")
+                rightPanelMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func refreshGOGLibrary(forceRefresh: Bool = true) {
+        Task {
+            do {
+                let statusResponse = try await BackendBridge.execute(.sourceStatus(source: "gog"), context: backendContext)
+                gogSourceStatus = statusResponse.sourceStatus
+                guard let status = gogSourceStatus, status.available, status.authenticated else {
+                    gogGames = []
+                    selectedGame = nil
+                    rightPanelMessage = statusResponse.sourceStatus?.message ?? "Install the GOG client to enable GOG."
+                    return
+                }
+                rightPanelMessage = "Refreshing GOG library…"
+                let response = try await BackendBridge.executeStreaming(
+                    .listSourceGames(source: "gog", forceRefresh: forceRefresh), context: backendContext
+                ) { _ in }
+                gogGames = response.sourceGames.map { game in
+                    let installURL = game.installPath.map(URL.init(fileURLWithPath:))
+                    return LibraryGame(pinID: game.libraryID, backendID: game.storeID, title: game.title,
+                                       runner: .gog, capsule: "GOG", status: game.installed ? "Installed" : "Owned",
+                                       statsText: game.version, bannerURL: game.artURL.flatMap(URL.init(string:)),
+                                       installURL: installURL, launchURL: installURL)
+                }
+                selectedGame = gogGames.first
+                appendLog(response.output)
+                rightPanelMessage = "Loaded \(gogGames.count) GOG title(s)."
+            } catch {
+                gogGames = []
+                selectedGame = nil
+                appendLog("GOG library refresh failed:\n\(error.localizedDescription)")
                 rightPanelMessage = error.localizedDescription
             }
         }
@@ -2878,8 +3022,12 @@ final class AppViewModel {
             return "Connect Epic Games"
         case .epicLogout:
             return "Sign Out Epic Games"
-        case .sourceGameAction(_, let operation, _):
-            return "Epic \(operation.capitalized)"
+        case .gogAuthenticate:
+            return "Connect GOG"
+        case .gogLogout:
+            return "Sign Out GOG"
+        case .sourceGameAction(let source, _, let operation, _):
+            return "\(source.uppercased()) \(operation.capitalized)"
         case .launchSourceGame:
             return "Launch Epic Game"
         case .steamIdentityStatus:
@@ -2967,8 +3115,12 @@ final class AppViewModel {
             return "Epic Games account connected."
         case .epicLogout:
             return "Epic Games account signed out."
-        case .sourceGameAction(_, let operation, _):
-            return "Epic \(operation) completed."
+        case .gogAuthenticate:
+            return "GOG account connected."
+        case .gogLogout:
+            return "GOG account signed out."
+        case .sourceGameAction(let source, _, let operation, _):
+            return "\(source.uppercased()) \(operation) completed."
         case .launchSourceGame:
             return "Epic game launch sent."
         case .steamIdentityStatus:
@@ -3131,8 +3283,8 @@ final class AppViewModel {
         appendLog("== Action ==\n\(preview)")
         rightPanelMessage = "Launching..."
         if let game {
-            if case .sourceGameAction(_, let operation, _) = action {
-                setLaunchStatus(.launching, for: game, message: "Epic \(operation) in progress…")
+            if case .sourceGameAction(let source, _, let operation, _) = action {
+                setLaunchStatus(.launching, for: game, message: "\(source.uppercased()) \(operation) in progress…")
             } else {
                 setLaunchStatus(.launching, for: game, message: "Sending launch request...")
             }
@@ -3190,9 +3342,13 @@ final class AppViewModel {
                     if let game {
                         if case .sourceGameAction = action {
                             self.clearLaunchStatus(for: game)
-                            self.refreshEpicLibrary(forceRefresh: false)
+                            if game.runner == .gog {
+                                self.refreshGOGLibrary(forceRefresh: false)
+                            } else {
+                                self.refreshEpicLibrary(forceRefresh: false)
+                            }
                         } else if case .launchSourceGame = action {
-                            self.setLaunchStatus(.running, for: game, message: "Epic launch request completed.")
+                            self.setLaunchStatus(.running, for: game, message: "Store launch request completed.")
                         } else if response.sessions.isEmpty {
                             self.setLaunchStatus(.launching, for: game, message: "Waiting for the game process...")
                         } else {

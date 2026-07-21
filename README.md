@@ -12,9 +12,11 @@ The SwiftUI app is the product. The Python backend remains the implementation en
 - Native macOS app imports
 - Per-game settings, logs, health checks, and compatibility notes
 
-Epic Games source work has started through an isolated Legendary provider adapter; GOG remains planned.
+Epic Games and GOG are available through isolated native provider adapters. Neither source requires installing its Windows store launcher.
 
 Epic setup now downloads the checksum-pinned Legendary 0.20.34 wheel from PyPI, installs it into a native managed Python environment, verifies its version, and keeps its credentials under NASE app support. This avoids the legacy x86 standalone's multiprocessing failure on current Apple Silicon macOS. The setup sheet opens Legendary's official Epic login flow and sends the short-lived authorization response to Python over standard input so it never appears in process arguments, previews, or job logs. Epic games can be installed into a shared host library, updated, verified, repaired, uninstalled with confirmation, and launched through the selected NASE compatibility profile while game files remain outside its bottle.
+
+GOG setup installs the checksum-pinned `gogdl` 1.2.2 release matching the Mac's architecture, keeps refresh tokens in NASE-owned storage with restrictive permissions, and discovers the account through GOG's Galaxy library metadata. GOG games use official artwork and can be installed into a shared host library, updated, verified/repaired, uninstalled, and launched through any ready NASE compatibility profile.
 
 ## Open The App
 
@@ -164,7 +166,7 @@ Key Python modules:
 - `mysteamwine/runtime.py`: process execution, downloads, executable resolution, Wine runtime detection
 - `mysteamwine/steam_libraries.py`: cross-bottle Steam library discovery and the canonical read-only registry
 - `mysteamwine/steam_identity.py`: permission-locked, integrity-checked Steam authentication capture, per-profile provisioning, sign-out, and forget operations
-- `mysteamwine/sources/`: normalized multi-store contracts and provider adapters; the Epic adapter isolates Legendary credentials and converts owned/installed results into NASE library records
+- `mysteamwine/sources/`: normalized multi-store contracts and provider adapters; Epic uses Legendary and GOG uses the pinned GOG Download Client while credentials and install registries remain source-isolated
 - `mysteamwine/catalog.py`: managed runtime catalog, downloads, checksum verification, extraction, and install records
 - `mysteamwine/bottle.py`: managed bottle and external-prefix paths
 - `mysteamwine/steam.py`: Steam installer/runner, VDF parsing, manifest discovery, Steam/direct game launch helpers

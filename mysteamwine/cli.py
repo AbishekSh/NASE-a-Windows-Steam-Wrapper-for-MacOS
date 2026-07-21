@@ -57,7 +57,7 @@ from .steam_identity import (
     sign_out_steam_profile,
     steam_identity_status,
 )
-from .sources import EpicSource
+from .sources import EpicSource, GOGSource
 from .winetricks import run_winetricks
 
 
@@ -1206,15 +1206,23 @@ def _epic_source(args: argparse.Namespace) -> EpicSource:
     return EpicSource(args.epic_client)
 
 
+def _gog_source(args: argparse.Namespace) -> GOGSource:
+    return GOGSource(args.gog_client)
+
+
+def _game_source(args: argparse.Namespace):
+    return _epic_source(args) if args.source == "epic" else _gog_source(args)
+
+
 def cmd_source_status(args: argparse.Namespace) -> None:
-    source = _epic_source(args)
+    source = _game_source(args)
     data = {"source_status": source.status().as_dict()}
-    _identity_result(args, action="source-status", message="Epic Games source status loaded.", data=data)
+    _identity_result(args, action="source-status", message=f"{args.source.upper()} source status loaded.", data=data)
 
 
 def cmd_list_source_games(args: argparse.Namespace) -> None:
     action = "list-source-games"
-    source = _epic_source(args)
+    source = _game_source(args)
     try:
         games = [game.as_dict() for game in source.list_games(force_refresh=args.force_refresh)]
     except (OSError, RuntimeError, ValueError) as exc:
@@ -1222,8 +1230,8 @@ def cmd_list_source_games(args: argparse.Namespace) -> None:
     _identity_result(
         args,
         action=action,
-        message=f"Found {len(games)} Epic Games library item(s).",
-        data={"source_id": "epic", "source_games": games},
+        message=f"Found {len(games)} {args.source.upper()} library item(s).",
+        data={"source_id": args.source, "source_games": games},
     )
 
 
@@ -1248,15 +1256,37 @@ def cmd_epic_logout(args: argparse.Namespace) -> None:
     _identity_result(args, action=action, message="Epic Games account signed out.", data={"source_status": status.as_dict()})
 
 
+def cmd_gog_auth(args: argparse.Namespace) -> None:
+    action = "gog-auth"
+    authorization_code = sys.stdin.readline().strip() if args.authorization_code_stdin else args.authorization_code
+    try:
+        status = _gog_source(args).authenticate(authorization_code=authorization_code or "")
+    except (OSError, RuntimeError, ValueError) as exc:
+        _json_error(args, action=action, message=str(exc))
+    _identity_result(args, action=action, message="GOG account connected.", data={"source_status": status.as_dict()})
+
+
+def cmd_gog_logout(args: argparse.Namespace) -> None:
+    action = "gog-logout"
+    if not args.confirm:
+        _json_error(args, action=action, message="GOG sign-out requires --confirm.")
+    try:
+        status = _gog_source(args).sign_out()
+    except (OSError, RuntimeError, ValueError) as exc:
+        _json_error(args, action=action, message=str(exc))
+    _identity_result(args, action=action, message="GOG account signed out.", data={"source_status": status.as_dict()})
+
+
 def cmd_source_game_action(args: argparse.Namespace) -> None:
-    action = f"epic-{args.operation}"
-    source = _epic_source(args)
+    action = f"{args.source}-{args.operation}"
+    source = _game_source(args)
+    source_name = "Epic" if args.source == "epic" else "GOG"
     if args.operation == "uninstall" and not args.confirm:
-        _json_error(args, action=action, message="Epic uninstall requires --confirm.")
-    job_id = _stream_start(action=action, message=f"Epic {args.operation} started for {args.game_id}...") if _stream_enabled(args) else None
+        _json_error(args, action=action, message=f"{source_name} uninstall requires --confirm.")
+    job_id = _stream_start(action=action, message=f"{source_name} {args.operation} started for {args.game_id}...") if _stream_enabled(args) else None
     try:
         if args.operation == "install":
-            destination = Path(args.install_root).expanduser() if args.install_root else app_support_root() / "game-libraries" / "epic"
+            destination = Path(args.install_root).expanduser() if args.install_root else app_support_root() / "game-libraries" / args.source
             source.install(args.game_id, base_path=destination)
         elif args.operation == "update":
             source.update(args.game_id)
@@ -1277,15 +1307,15 @@ def cmd_source_game_action(args: argparse.Namespace) -> None:
             job_id=job_id,
             ok=True,
             status="completed",
-            message=f"Epic {args.operation} completed for {args.game_id}.",
-            data={"source_id": "epic", "game_id": args.game_id, "operation": args.operation},
+            message=f"{source_name} {args.operation} completed for {args.game_id}.",
+            data={"source_id": args.source, "game_id": args.game_id, "operation": args.operation},
         )
         return
     _identity_result(
         args,
         action=action,
-        message=f"Epic {args.operation} completed for {args.game_id}.",
-        data={"source_id": "epic", "game_id": args.game_id, "operation": args.operation},
+        message=f"{source_name} {args.operation} completed for {args.game_id}.",
+        data={"source_id": args.source, "game_id": args.game_id, "operation": args.operation},
     )
 
 
@@ -1301,14 +1331,15 @@ def cmd_launch_source_game(args: argparse.Namespace) -> None:
         "d3dmetal": args.d3dmetal_source,
         "none": None,
     }[graphics_backend]
-    job_id = _stream_start(action=action, message=f"Preparing Epic launch for {args.game_id}...") if _stream_enabled(args) else None
+    source_name = "Epic" if args.source == "epic" else "GOG"
+    job_id = _stream_start(action=action, message=f"Preparing {source_name} launch for {args.game_id}...") if _stream_enabled(args) else None
     try:
         environment = graphics_launch_environment(
             bottle,
             graphics_backend,
             Path(graphics_source_value) if graphics_source_value else None,
         )
-        _epic_source(args).launch(
+        _game_source(args).launch(
             args.game_id,
             wine_path=wine_path,
             wine_prefix=bottle.prefix,
@@ -1325,15 +1356,15 @@ def cmd_launch_source_game(args: argparse.Namespace) -> None:
             job_id=job_id,
             ok=True,
             status="completed",
-            message=f"Epic launch request sent for {args.game_id}.",
-            data={"source_id": "epic", "game_id": args.game_id, "graphics_backend": graphics_backend},
+            message=f"{source_name} launch request sent for {args.game_id}.",
+            data={"source_id": args.source, "game_id": args.game_id, "graphics_backend": graphics_backend},
         )
         return
     _identity_result(
         args,
         action=action,
-        message=f"Epic launch request sent for {args.game_id}.",
-        data={"source_id": "epic", "game_id": args.game_id, "graphics_backend": graphics_backend},
+        message=f"{source_name} launch request sent for {args.game_id}.",
+        data={"source_id": args.source, "game_id": args.game_id, "graphics_backend": graphics_backend},
     )
 
 
@@ -2745,6 +2776,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Pinned compatibility profile id. Defaults to the profile for --graphics-backend.",
     )
     parser.add_argument("--epic-client", default="legendary", help="Path or command name for the Legendary Epic client")
+    parser.add_argument("--gog-client", default="gogdl", help="Path or command name for the GOG Download Client")
 
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -2773,11 +2805,11 @@ def build_parser() -> argparse.ArgumentParser:
     sign_out_profile.add_argument("--confirm", action="store_true", help="Confirm per-profile sign-out")
     sign_out_profile.set_defaults(func=cmd_sign_out_steam_profile)
     source_status = sub.add_parser("source-status", help="Show availability and authentication state for a game source")
-    source_status.add_argument("--source", choices=("epic",), required=True)
+    source_status.add_argument("--source", choices=("epic", "gog"), required=True)
     source_status.set_defaults(func=cmd_source_status)
     list_source_games = sub.add_parser("list-source-games", help="List normalized games owned through a store source")
-    list_source_games.add_argument("--source", choices=("epic",), required=True)
-    list_source_games.add_argument("--force-refresh", action="store_true", help="Refresh Epic metadata from the service")
+    list_source_games.add_argument("--source", choices=("epic", "gog"), required=True)
+    list_source_games.add_argument("--force-refresh", action="store_true", help="Refresh source metadata from the service")
     list_source_games.set_defaults(func=cmd_list_source_games)
     epic_auth = sub.add_parser("epic-auth", help="Connect Epic using an authorization code")
     epic_auth_input = epic_auth.add_mutually_exclusive_group(required=True)
@@ -2787,16 +2819,24 @@ def build_parser() -> argparse.ArgumentParser:
     epic_logout = sub.add_parser("epic-logout", help="Remove the Epic authentication stored by Legendary")
     epic_logout.add_argument("--confirm", action="store_true", help="Confirm Epic sign-out")
     epic_logout.set_defaults(func=cmd_epic_logout)
+    gog_auth = sub.add_parser("gog-auth", help="Connect GOG using the callback URL or authorization code")
+    gog_auth_input = gog_auth.add_mutually_exclusive_group(required=True)
+    gog_auth_input.add_argument("--authorization-code", help="Short-lived code returned by GOG")
+    gog_auth_input.add_argument("--authorization-code-stdin", action="store_true", help="Read the callback URL or code from standard input")
+    gog_auth.set_defaults(func=cmd_gog_auth)
+    gog_logout = sub.add_parser("gog-logout", help="Remove the GOG authentication stored by NASE")
+    gog_logout.add_argument("--confirm", action="store_true", help="Confirm GOG sign-out")
+    gog_logout.set_defaults(func=cmd_gog_logout)
     source_game_action = sub.add_parser("source-game-action", help="Install, update, verify, repair, or uninstall a store game")
-    source_game_action.add_argument("--source", choices=("epic",), required=True)
+    source_game_action.add_argument("--source", choices=("epic", "gog"), required=True)
     source_game_action.add_argument("--game-id", required=True, help="Provider-specific game id")
     source_game_action.add_argument("--operation", choices=("install", "update", "verify", "repair", "uninstall"), required=True)
-    source_game_action.add_argument("--install-root", help="Shared host directory used for Epic game files")
+    source_game_action.add_argument("--install-root", help="Shared host directory used for source game files")
     source_game_action.add_argument("--keep-files", action="store_true", help="Remove Legendary metadata without deleting game files")
     source_game_action.add_argument("--confirm", action="store_true", help="Confirm uninstall")
     source_game_action.set_defaults(func=cmd_source_game_action)
     launch_source_game = sub.add_parser("launch-source-game", help="Launch an installed store game through a compatibility profile")
-    launch_source_game.add_argument("--source", choices=("epic",), required=True)
+    launch_source_game.add_argument("--source", choices=("epic", "gog"), required=True)
     launch_source_game.add_argument("--game-id", required=True, help="Provider-specific game id")
     launch_source_game.add_argument("--dxmt-source", help="DXMT source for the selected profile")
     launch_source_game.add_argument("--dxvk-source", help="DXVK-macOS source for the selected profile")
