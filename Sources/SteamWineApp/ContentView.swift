@@ -216,9 +216,14 @@ struct ContentView: View {
                         .padding(20)
                     } else {
                         LazyVGrid(columns: gridColumns(for: geometry.size.width), alignment: .leading, spacing: 24) {
-                            ForEach(model.filteredGames) { game in gameCard(for: game) }
+                            ForEach(model.filteredGames) { game in
+                                gameCard(for: game)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 6)
+                            }
                         }
-                        .padding(20)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 14)
                     }
                 }
                 .background(themeBackground)
