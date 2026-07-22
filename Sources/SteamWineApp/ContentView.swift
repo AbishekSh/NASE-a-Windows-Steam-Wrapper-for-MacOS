@@ -8,6 +8,8 @@ struct ContentView: View {
     @State private var draggedGame: LibraryGame?
     @AppStorage("libraryDisplayMode") private var libraryDisplayMode: LibraryDisplayMode = .grid
 
+    private var theme: ThemePalette { ThemePalette(scheme: colorScheme) }
+
     var body: some View {
         NavigationSplitView {
             sidebar
@@ -53,41 +55,51 @@ struct ContentView: View {
                     Image(nsImage: image)
                         .resizable()
                         .scaledToFit()
-                        .frame(width: 34, height: 34)
+                        .frame(width: 36, height: 36)
+                        .shadow(color: theme.accentPrimary.opacity(0.3), radius: 6, y: 2)
+                } else {
+                    Image(systemName: "gamecontroller.fill")
+                        .font(.system(size: 24, weight: .bold))
+                        .foregroundStyle(theme.accentPrimary)
                 }
                 VStack(alignment: .leading, spacing: 2) {
                     Text("NASE")
-                        .font(.headline.weight(.bold))
+                        .font(.system(size: 16, weight: .bold, design: .rounded))
+                        .foregroundStyle(theme.textPrimary)
                     Text("Game Launcher")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(theme.textSecondary)
                 }
                 Spacer()
             }
-            .padding(16)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
 
             Divider()
+                .background(theme.panelBorder)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     ForEach(model.sidebarSections) { section in
                         VStack(alignment: .leading, spacing: 6) {
-                            Text(section.title)
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
+                            Text(section.title.uppercased())
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(theme.textMuted)
                                 .padding(.horizontal, 16)
+
                             ForEach(section.runners) { runner in
                                 Button {
                                     model.selectRunner(runner)
                                 } label: {
                                     SidebarRow(
                                         runner: runner,
-                                        isSelected: model.selectedRunner == runner
+                                        isSelected: model.selectedRunner == runner,
+                                        gameCount: countForRunner(runner)
                                     )
                                 }
-                                .buttonStyle(.plain)
-                                .padding(.horizontal, 8)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                               .buttonStyle(.plain)
+                               .padding(.horizontal, 10)
+                               .frame(maxWidth: .infinity, alignment: .leading)
                             }
                         }
                     }
@@ -96,15 +108,17 @@ struct ContentView: View {
             }
 
             Divider()
+                .background(theme.panelBorder)
+
             sidebarCommandCenter
         }
-        .background(themeSidebar)
+        .background(theme.sidebarBackground)
         .navigationTitle("Sources")
     }
 
     private var library: some View {
         VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 14) {
                 ViewThatFits(in: .horizontal) {
                     HStack(alignment: .center, spacing: 12) {
                         libraryTitleBlock
@@ -122,18 +136,32 @@ struct ContentView: View {
                     HStack(spacing: 8) {
                         HStack(spacing: 8) {
                             Image(systemName: "magnifyingglass")
-                                .foregroundStyle(.secondary)
-                            TextField("Search library", text: $model.searchText)
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(theme.textSecondary)
+
+                            TextField("Search library...", text: $model.searchText)
                                 .textFieldStyle(.plain)
+                                .font(.system(size: 13))
+
+                            if !model.searchText.isEmpty {
+                                Button {
+                                    model.searchText = ""
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.system(size: 13))
+                                        .foregroundStyle(theme.textMuted)
+                                }
+                                .buttonStyle(.plain)
+                            }
                         }
                         .padding(.horizontal, 12)
-                        .frame(minWidth: 180, idealWidth: 260, maxWidth: 320)
+                        .frame(minWidth: 200, idealWidth: 280, maxWidth: 340)
                         .frame(height: 34)
-                        .background(themeControlBackground)
-                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        .background(theme.controlBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         .overlay(
-                            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .stroke(themeControlBorder, lineWidth: 1)
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .stroke(theme.controlBorder, lineWidth: 1)
                         )
 
                         Menu {
@@ -208,7 +236,7 @@ struct ContentView: View {
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
-            .background(themeToolbar)
+            .background(theme.toolbarBackground)
 
             GeometryReader { geometry in
                 ScrollView {
@@ -226,7 +254,7 @@ struct ContentView: View {
                                 model.refreshGames()
                             }
                         )
-                        .padding(20)
+                        .padding(24)
                     } else if libraryDisplayMode == .grid {
                         LazyVGrid(
                             columns: gridColumns(for: geometry.size.width),
@@ -253,9 +281,9 @@ struct ContentView: View {
                         .padding(.vertical, 18)
                     }
                 }
-                .background(themeBackground)
+                .background(theme.appBackground)
             }
-            .background(themeBackground)
+            .background(theme.appBackground)
         }
         .navigationTitle(model.selectedRunner?.rawValue ?? "Library")
         .task {
@@ -263,17 +291,9 @@ struct ContentView: View {
         }
     }
 
-    private var themeBackground: Color { colorScheme == .dark ? Color(hex: "#20231F") : Color(hex: "#EEF3EC") }
-    private var themeSidebar: Color { colorScheme == .dark ? Color(hex: "#181B18") : Color(hex: "#E4ECE3") }
-    private var themeToolbar: Color { colorScheme == .dark ? Color(hex: "#181B18") : Color(hex: "#E8EEE7") }
-    private var themePanel: Color { colorScheme == .dark ? Color(hex: "#2A302C") : Color(hex: "#F7FBF5") }
-    private var themePanelRaised: Color { colorScheme == .dark ? Color(hex: "#353D38") : Color(hex: "#DEE8DE") }
-    private var themeControlBackground: Color { colorScheme == .dark ? Color(hex: "#20251F") : Color(hex: "#F4F8F2") }
-    private var themeControlBorder: Color { colorScheme == .dark ? Color.white.opacity(0.07) : Color.black.opacity(0.08) }
-
     private let libraryGridSpacing: CGFloat = 20
     private let libraryGridPadding: CGFloat = 20
-    private let libraryCardHeight: CGFloat = 196
+    private let libraryCardHeight: CGFloat = 214
 
     private func gridColumns(for availableWidth: CGFloat) -> [GridItem] {
         let preferredCardWidth: CGFloat = 360
@@ -285,7 +305,7 @@ struct ContentView: View {
 
         return Array(
             repeating: GridItem(
-                .flexible(minimum: 260, maximum: 420),
+                .flexible(minimum: 260, maximum: 440),
                 spacing: libraryGridSpacing,
                 alignment: .top
             ),
@@ -293,13 +313,18 @@ struct ContentView: View {
         )
     }
 
+    private func countForRunner(_ runner: RunnerKind) -> Int? {
+        model.gameCount(for: runner)
+    }
+
     private var libraryTitleBlock: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(model.selectedRunner?.rawValue ?? "Library")
                 .font(.system(size: 22, weight: .bold, design: .rounded))
+                .foregroundStyle(theme.textPrimary)
             Text(librarySubtitle)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(theme.textSecondary)
                 .lineLimit(1)
         }
     }
@@ -373,35 +398,44 @@ struct ContentView: View {
                 HStack(spacing: 9) {
                     ProgressView().controlSize(.small)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(job.action).font(.caption.weight(.semibold)).lineLimit(1)
-                        Text(job.message).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                        Text(job.action).font(.system(size: 12, weight: .bold)).foregroundStyle(theme.textPrimary).lineLimit(1)
+                        Text(job.message).font(.system(size: 11)).foregroundStyle(theme.textSecondary).lineLimit(1)
                     }
                 }
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
             } else {
-                Label("Ready", systemImage: "checkmark.circle.fill")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(theme.accentGreen)
+                        .frame(width: 8, height: 8)
+                    Text("Backend Ready")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(theme.textSecondary)
+                }
             }
 
             Button {
                 model.stopAllWineProcesses()
             } label: {
                 Label("Stop Wine Processes", systemImage: "stop.circle.fill")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 12, weight: .bold))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 11)
-                    .frame(height: 34)
-                    .foregroundStyle(Color(hex: "#F2B0AD"))
-                    .background(Color(hex: "#7F3432").opacity(0.34))
-                    .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    .frame(height: 32)
+                    .foregroundStyle(theme.accentRed)
+                    .background(theme.accentRed.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(theme.accentRed.opacity(0.2), lineWidth: 1)
+                    )
             }
             .buttonStyle(.plain)
             .disabled(model.hasActiveBackendWork && model.currentOperationJob?.action == "Kill Wine")
             .help("Emergency stop for Wine processes in the current bottle or prefix")
         }
         .padding(12)
-        .background(themeSidebar)
+        .background(theme.sidebarBackground)
         .animation(.easeInOut(duration: 0.18), value: model.currentOperationJob?.id)
     }
 
@@ -461,48 +495,49 @@ struct ContentView: View {
     @ViewBuilder
     private func toolbarButtonLabel(_ title: String, systemImage: String) -> some View {
         Label(title, systemImage: systemImage)
-            .font(.system(size: 14, weight: .semibold))
-            .foregroundStyle(colorScheme == .dark ? Color(hex: "#E6ECE6") : Color(hex: "#162019"))
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(theme.textPrimary)
             .lineLimit(1)
             .minimumScaleFactor(0.9)
             .padding(.horizontal, 12)
             .frame(height: 34)
-            .background(themeControlBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .background(theme.controlBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .stroke(themeControlBorder, lineWidth: 1)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(theme.controlBorder, lineWidth: 1)
             )
     }
 
     @ViewBuilder
     private func toolbarControlLabel(title: String?, value: String, systemImage: String) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             Image(systemName: systemImage)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(theme.textSecondary)
             if let title {
                 Text(title)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(colorScheme == .dark ? Color(hex: "#E6ECE6") : Color(hex: "#162019"))
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(theme.textPrimary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.9)
             }
             Text(value)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(colorScheme == .dark ? Color(hex: "#E6ECE6") : Color(hex: "#162019"))
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(theme.textPrimary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.9)
             Image(systemName: "chevron.down")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(colorScheme == .dark ? Color(hex: "#AEB7AF") : Color(hex: "#55635A"))
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(theme.textMuted)
         }
         .padding(.horizontal, 12)
         .frame(height: 34)
-        .background(themeControlBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .background(theme.controlBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .stroke(themeControlBorder, lineWidth: 1)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(theme.controlBorder, lineWidth: 1)
         )
     }
 }

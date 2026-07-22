@@ -3,29 +3,63 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct SidebarRow: View {
+    @Environment(\.colorScheme) private var colorScheme
     let runner: RunnerKind
     let isSelected: Bool
+    var gameCount: Int? = nil
+
+    private var theme: ThemePalette { ThemePalette(scheme: colorScheme) }
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: runner.symbolName)
-                .frame(width: 22)
+        HStack(spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(isSelected ? runner.brandBadgeBg : theme.controlBackground)
+                    .frame(width: 30, height: 30)
+
+                Image(systemName: runner.symbolName)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(isSelected ? runner.brandForeground : theme.textSecondary)
+            }
+
             Text(runner.rawValue)
+                .font(.system(size: 14, weight: isSelected ? .bold : .medium))
+                .foregroundStyle(isSelected ? theme.textPrimary : theme.textSecondary)
+
             Spacer()
-            if !runner.isAvailable {
-                Text("Soon")
-                    .font(.caption2.weight(.bold))
+
+            if let gameCount, gameCount > 0 {
+                Text("\(gameCount)")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(isSelected ? theme.textPrimary : theme.textMuted)
                     .padding(.horizontal, 7)
-                    .padding(.vertical, 4)
-                    .background(Color.secondary.opacity(0.14))
+                    .padding(.vertical, 3)
+                    .background(isSelected ? theme.controlBackground : theme.panelRaised)
+                    .clipShape(Capsule())
+            } else if !runner.isAvailable {
+                Text("Soon")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(theme.textMuted)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(theme.controlBackground)
                     .clipShape(Capsule())
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(isSelected ? Color.primary.opacity(0.08) : .clear)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(
+            ZStack {
+                if isSelected {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(theme.panelBackground)
+                        .shadow(color: .black.opacity(0.06), radius: 4, y: 2)
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(theme.panelBorder, lineWidth: 1)
+                }
+            }
+        )
         .contentShape(Rectangle())
     }
 }
@@ -67,6 +101,7 @@ struct GameCard: View {
     let onUninstallSourceGame: () -> Void
 
     @State private var isHovered: Bool = false
+    private var theme: ThemePalette { ThemePalette(scheme: colorScheme) }
 
     @ViewBuilder
     var body: some View {
@@ -83,57 +118,71 @@ struct GameCard: View {
                 BannerArtwork(
                     url: game.bannerURL,
                     title: game.title,
-                    height: 128,
+                    height: 140,
                     installURL: game.installURL,
                     runner: game.runner,
                     appid: game.backendID,
                     steamCacheURL: steamCacheURL,
-                    showsTitleOverlay: false
+                    showsTitleOverlay: false,
+                    isHovered: isHovered
                 )
 
-                HStack(spacing: 6) {
+                HStack(spacing: 5) {
                     Image(systemName: game.runner.symbolName)
+                        .font(.system(size: 11, weight: .bold))
                     Text(game.runner.rawValue)
+                        .font(.system(size: 11, weight: .bold))
                 }
-                .font(.caption2.weight(.bold))
-                .foregroundStyle(.white)
+                .foregroundStyle(game.runner.brandForeground)
                 .padding(.horizontal, 9)
-                .padding(.vertical, 6)
-                .background(.black.opacity(0.62))
+                .padding(.vertical, 5)
+                .background(game.runner.brandBadgeBg)
                 .clipShape(Capsule())
+                .overlay(
+                    Capsule()
+                        .stroke(Color.white.opacity(0.15), lineWidth: 1)
+                )
+                .shadow(color: .black.opacity(0.3), radius: 4, y: 2)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .padding(12)
+                .padding(10)
 
                 Button {
                     canStop ? onStop() : onLaunch()
                 } label: {
-                    Image(systemName: primaryActionSymbol)
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(canStop ? Color.white : Color.black)
-                        .frame(width: 38, height: 38)
-                        .background(canStop ? Color(hex: "#C85353") : themePrimary)
-                        .clipShape(Circle())
-                        .overlay(Circle().stroke(.white.opacity(0.22), lineWidth: 1))
-                        .shadow(color: .black.opacity(0.32), radius: 10, y: 4)
+                    ZStack {
+                        Circle()
+                            .fill(primaryActionColor)
+                            .frame(width: 40, height: 40)
+                            .shadow(color: primaryActionColor.opacity(isHovered ? 0.5 : 0.25), radius: isHovered ? 8 : 4, y: 3)
+
+                        Image(systemName: primaryActionSymbol)
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(canStop ? Color.white : Color.black)
+                    }
+                    .overlay(Circle().stroke(.white.opacity(0.25), lineWidth: 1))
                 }
                 .buttonStyle(.plain)
                 .disabled(launchStatus?.phase == .launching)
                 .help(primaryActionHelp)
                 .padding(10)
+                .scaleEffect(isHovered ? 1.05 : 1.0)
+                .animation(.easeOut(duration: 0.15), value: isHovered)
             }
 
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .center, spacing: 8) {
                     Text(game.title)
-                        .font(.system(size: 15, weight: .semibold, design: .rounded))
-                        .foregroundStyle(themeForeground)
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .foregroundStyle(theme.textPrimary)
                         .lineLimit(1)
-                    Spacer(minLength: 8)
+
+                    Spacer(minLength: 4)
+
                     if allowsReordering {
                         Image(systemName: "line.3.horizontal")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(themeMutedForeground)
-                            .frame(width: 28, height: 28)
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(theme.textMuted)
+                            .frame(width: 24, height: 24)
                             .contentShape(Rectangle())
                             .onDrag {
                                 onDragStarted()
@@ -143,43 +192,52 @@ struct GameCard: View {
                             }
                             .help("Drag to reorder")
                     }
+
                     cardActionMenu
                 }
 
-                HStack(spacing: 8) {
+                HStack(spacing: 6) {
                     Text(game.status)
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(themeMutedForeground)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(theme.textSecondary)
+
                     if collection != .none {
                         Pill(text: collection.rawValue, tint: collection.color.opacity(0.18), foreground: collection.color)
                     }
+
                     if let launchStatus {
                         Pill(text: launchStatus.phase.rawValue, tint: launchTint(for: launchStatus.phase), foreground: launchForeground(for: launchStatus.phase))
                     }
+
                     Spacer()
+
                     if let statsText = game.statsText, !statsText.isEmpty {
-                        Text(statsText)
-                            .font(.caption)
-                            .foregroundStyle(themeMutedForeground)
-                            .lineLimit(1)
+                        HStack(spacing: 3) {
+                            Image(systemName: "clock.fill")
+                                .font(.system(size: 9))
+                            Text(statsText)
+                        }
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(theme.textMuted)
+                        .lineLimit(1)
                     }
                 }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
-            .frame(maxWidth: .infinity, minHeight: 68, alignment: .leading)
-            .background(themePanel)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(theme.panelBackground)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(themePanel)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(theme.panelBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(isHovered ? themePrimary.opacity(0.55) : themeBorder, lineWidth: 1)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(isHovered ? theme.panelHoverBorder : theme.panelBorder, lineWidth: isHovered ? 1.5 : 1)
         )
-        .shadow(color: .black.opacity(isHovered ? 0.2 : 0.08), radius: isHovered ? 16 : 7, y: isHovered ? 8 : 3)
-        .scaleEffect(isHovered ? 1.008 : 1)
-        .opacity(isDragging ? 0.3 : 1)
+        .shadow(color: .black.opacity(isHovered ? 0.16 : 0.05), radius: isHovered ? 14 : 5, y: isHovered ? 6 : 2)
+        .scaleEffect(isHovered ? 1.012 : 1.0)
+        .opacity(isDragging ? 0.35 : 1.0)
         .animation(.easeOut(duration: 0.16), value: isHovered)
         .onHover { hovering in
             isHovered = hovering
@@ -191,53 +249,73 @@ struct GameCard: View {
             BannerArtwork(
                 url: game.bannerURL,
                 title: game.title,
-                height: 88,
+                height: 84,
                 installURL: game.installURL,
                 runner: game.runner,
                 appid: game.backendID,
                 steamCacheURL: steamCacheURL,
-                showsTitleOverlay: false
+                showsTitleOverlay: false,
+                isHovered: isHovered
             )
-            .frame(width: 176)
+            .frame(width: 160)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .padding(6)
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text(game.title)
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
-                    .foregroundStyle(themeForeground)
-                    .lineLimit(1)
-
+            VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
-                    Label(game.runner.rawValue, systemImage: game.runner.symbolName)
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(themeMutedForeground)
+                    Text(game.title)
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .foregroundStyle(theme.textPrimary)
+                        .lineLimit(1)
+
+                    HStack(spacing: 4) {
+                        Image(systemName: game.runner.symbolName)
+                            .font(.system(size: 10, weight: .bold))
+                        Text(game.runner.rawValue)
+                            .font(.system(size: 10, weight: .bold))
+                    }
+                    .foregroundStyle(game.runner.brandForeground)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(game.runner.brandBadgeBg)
+                    .clipShape(Capsule())
+                }
+
+                HStack(spacing: 6) {
                     Text(game.status)
-                        .font(.caption)
-                        .foregroundStyle(themeMutedForeground)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(theme.textSecondary)
+
                     if collection != .none {
                         Pill(text: collection.rawValue, tint: collection.color.opacity(0.18), foreground: collection.color)
                     }
+
                     if let launchStatus {
                         Pill(text: launchStatus.phase.rawValue, tint: launchTint(for: launchStatus.phase), foreground: launchForeground(for: launchStatus.phase))
                     }
                 }
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, 12)
 
             Spacer(minLength: 12)
 
             if let statsText = game.statsText, !statsText.isEmpty {
-                Text(statsText)
-                    .font(.caption)
-                    .foregroundStyle(themeMutedForeground)
-                    .lineLimit(1)
-                    .padding(.trailing, 8)
+                HStack(spacing: 4) {
+                    Image(systemName: "clock.fill")
+                        .font(.system(size: 10))
+                    Text(statsText)
+                }
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(theme.textMuted)
+                .lineLimit(1)
+                .padding(.trailing, 10)
             }
 
             if allowsReordering {
                 Image(systemName: "line.3.horizontal")
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(themeMutedForeground)
-                    .frame(width: 32, height: 32)
+                    .foregroundStyle(theme.textMuted)
+                    .frame(width: 30, height: 30)
                     .contentShape(Rectangle())
                     .onDrag {
                         onDragStarted()
@@ -249,43 +327,46 @@ struct GameCard: View {
             }
 
             cardActionMenu
-                .padding(.horizontal, 6)
+                .padding(.horizontal, 4)
 
             Button {
                 canStop ? onStop() : onLaunch()
             } label: {
-                Image(systemName: primaryActionSymbol)
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(canStop ? Color.white : Color.black)
-                    .frame(width: 38, height: 38)
-                    .background(canStop ? Color(hex: "#C85353") : themePrimary)
-                    .clipShape(Circle())
+                ZStack {
+                    Circle()
+                        .fill(primaryActionColor)
+                        .frame(width: 36, height: 36)
+
+                    Image(systemName: primaryActionSymbol)
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(canStop ? Color.white : Color.black)
+                }
             }
             .buttonStyle(.plain)
             .disabled(launchStatus?.phase == .launching)
             .help(primaryActionHelp)
-            .padding(.trailing, 14)
+            .padding(.trailing, 12)
         }
-        .frame(maxWidth: .infinity, minHeight: 88, alignment: .leading)
-        .background(themePanel)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .frame(maxWidth: .infinity, minHeight: 96, alignment: .leading)
+        .background(theme.panelBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(isHovered ? themePrimary.opacity(0.55) : themeBorder, lineWidth: 1)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(isHovered ? theme.panelHoverBorder : theme.panelBorder, lineWidth: 1)
         )
-        .shadow(color: .black.opacity(isHovered ? 0.16 : 0.06), radius: isHovered ? 10 : 4, y: 3)
-        .opacity(isDragging ? 0.3 : 1)
+        .shadow(color: .black.opacity(isHovered ? 0.12 : 0.04), radius: isHovered ? 8 : 3, y: 2)
+        .opacity(isDragging ? 0.35 : 1.0)
         .animation(.easeOut(duration: 0.16), value: isHovered)
         .onHover { hovering in
             isHovered = hovering
         }
     }
 
-    private var themePanel: Color { colorScheme == .dark ? Color(hex: "#2A302C") : Color(hex: "#F7FBF5") }
-    private var themeForeground: Color { colorScheme == .dark ? Color(hex: "#D4DBD4") : Color(hex: "#162019") }
-    private var themeMutedForeground: Color { colorScheme == .dark ? Color(hex: "#AEB7AF") : Color(hex: "#55635A") }
-    private var themePrimary: Color { Color(hex: "#6DBB7A") }
-    private var themeBorder: Color { colorScheme == .dark ? Color(hex: "#384139") : Color(hex: "#CCD8CC") }
+    private var primaryActionColor: Color {
+        if canStop { return theme.accentRed }
+        if [.epic, .gog].contains(game.runner), game.installURL == nil { return theme.accentPrimary }
+        return theme.accentGreen
+    }
 
     private var primaryActionSymbol: String {
         if canStop { return "stop.fill" }
@@ -302,26 +383,26 @@ struct GameCard: View {
     private func launchTint(for phase: GameLaunchPhase) -> Color {
         switch phase {
         case .launching:
-            return Color(hex: "#D9B650").opacity(0.18)
+            return theme.accentAmber.opacity(0.18)
         case .running:
-            return Color(hex: "#6DBB7A").opacity(0.18)
+            return theme.accentGreen.opacity(0.18)
         case .exited:
-            return Color.secondary.opacity(0.14)
+            return theme.textMuted.opacity(0.14)
         case .failed:
-            return Color(hex: "#D96C6C").opacity(0.18)
+            return theme.accentRed.opacity(0.18)
         }
     }
 
     private func launchForeground(for phase: GameLaunchPhase) -> Color {
         switch phase {
         case .launching:
-            return Color(hex: "#D9B650")
+            return theme.accentAmber
         case .running:
-            return Color(hex: "#6DBB7A")
+            return theme.accentGreen
         case .exited:
-            return themeMutedForeground
+            return theme.textMuted
         case .failed:
-            return Color(hex: "#D96C6C")
+            return theme.accentRed
         }
     }
 
@@ -382,34 +463,20 @@ struct CardActionMenuLabel: View {
     @Environment(\.colorScheme) private var colorScheme
     let isHovered: Bool
 
+    private var theme: ThemePalette { ThemePalette(scheme: colorScheme) }
+
     var body: some View {
         Image(systemName: "ellipsis")
-            .font(.system(size: 17, weight: .bold))
-            .symbolRenderingMode(.monochrome)
-            .foregroundStyle(foregroundColor)
-            .frame(width: 36, height: 32)
-        .background(background)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(borderColor, lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(isHovered ? 0.22 : 0.12), radius: isHovered ? 8 : 4, y: 2)
-        .accessibilityLabel("Game actions")
-    }
-
-    private var background: some ShapeStyle {
-        colorScheme == .dark
-            ? AnyShapeStyle(Color(hex: "#26302B").opacity(0.86))
-            : AnyShapeStyle(Color.white.opacity(0.88))
-    }
-
-    private var foregroundColor: Color {
-        colorScheme == .dark ? Color(hex: "#DDE6DD") : Color(hex: "#162019")
-    }
-
-    private var borderColor: Color {
-        colorScheme == .dark ? Color.white.opacity(0.14) : Color.black.opacity(0.12)
+            .font(.system(size: 14, weight: .bold))
+            .foregroundStyle(theme.textSecondary)
+            .frame(width: 28, height: 28)
+            .background(theme.controlBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(isHovered ? theme.controlBorder : Color.clear, lineWidth: 1)
+            )
+            .accessibilityLabel("Game actions")
     }
 }
 
@@ -447,6 +514,9 @@ struct BannerArtwork: View {
     let appid: String?
     let steamCacheURL: URL?
     var showsTitleOverlay: Bool = true
+    var isHovered: Bool = false
+
+    private var theme: ThemePalette { ThemePalette(scheme: colorScheme) }
 
     var body: some View {
         GeometryReader { geometry in
@@ -473,12 +543,12 @@ struct BannerArtwork: View {
                 }
 
                 Rectangle()
-                    .fill(.black.opacity(0.18))
+                    .fill(.black.opacity(0.12))
 
                 LinearGradient(
                     colors: [
-                        .black.opacity(0.55),
-                        .black.opacity(0.26),
+                        .black.opacity(0.65),
+                        .black.opacity(0.2),
                         .clear,
                     ],
                     startPoint: .bottomLeading,
@@ -491,7 +561,7 @@ struct BannerArtwork: View {
                         .interpolation(.high)
                         .scaledToFit()
                         .frame(maxWidth: min(320, height * 2.7), maxHeight: height * 0.58, alignment: .leading)
-                        .shadow(color: .black.opacity(0.48), radius: 7, y: 3)
+                        .shadow(color: .black.opacity(0.55), radius: 7, y: 3)
                         .padding(.leading, steamIconImage == nil ? 16 : 80)
                         .padding(.trailing, 16)
                         .padding(.bottom, 14)
@@ -514,29 +584,28 @@ struct BannerArtwork: View {
                         .resizable()
                         .interpolation(.high)
                         .scaledToFit()
-                        .frame(width: 42, height: 42)
-                        .padding(8)
-                        .background(.black.opacity(0.28))
-                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        .frame(width: 36, height: 36)
+                        .padding(6)
+                        .background(.black.opacity(0.4))
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         .overlay(
-                            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .stroke(.white.opacity(0.16), lineWidth: 1)
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .stroke(.white.opacity(0.2), lineWidth: 1)
                         )
-                        .padding(14)
-                        .shadow(color: .black.opacity(0.28), radius: 8, y: 3)
+                        .padding(10)
+                        .shadow(color: .black.opacity(0.3), radius: 6, y: 2)
                 }
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
             .clipped()
         }
         .frame(height: height)
-        .background(themePanel)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(theme.panelRaised)
     }
 
     private var placeholder: some View {
         Rectangle()
-            .fill(themePanelRaised)
+            .fill(theme.panelRaised)
     }
 
     private func artworkLayer(_ image: Image) -> some View {
@@ -546,6 +615,8 @@ struct BannerArtwork: View {
                 .interpolation(.high)
                 .scaledToFill()
                 .frame(maxWidth: .infinity, maxHeight: height)
+                .scaleEffect(isHovered ? 1.05 : 1.0)
+                .animation(.easeOut(duration: 0.25), value: isHovered)
         }
         .frame(maxWidth: .infinity, maxHeight: height)
         .clipped()
@@ -575,9 +646,9 @@ struct BannerArtwork: View {
 
     private var dominantLocalColor: Color {
         guard let installURL, let icon = localIconImage(for: installURL) else {
-            return themePanelRaised
+            return theme.panelRaised
         }
-        return averageColor(for: icon) ?? themePanelRaised
+        return averageColor(for: icon) ?? theme.panelRaised
     }
 
     private func localIconImage(for url: URL) -> NSImage? {

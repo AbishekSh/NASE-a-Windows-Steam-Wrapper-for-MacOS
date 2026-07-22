@@ -2,6 +2,68 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
+struct ThemePalette {
+    let scheme: ColorScheme
+
+    var appBackground: Color { scheme == .dark ? Color(hex: "#0F1117") : Color(hex: "#F8FAFC") }
+    var sidebarBackground: Color { scheme == .dark ? Color(hex: "#151821") : Color(hex: "#F1F5F9") }
+    var toolbarBackground: Color { scheme == .dark ? Color(hex: "#151821") : Color(hex: "#F1F5F9") }
+    var panelBackground: Color { scheme == .dark ? Color(hex: "#1D2230") : Color(hex: "#FFFFFF") }
+    var panelRaised: Color { scheme == .dark ? Color(hex: "#252B3D") : Color(hex: "#F1F5F9") }
+    var panelBorder: Color { scheme == .dark ? Color(hex: "#2D354A") : Color(hex: "#E2E8F0") }
+    var panelHoverBorder: Color { scheme == .dark ? Color(hex: "#4F597A") : Color(hex: "#CBD5E1") }
+    var controlBackground: Color { scheme == .dark ? Color(hex: "#242A3C") : Color(hex: "#F8FAFC") }
+    var controlBorder: Color { scheme == .dark ? Color(hex: "#363E56") : Color(hex: "#E2E8F0") }
+    var textPrimary: Color { scheme == .dark ? Color(hex: "#F1F5F9") : Color(hex: "#0F172A") }
+    var textSecondary: Color { scheme == .dark ? Color(hex: "#94A3B8") : Color(hex: "#64748B") }
+    var textMuted: Color { scheme == .dark ? Color(hex: "#64748B") : Color(hex: "#94A3B8") }
+    var accentPrimary: Color { scheme == .dark ? Color(hex: "#38BDF8") : Color(hex: "#0284C7") }
+    var accentGreen: Color { scheme == .dark ? Color(hex: "#10B981") : Color(hex: "#059669") }
+    var accentRed: Color { scheme == .dark ? Color(hex: "#F43F5E") : Color(hex: "#E11D48") }
+    var accentAmber: Color { scheme == .dark ? Color(hex: "#F59E0B") : Color(hex: "#D97706") }
+}
+
+extension RunnerKind {
+    var brandGradient: LinearGradient {
+        switch self {
+        case .home:
+            LinearGradient(colors: [Color(hex: "#6366F1"), Color(hex: "#8B5CF6")], startPoint: .topLeading, endPoint: .bottomTrailing)
+        case .mac:
+            LinearGradient(colors: [Color(hex: "#0284C7"), Color(hex: "#38BDF8")], startPoint: .topLeading, endPoint: .bottomTrailing)
+        case .steam:
+            LinearGradient(colors: [Color(hex: "#171A21"), Color(hex: "#2A475E")], startPoint: .topLeading, endPoint: .bottomTrailing)
+        case .wine:
+            LinearGradient(colors: [Color(hex: "#721C24"), Color(hex: "#9E2A2B")], startPoint: .topLeading, endPoint: .bottomTrailing)
+        case .epic:
+            LinearGradient(colors: [Color(hex: "#2A2A2A"), Color(hex: "#121212")], startPoint: .topLeading, endPoint: .bottomTrailing)
+        case .gog:
+            LinearGradient(colors: [Color(hex: "#5C1B8E"), Color(hex: "#8E24AA")], startPoint: .topLeading, endPoint: .bottomTrailing)
+        }
+    }
+
+    var brandForeground: Color {
+        switch self {
+        case .home: Color(hex: "#EDE9FE")
+        case .mac: Color(hex: "#E0F2FE")
+        case .steam: Color(hex: "#66C0F4")
+        case .wine: Color(hex: "#FFD2D2")
+        case .epic: Color(hex: "#FFFFFF")
+        case .gog: Color(hex: "#F3E8FF")
+        }
+    }
+
+    var brandBadgeBg: Color {
+        switch self {
+        case .home: Color(hex: "#4338CA").opacity(0.85)
+        case .mac: Color(hex: "#0369A1").opacity(0.85)
+        case .steam: Color(hex: "#171A21").opacity(0.85)
+        case .wine: Color(hex: "#5C1318").opacity(0.85)
+        case .epic: Color(hex: "#202020").opacity(0.85)
+        case .gog: Color(hex: "#4A148C").opacity(0.85)
+        }
+    }
+}
+
 struct EmptyLibraryState: View {
     @Environment(\.colorScheme) private var colorScheme
     let title: String
@@ -12,52 +74,83 @@ struct EmptyLibraryState: View {
     let onOpenSettings: () -> Void
     let onRefresh: () -> Void
 
+    private var theme: ThemePalette { ThemePalette(scheme: colorScheme) }
+
     var body: some View {
-        VStack(spacing: 16) {
-            if isLoading {
-                ProgressView()
-                    .controlSize(.large)
-            } else {
-                Image(systemName: "square.stack.3d.up.slash")
-                    .font(.system(size: 42, weight: .semibold))
-                    .foregroundStyle(themeMutedForeground)
+        VStack(spacing: 20) {
+            ZStack {
+                Circle()
+                    .fill(theme.accentPrimary.opacity(0.12))
+                    .frame(width: 84, height: 84)
+                if isLoading {
+                    ProgressView()
+                        .controlSize(.large)
+                } else {
+                    Image(systemName: "gamecontroller.fill")
+                        .font(.system(size: 38, weight: .semibold))
+                        .foregroundStyle(theme.accentPrimary)
+                }
             }
-            Text(isLoading ? "Refreshing \(title) library" : "No \(title) items yet")
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(themeForeground)
-            Text(message)
-                .font(.subheadline)
-                .foregroundStyle(themeMutedForeground)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 420)
+            .padding(.top, 12)
+
+            VStack(spacing: 6) {
+                Text(isLoading ? "Refreshing \(title) library" : "No \(title) items found")
+                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                    .foregroundStyle(theme.textPrimary)
+                Text(message)
+                    .font(.subheadline)
+                    .foregroundStyle(theme.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 440)
+            }
+
             if showsActions {
-                HStack(spacing: 10) {
+                HStack(spacing: 12) {
                     Button {
                         onOpenSettings()
                     } label: {
                         Label("Open Settings", systemImage: "slider.horizontal.3")
+                            .font(.system(size: 13, weight: .semibold))
                     }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(theme.controlBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(theme.controlBorder, lineWidth: 1)
+                    )
 
                     Button {
                         onRefresh()
                     } label: {
                         Label("Run Refresh Again", systemImage: "arrow.clockwise")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.white)
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(theme.accentPrimary)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .shadow(color: theme.accentPrimary.opacity(0.3), radius: 6, y: 3)
                 }
                 .disabled(isBusy)
                 .opacity(isBusy ? 0.6 : 1)
+                .padding(.top, 6)
             }
         }
-        .frame(maxWidth: .infinity, minHeight: 360)
-        .padding(24)
-        .background(themePanel)
-        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .frame(maxWidth: .infinity, minHeight: 380)
+        .padding(32)
+        .background(theme.panelBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(theme.panelBorder, lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.08), radius: 16, y: 6)
     }
-
-    private var themePanel: Color { colorScheme == .dark ? Color(hex: "#2A302C") : Color(hex: "#F7FBF5") }
-    private var themeForeground: Color { colorScheme == .dark ? Color(hex: "#D4DBD4") : Color(hex: "#162019") }
-    private var themeMutedForeground: Color { colorScheme == .dark ? Color(hex: "#AEB7AF") : Color(hex: "#55635A") }
 }
 
 func moduleNSImage(named name: String) -> NSImage? {
@@ -82,10 +175,10 @@ struct Pill: View {
 
     var body: some View {
         Text(text)
-            .font(.caption.weight(.bold))
+            .font(.system(size: 11, weight: .semibold, design: .rounded))
             .foregroundStyle(foreground)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
             .background(tint)
             .clipShape(Capsule())
     }
@@ -97,11 +190,11 @@ extension HealthStatus {
         case .unknown:
             return Color.secondary.opacity(0.28)
         case .healthy:
-            return Color(hex: "#64B86A")
+            return Color(hex: "#10B981")
         case .warning:
-            return Color.secondary.opacity(0.38)
+            return Color(hex: "#F59E0B")
         case .error:
-            return Color(hex: "#E46A5A")
+            return Color(hex: "#F43F5E")
         }
     }
 
@@ -120,13 +213,13 @@ extension GameCollection {
         case .none:
             return Color.secondary
         case .favorites:
-            return Color(hex: "#E6C15A")
+            return Color(hex: "#F59E0B")
         case .finished:
-            return Color(hex: "#64B86A")
+            return Color(hex: "#10B981")
         case .testing:
-            return Color(hex: "#59A8E0")
+            return Color(hex: "#38BDF8")
         case .broken:
-            return Color(hex: "#E46A5A")
+            return Color(hex: "#F43F5E")
         }
     }
 }
@@ -157,3 +250,4 @@ extension Color {
         )
     }
 }
+

@@ -289,6 +289,27 @@ final class AppViewModel {
         return sortGames(searched)
     }
 
+    func games(for runner: RunnerKind) -> [LibraryGame] {
+        switch runner {
+        case .home:
+            return pinnedGames
+        case .mac:
+            return nativeApps
+        case .steam:
+            return discoveredSteamGames
+        case .wine:
+            return wineApps
+        case .epic:
+            return epicGames
+        case .gog:
+            return gogGames
+        }
+    }
+
+    func gameCount(for runner: RunnerKind) -> Int {
+        games(for: runner).count
+    }
+
     var bridgeCommands: [BackendCommand] {
         BackendBridge.commands(for: selectedRunner ?? .steam, context: effectiveBackendContext(), selectedGame: selectedGame)
     }
