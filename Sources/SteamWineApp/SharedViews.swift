@@ -22,7 +22,6 @@ struct ThemePalette {
     var accentRed: Color { scheme == .dark ? Color(hex: "#F43F5E") : Color(hex: "#E11D48") }
     var accentAmber: Color { scheme == .dark ? Color(hex: "#F59E0B") : Color(hex: "#D97706") }
 }
-
 extension RunnerKind {
     var brandGradient: LinearGradient {
         switch self {
@@ -250,4 +249,3 @@ extension Color {
         )
     }
 }
-
