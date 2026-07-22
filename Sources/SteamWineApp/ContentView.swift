@@ -13,6 +13,7 @@ struct ContentView: View {
     var body: some View {
         NavigationSplitView {
             sidebar
+                .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 300)
         } detail: {
             library
         }
@@ -66,11 +67,13 @@ struct ContentView: View {
                     Text("NASE")
                         .font(.system(size: 16, weight: .bold, design: .rounded))
                         .foregroundStyle(theme.textPrimary)
+                        .lineLimit(1)
                     Text("Game Launcher")
                         .font(.caption.weight(.medium))
                         .foregroundStyle(theme.textSecondary)
+                        .lineLimit(1)
                 }
-                Spacer()
+                Spacer(minLength: 0)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 14)
@@ -86,6 +89,7 @@ struct ContentView: View {
                                 .font(.system(size: 10, weight: .bold))
                                 .foregroundStyle(theme.textMuted)
                                 .padding(.horizontal, 16)
+                                .lineLimit(1)
 
                             ForEach(section.runners) { runner in
                                 Button {
@@ -226,6 +230,7 @@ struct ContentView: View {
                                 .tag(LibraryDisplayMode.list)
                         }
                         .pickerStyle(.segmented)
+                        .labelsHidden()
                         .frame(width: 76)
                         .help(libraryDisplayMode == .grid ? "Switch to list view" : "Switch to grid view")
 
@@ -417,17 +422,18 @@ struct ContentView: View {
             Button {
                 model.stopAllWineProcesses()
             } label: {
-                Label("Stop Wine Processes", systemImage: "stop.circle.fill")
-                    .font(.system(size: 12, weight: .bold))
+                Label("Stop Wine Processes", systemImage: "stop.circle")
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+                    .foregroundStyle(theme.textSecondary)
+                    .padding(.horizontal, 10)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 11)
                     .frame(height: 32)
-                    .foregroundStyle(theme.accentRed)
-                    .background(theme.accentRed.opacity(0.12))
+                    .background(theme.controlBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .overlay(
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .stroke(theme.accentRed.opacity(0.2), lineWidth: 1)
+                            .stroke(theme.controlBorder, lineWidth: 1)
                     )
             }
             .buttonStyle(.plain)

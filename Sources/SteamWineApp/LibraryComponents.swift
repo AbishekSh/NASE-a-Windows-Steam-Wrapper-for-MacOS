@@ -11,7 +11,7 @@ struct SidebarRow: View {
     private var theme: ThemePalette { ThemePalette(scheme: colorScheme) }
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             ZStack {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(isSelected ? runner.brandBadgeBg : theme.controlBackground)
@@ -21,14 +21,17 @@ struct SidebarRow: View {
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(isSelected ? runner.brandForeground : theme.textSecondary)
             }
+            .fixedSize()
 
             Text(runner.rawValue)
                 .font(.system(size: 14, weight: isSelected ? .bold : .medium))
                 .foregroundStyle(isSelected ? theme.textPrimary : theme.textSecondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
 
-            Spacer()
+            Spacer(minLength: 4)
 
-            if let gameCount, gameCount > 0 {
+            if let gameCount {
                 Text("\(gameCount)")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(isSelected ? theme.textPrimary : theme.textMuted)
@@ -36,6 +39,7 @@ struct SidebarRow: View {
                     .padding(.vertical, 3)
                     .background(isSelected ? theme.controlBackground : theme.panelRaised)
                     .clipShape(Capsule())
+                    .fixedSize()
             } else if !runner.isAvailable {
                 Text("Soon")
                     .font(.system(size: 10, weight: .bold))
@@ -44,6 +48,7 @@ struct SidebarRow: View {
                     .padding(.vertical, 3)
                     .background(theme.controlBackground)
                     .clipShape(Capsule())
+                    .fixedSize()
             }
         }
         .padding(.horizontal, 10)

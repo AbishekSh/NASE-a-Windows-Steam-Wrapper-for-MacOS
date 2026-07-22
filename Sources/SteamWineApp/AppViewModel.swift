@@ -2113,8 +2113,11 @@ final class AppViewModel {
     func initialLoad() {
         refreshWineRuntimes()
         performInitialSetupIfNeeded()
-        guard selectedRunner == .steam, !hasAttemptedSteamDetection, !isActionRunning(.listGames) else { return }
-        refreshSteamGames(announce: false)
+        if !hasAttemptedSteamDetection, !isActionRunning(.listGames) {
+            refreshSteamGames(announce: false)
+        }
+        refreshEpicLibrary(forceRefresh: false)
+        refreshGOGLibrary(forceRefresh: false)
     }
 
     func testSettings(winePath: String, dxmtSource: String, bottleName: String, externalPrefix: String?, useExternalPrefix: Bool) -> String {
