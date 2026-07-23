@@ -404,7 +404,7 @@ final class AppViewModel {
 
     var editingGame: LibraryGame? {
         guard let editingGamePinID else { return nil }
-        return (nativeApps + discoveredSteamGames + wineApps).first(where: { $0.pinID == editingGamePinID })
+        return allLibraryGames.first(where: { $0.pinID == editingGamePinID })
     }
 
     var selectedRunnerActionTitle: String {
@@ -2379,9 +2379,15 @@ final class AppViewModel {
     }
 
     private var pinnedGames: [LibraryGame] {
-        let all = nativeApps + discoveredSteamGames + wineApps + epicGames + gogGames
-        let byID = Dictionary(uniqueKeysWithValues: all.map { ($0.pinID, $0) })
+        let byID = Dictionary(allLibraryGames.map { ($0.pinID, $0) }, uniquingKeysWith: { current, candidate in
+            if current.installURL != nil { return current }
+            return candidate
+        })
         return pinnedGameIDs.compactMap { byID[$0] }
+    }
+
+    private var allLibraryGames: [LibraryGame] {
+        nativeApps + discoveredSteamGames + wineApps + epicGames + gogGames
     }
 
     private func appendLog(_ message: String) {
@@ -3801,8 +3807,7 @@ final class AppViewModel {
     }
 
     private func underlyingGame(for game: LibraryGame) -> LibraryGame? {
-        let all = nativeApps + discoveredSteamGames + wineApps
-        return all.first(where: { $0.pinID == game.pinID })
+        allLibraryGames.first(where: { $0.pinID == game.pinID })
     }
 
     private func enrichedGame(_ game: LibraryGame) -> LibraryGame {
