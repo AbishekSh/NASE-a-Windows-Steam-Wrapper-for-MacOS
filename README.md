@@ -1,26 +1,113 @@
-# SteamWineWrapper
+# NASE
 
-SteamWineWrapper is a native macOS game launcher for Steam, Wine-managed Windows apps, and native macOS apps. The goal is a library-first experience closer to Lutris than a thin Wine wrapper: games stay front and center, while Wine setup, logs, dependencies, and per-game overrides live in focused tools.
+### Your Windows game library, made at home on macOS.
 
-The SwiftUI app is the product. The Python backend remains the implementation engine for Wine, Steam, graphics stack setup, diagnostics, and launch workflows.
+NASE is a native macOS game launcher for Steam, Epic Games, GOG, Windows
+installers, and Mac apps. It brings every game into one searchable library and
+handles Wine bottles, graphics backends, dependencies, launch settings, and
+troubleshooting behind a focused SwiftUI interface.
 
-## Current Focus
+NASE is built to feel like a launcher—not a collection of Wine scripts.
 
-- Native SwiftUI macOS launcher
-- Steam library detection and launch through managed Wine bottles
-- Wine-managed Windows apps and installers
-- Native macOS app imports
-- Per-game settings, logs, health checks, and compatibility notes
+> [!IMPORTANT]
+> NASE is in active development. It is ready for contributors and technical
+> testers, but it is not yet a polished public release. Game compatibility
+> varies by title and graphics backend.
 
-Epic Games and GOG are available through isolated native provider adapters. Neither source requires installing its Windows store launcher.
+## One Library, Every Source
 
-Epic setup now downloads the checksum-pinned Legendary 0.20.34 wheel from PyPI, installs it into a native managed Python environment, verifies its version, and keeps its credentials under NASE app support. This avoids the legacy x86 standalone's multiprocessing failure on current Apple Silicon macOS. The setup sheet opens Legendary's official Epic login flow and sends the short-lived authorization response to Python over standard input so it never appears in process arguments, previews, or job logs. Epic games can be installed into a shared host library, updated, verified, repaired, uninstalled with confirmation, and launched through the selected NASE compatibility profile while game files remain outside its bottle.
+- Browse Steam, Epic, GOG, native Mac apps, and personal Windows games together.
+- Install, update, verify, repair, and uninstall supported store games in-app.
+- Import an `.exe`, installer, app folder, or existing Wine prefix.
+- Search, filter, pin, and organize games without managing folders by hand.
+- Keep shared game files separate from isolated compatibility profiles.
 
-GOG setup installs the checksum-pinned `gogdl` 1.2.2 release matching the Mac's architecture, keeps refresh tokens in NASE-owned storage with restrictive permissions, and discovers the account through GOG's Galaxy library metadata. GOG games use official artwork and can be installed into a shared host library, updated, verified/repaired, uninstalled, and launched through any ready NASE compatibility profile.
+Epic support uses Legendary and GOG support uses GOG Download Client. Both run
+as native provider adapters, so their Windows store launchers are not required.
 
-## Open The App
+## Compatibility Without the Guesswork
 
-From the repo root:
+Every game can have its own profile, bottle, launch arguments, environment,
+working directory, and graphics backend. NASE supports:
+
+- **DXMT** — the recommended default for modern Direct3D games.
+- **D3DMetal** — an advanced profile using an imported, licensed Apple Game
+  Porting Toolkit payload.
+- **DXVK-macOS** — an experimental Vulkan-based profile that requires a
+  compatible imported MoltenVK payload.
+- **Plain Wine** — useful for launchers, utilities, and games that do not need
+  a graphics translation override.
+
+Profiles remain isolated, versioned, and repairable. NASE validates the selected
+Wine engine and renderer together instead of treating graphics runtimes as
+interchangeable DLL packs.
+
+## Setup That Belongs to the App
+
+The release build bundles a signed private Python 3.13 runtime. NASE downloads
+checksum-pinned Wine Stable 11, Winetricks, GStreamer, and DXMT into its own
+Application Support directory. Homebrew and a system Python installation are
+not consumer requirements.
+
+Downloads are verified before they enter the runtime cache. Interrupted or
+invalid files are discarded safely, and the app does not start source refreshes
+or background backend work until its bundled runtime passes preflight.
+
+Rosetta 2 is the one Apple-managed prerequisite on Apple Silicon and requires
+the user to accept Apple's license. Optional D3DMetal and MoltenVK components
+must be imported from a compatible licensed installation; NASE does not
+silently download or redistribute them.
+
+The Recommended Gaming Environment guides a new installation through:
+
+1. Runtime verification
+2. Required managed downloads
+3. Compatibility profile creation
+4. Steam installation
+5. Library attachment
+6. Steam sign-in
+
+Completed work is preserved if a step fails, with focused repair actions and
+logs available inside the app.
+
+## Built for Real Game Libraries
+
+- **Isolated profiles:** Prefixes, renderers, shader caches, and logs stay
+  separated while games can remain in shared host libraries.
+- **Safe Steam ownership:** Only one profile can run Windows Steam against a
+  shared library at a time, preventing competing clients from updating the same
+  files.
+- **Optional shared sign-in:** Protected Steam authentication metadata can be
+  applied between stopped profiles without copying whole prefixes.
+- **Session controls:** NASE tracks launched games, reconciles real process
+  state, and can stop one game without shutting down an unrelated Steam session.
+- **Actionable diagnostics:** Health checks, bounded log views, compatibility
+  advice, Winetricks, and repair actions are available in-app.
+- **Legacy support:** WoW64 handles supported 32-bit applications, while an
+  optional private dgVoodoo2 overlay can help older DirectDraw and Direct3D
+  titles without modifying shared game files.
+
+## Storage and Privacy
+
+NASE stores managed data under:
+
+```text
+~/Library/Application Support/MySteamWine
+```
+
+This includes bottles, managed runtimes, logs, downloads, job records, provider
+state, and the canonical Steam library registry. Imported external prefixes
+remain in their original locations.
+
+Store credentials and remembered Steam metadata stay in NASE-owned storage with
+restrictive permissions. Short-lived Epic authorization data is passed through
+standard input rather than process arguments or job logs. NASE never modifies
+Steam's host `libraryfolders.vdf` while discovering libraries.
+
+## Run NASE from Source
+
+NASE is currently distributed as a source project for development and testing.
+Open the Swift package:
 
 ```bash
 open Package.swift
@@ -32,329 +119,76 @@ or:
 xed .
 ```
 
-Then run the `SteamWineApp` target from Xcode.
-
-For a command-line build check:
+Run the `SteamWineApp` target in Xcode. To verify a command-line build:
 
 ```bash
 swift build
 ```
 
-## Host Requirements
+Release packaging, Developer ID signing, notarization, updates, and the
+clean-machine release gate are documented in
+[docs/RELEASING.md](docs/RELEASING.md).
 
-The distributed app bundles its own signed Python 3.13 runtime. The recommended
-DXMT setup downloads checksum-pinned Wine Stable 11, a private GStreamer
-framework, Winetricks, and DXMT into NASE's Application Support directory, so
-Homebrew and system package installers are not consumer dependencies. Rosetta 2
-remains an Apple-managed prerequisite on Apple Silicon and always requires
-explicit license confirmation.
+## How NASE Is Built
 
-D3DMetal and DXVK-macOS are optional advanced profiles. Their licensed
-D3DMetal/MoltenVK framework payloads must be imported from a compatible local
-installation; NASE does not silently download or redistribute those payloads.
-
-Settings → System Readiness checks these dependencies using structured backend results. Required DXMT components are separated from optional GPTK support, and every missing required component includes a suggested fix.
-
-Missing managed dependencies expose explicit **Fix** actions. Wine Stable,
-Winetricks, and DXMT use the checksum-verified Runtime Center installer. Python
-comes from the signed app bundle rather than the host, and Rosetta requires a
-separate confirmation that accepts Apple's software license. Readiness checks
-themselves remain read-only.
-
-The **Recommended Gaming Environment** action completes the full bootstrap in dependency order. It installs only missing required components, automatically selects Wine Stable and the verified DXMT source, rescans before continuing, creates the dedicated `-DXMT` profile bottle, installs Steam, and opens Steam for sign-in. A failed run keeps completed work, shows the failing step, and can be retried after opening the profile-specific logs.
-
-The app now includes an early Runtime Center in Settings for managed Wine, DXVK, and DXMT installs. The first catalog includes pinned upstream releases with checksums, so the launcher can download, verify, extract, and register/install them without manual linking.
-
-Graphics choices are compatibility profiles rather than DLL toggles. DXMT uses Wine Stable 11 and DXMT 0.71 in a dedicated `-DXMT` bottle. D3DMetal pins the checksum-verified Sikarugir Wine 10 revision 6 engine and a complete D3DMetal renderer bundle in a dedicated `-D3DMetal` bottle. DXVK-macOS uses the same pinned Wine engine with its matching winevulkan modules, checksum-pinned DXVK-macOS 1.10.3 and imported CodeWeavers MoltenVK 1.4.1 in a dedicated `-DXVK-macOS` bottle. Each profile bottle stores `compatibility-profile.json` and refuses silent runtime or graphics-source drift.
-
-D3DMetal setup is available from Settings → Compatibility Profiles. **Find Runtime** detects a supported engine and renderer pair, and **Install** imports it into NASE’s persistent managed runtime storage after any required license confirmation. The import preserves the renderer's `wine`, `external`, and framework layout rather than flattening it into a prefix. **Set Up** creates the dedicated bottle, installs Steam, configures mutually exclusive D3DMetal registry overrides, attaches shared libraries, and verifies the Windows and Unix Wine modules, `D3DMetal.framework`, `libd3dshared.dylib`, and Steam before marking the profile ready. Every Steam or direct-game launch injects `WINEDLLPATH_PREPEND`, `CX_D3DMETALPATH`, the shared-library paths, and `DYLD_FALLBACK_LIBRARY_PATH` from that preserved bundle. Once ready, **Repair** repeats these idempotent checks.
-
-Profiles can be prepared from Settings → Compatibility Profiles. The backend equivalent is:
-
-```bash
-python3 mysteamwine.py --json discover-d3dmetal
-
-python3 mysteamwine.py --json import-gptk \
-  --gptk-wine "/Volumes/Game Porting Toolkit/path/to/wine" \
-  --d3dmetal-source "/Volumes/Game Porting Toolkit" \
-  --confirm-license
-
-python3 mysteamwine.py --bottle Default-DXMT --wine /opt/homebrew/bin/wine --jsonl \
-  setup-compatibility-profile --profile dxmt-wine-stable-11-v1 \
-  --dxmt-source "$HOME/Library/Application Support/MySteamWine/runtimes/dxmt/dxmt-0.71"
-
-python3 mysteamwine.py --bottle Default-D3DMetal --wine /path/to/gptk/bin/wine --jsonl \
-  setup-compatibility-profile --profile d3dmetal-gptk-v1 \
-  --d3dmetal-source "/path/to/the/same/Game Porting Toolkit"
-```
-
-Setup initializes the dedicated prefix, selects Windows 10, installs Steam and the matching renderer, and marks the profile ready only after every step succeeds.
-
-The default managed Wine prefix location is:
+The SwiftUI application is the product. Python remains a private implementation
+engine for Wine setup, store adapters, diagnostics, scanning, and launch
+workflows.
 
 ```text
-~/Library/Application Support/MySteamWine
+Sources/SteamWineApp/   Native SwiftUI app, state, views, and backend bridge
+mysteamwine/            Python implementation engine
+mysteamwine.py          Secondary developer and debugging CLI
+docs/                   Architecture, design, and release documentation
 ```
 
-Managed bottles live under:
+The app and backend communicate through structured JSON and streaming JSONL job
+events. Long-running work is recorded under Application Support so NASE can
+recover progress after an app restart, report failures clearly, and safely
+cancel only verified backend processes.
 
-```text
-~/Library/Application Support/MySteamWine/bottles/<BottleName>
-```
+For a complete module map, data flows, storage model, and design rationale, see:
 
-External Wine prefixes are also supported. The prefix itself stays external, while SteamWineWrapper stores logs, downloads, and cache metadata under `MySteamWine/external-prefixes/`.
+- [Codebase Structure](docs/CODEBASE_STRUCTURE.md)
+- [Frontend Design](docs/FRONTEND_DESIGN.md)
+- [Release Guide](docs/RELEASING.md)
 
-## What The App Does Today
+## Developer and Debugging CLI
 
-The native SwiftUI app can:
-
-- Manage Steam, Wine, macOS, and pinned library views
-- Configure Wine path, DXMT source, DXVK source, D3DMetal source, managed bottle, and external prefix
-- Install managed Wine, DXVK, and DXMT runtime builds from Settings
-- Run first-time Metal setup
-- Run doctor checks and safe repair actions
-- Open Windows Steam without waiting for it to exit
-- Detect installed Steam games from Steam manifests
-- Launch Steam games through Steam or direct debug/smart launch paths
-- Import native macOS apps
-- Import Wine installers and app folders
-- Edit per-game launch arguments, working directory, environment variables, graphics backend, collection, bottle, and external prefix
-- View bounded log tails in-app
-- Run Winetricks from the UI
-- Track game launch sessions, reconcile real process state, and stop one running game without shutting down shared Steam
-
-Graphics runtimes are not interchangeable DLL packs. DXMT is the validated default with Wine Stable 11. D3DMetal uses a separate Game Porting Toolkit Wine context and bottle. DXVK remains experimental on macOS because it additionally requires a compatible Wine Vulkan and MoltenVK host stack; installing the upstream DXVK DLL archive alone is not sufficient.
-
-The current Steam experience still uses Windows Steam as the reliable baseline. Direct launch and hidden-Steam style work should build on the existing backend boundaries described in the architecture docs.
-
-Steam library refresh is now bottle-independent. The backend reads `libraryfolders.vdf` from every managed bottle plus the currently selected external prefix, normalizes and deduplicates library paths, validates manifests against `steamapps/common`, and atomically writes:
-
-```text
-~/Library/Application Support/MySteamWine/steam-libraries.json
-```
-
-The registry retains stale manifests and duplicate physical locations for diagnostics, while the normal game list exposes one preferred installed location per AppID. Registered paths continue to be scanned even when the active profile did not create them, and launch/debug resolution uses the canonical manifest and install path instead of re-scanning only the selected prefix. Discovery is read-only: it does not edit Steam's `libraryfolders.vdf` or move game files.
-
-Ready compatibility profiles can attach those canonical libraries from Settings → Compatibility Profiles. NASE registers each host library as a Wine `Z:` path in only that profile's `libraryfolders.vdf`; game files remain in their original location while prefixes, renderer DLLs, shader caches, Steam configuration, and logs remain isolated. The target Steam client must be closed. NASE serializes concurrent attachment attempts, creates a timestamped backup, atomically replaces the VDF, and verifies every path afterward.
-
-NASE also keeps a persistent activity owner for each shared library. Only one profile may run Windows Steam against a library at a time, preventing two clients from updating the same files concurrently. The owning profile may launch additional games without restarting Steam; other profiles may still use direct executable launches while the shared files are idle, and a stale owner is replaced automatically after its Steam process exits.
-
-Settings → Steam Login provides an opt-in shared authentication store. After a successful remembered login, close Windows Steam in every NASE profile and choose **Save Login From Profile**. NASE stores only the bounded login metadata and account authentication subtrees under `~/Library/Application Support/MySteamWine/steam-identity` with `0700` directory and `0600` file permissions, an integrity checksum, and no token values in status output. **Apply Login** merges those fields into another stopped managed bottle; it never shares a prefix or copies renderer DLLs, unrelated registry values, caches, shader data, or logs. **Sign Out This Profile** removes authentication from one bottle, while **Forget Steam Login** deletes only NASE's protected copy. Steam remains authoritative and may fall back to password or Steam Guard when it expires or rejects a remembered session.
+The command-line interface is secondary. It keeps backend workflows testable
+outside the app and is useful for diagnostics and automation.
 
 ```bash
-python3 mysteamwine.py --bottle Default-DXMT --json attach-steam-library --all
-```
+# Inspect system and bottle readiness
+python3 mysteamwine.py --json doctor
 
-New profile setup performs this attachment automatically after Steam and the renderer are installed.
+# Stream a managed setup job
+python3 mysteamwine.py --bottle Default-DXMT --jsonl \
+  setup-compatibility-profile --profile dxmt-wine-stable-11-v1
 
-## Architecture
+# List normalized games
+python3 mysteamwine.py --json list-games
 
-Release packaging, Developer ID signing, notarization, signed updates, and the
-clean-machine release gate are documented in [docs/RELEASING.md](docs/RELEASING.md).
-
-High-level split:
-
-- `Sources/SteamWineApp/`: SwiftUI product, app state, views, settings, game library, and backend bridge.
-- `mysteamwine/`: Python backend for Wine, Steam, bottles, graphics installers, diagnostics, scanning, and launch commands.
-- `mysteamwine.py`: thin backend CLI entrypoint.
-
-Key Swift files:
-
-- `SteamWineApp.swift`: app entrypoint
-- `ContentView.swift`: main app shell
-- `AppViewModel.swift`: primary observable app state and orchestration
-- `Models.swift`: shared UI/backend value types
-- `BackendBridge.swift`: Swift-to-Python JSONL bridge
-- `SettingsSheet.swift`, `SetupWizardSheet.swift`, `WinetricksSheet.swift`, `GameSheets.swift`: focused tools and sheets
-- `LibraryComponents.swift`, `SharedViews.swift`: reusable UI pieces
-
-Key Python modules:
-
-- `mysteamwine/runtime.py`: process execution, downloads, executable resolution, Wine runtime detection
-- `mysteamwine/steam_libraries.py`: cross-bottle Steam library discovery and the canonical read-only registry
-- `mysteamwine/steam_identity.py`: permission-locked, integrity-checked Steam authentication capture, per-profile provisioning, sign-out, and forget operations
-- `mysteamwine/sources/`: normalized multi-store contracts and provider adapters; Epic uses Legendary and GOG uses the pinned GOG Download Client while credentials and install registries remain source-isolated
-- `mysteamwine/catalog.py`: managed runtime catalog, downloads, checksum verification, extraction, and install records
-- `mysteamwine/bottle.py`: managed bottle and external-prefix paths
-- `mysteamwine/steam.py`: Steam installer/runner, VDF parsing, manifest discovery, Steam/direct game launch helpers
-- `mysteamwine/cli.py`: backend command contract, JSON/JSONL output, job events
-- `mysteamwine/doctor.py`: health checks and safe repairs
-- `mysteamwine/winetricks.py`: Winetricks integration
-- `mysteamwine/dxmt.py`: DXMT install and overrides
-- `mysteamwine/dxvk.py`: DXVK install and overrides
-- `mysteamwine/d3dmetal.py`: D3DMetal install and overrides
-- `mysteamwine/scanner.py`: game folder signal scanner
-- `mysteamwine/advisor.py`: dependency recommendations
-- `mysteamwine/webui.py`: older local browser frontend for backend debugging
-
-More detail lives in:
-
-- [`docs/CODEBASE_STRUCTURE.md`](docs/CODEBASE_STRUCTURE.md): architecture principles, SwiftUI/Python boundaries, multi-store normalization, security and storage decisions, data flows, module map, and the rationale for JSON/JSONL instead of an AST-based runtime protocol.
-- [`docs/FRONTEND_DESIGN.md`](docs/FRONTEND_DESIGN.md): UI hierarchy, action placement, card design, progress feedback, menus, visual language, and the staged frontend-polish roadmap.
-
-## Backend Contract
-
-The app talks to Python through `BackendBridge.swift`. The backend commands support structured output:
-
-- `--json`: one machine-readable result
-- `--jsonl`: streaming job events plus final result
-
-Long-running JSONL operations are also recorded under
-`~/Library/Application Support/MySteamWine/jobs`. Each durable record includes the
-backend PID, timestamps, progress, completed steps, errors, and any rollback that
-was performed. The native app reloads these records after restart and identifies
-operations that were interrupted before a final result.
-
-```bash
-# inspect durable work from this or an earlier app session
+# Inspect durable work from this or an earlier app session
 python3 mysteamwine.py --json list-jobs
 
-# safely request cancellation (only a verified NASE backend PID is signalled)
-python3 mysteamwine.py --json cancel-job --job-id JOB_ID
-
-# resume and verify an incomplete dedicated profile
-python3 mysteamwine.py --bottle Default-DXMT --wine /path/to/wine --jsonl \
-  repair-compatibility-profile --profile dxmt-wine-stable-11-v1 \
-  --dxmt-source "/path/to/dxmt-0.71"
-```
-
-Compatibility-profile setup is transactional. If a new bottle fails during
-setup, NASE stops its Wine processes and removes that incomplete bottle. If a
-pre-existing bottle fails during repair, NASE preserves its user data, marks the
-profile `needs-repair`, and stores the failure and rollback result with the job.
-
-Representative response shape:
-
-```json
-{
-  "ok": true,
-  "action": "doctor",
-  "message": "Doctor finished.",
-  "data": {},
-  "warnings": [],
-  "errors": [],
-  "logs": []
-}
-```
-
-The SwiftUI app should continue to prefer JSON/JSONL over parsing human terminal output.
-
-## Backend CLI
-
-The CLI is secondary now. It exists for debugging, scripting, and keeping backend workflows easy to test outside the app.
-
-Common backend commands:
-
-```bash
-# show environment and bottle paths
-python3 mysteamwine.py info
-
-# create or initialize the default managed bottle
-python3 mysteamwine.py --wine /opt/homebrew/bin/wine init
-
-# run the managed setup flow
-python3 mysteamwine.py --wine /opt/homebrew/bin/wine setup-metal --dxmt-source ~/Downloads/dxmt
-
-# inspect the current Wine/Steam/graphics setup
-python3 mysteamwine.py --wine /opt/homebrew/bin/wine doctor
-
-# apply safe repairs, then rerun checks
-python3 mysteamwine.py --wine /opt/homebrew/bin/wine doctor --fix --dxmt-source ~/Downloads/dxmt
-
-# open Windows Steam
-python3 mysteamwine.py --wine /opt/homebrew/bin/wine run-steam --no-wait
-
-# list installed Steam games from manifests
-python3 mysteamwine.py list-games
-
-# launch a Steam game by AppID through Steam
-python3 mysteamwine.py --wine /opt/homebrew/bin/wine launch-game --appid 620 --no-wait
-
-# try direct executable launch first, then fall back to Steam
-python3 mysteamwine.py --wine /opt/homebrew/bin/wine smart-launch-game --appid 620 --no-wait
-
-# launch a chosen executable directly with debug logging
-python3 mysteamwine.py --wine /opt/homebrew/bin/wine debug-game --exe "/path/to/Game.exe" --no-wait
-```
-
-Dependency and graphics helpers:
-
-```bash
-# list managed runtime catalog entries
-python3 mysteamwine.py --json list-runtime-catalog
-
-# list runtimes already installed by the launcher
-python3 mysteamwine.py --json list-installed-runtimes
-
-# download, verify, extract, and register/install a runtime
-python3 mysteamwine.py --wine /opt/homebrew/bin/wine install-runtime --runtime dxmt-0.71
-
-# install Winetricks verbs
-python3 mysteamwine.py winetricks --verbs vcrun2019,d3dx9
-
-# install DXMT
-python3 mysteamwine.py --wine /opt/homebrew/bin/wine install-dxmt --dxmt-source ~/Downloads/dxmt
-
-# install DXVK
-python3 mysteamwine.py install-dxvk --dxvk-source ~/Downloads/dxvk-2.3.tar.gz
-
-# install DXVK-macOS
-python3 mysteamwine.py install-dxvk --dxvk-source ~/Downloads/DXVK-macOS --dxvk-flavor macos
-
-# install D3DMetal
-python3 mysteamwine.py --wine /opt/homebrew/bin/wine install-d3dmetal --d3dmetal-source ~/Downloads/d3dmetal
-
-# inspect active game sessions and stop one game cleanly
+# Inspect active game sessions
 python3 mysteamwine.py --json list-sessions
-python3 mysteamwine.py --json stop-game --session-id launch_123
-
-# scan a game folder and get rule-based recommendations
-python3 mysteamwine.py scan-game --path "/path/to/game"
-python3 mysteamwine.py advise-game --appid 2056220
 ```
 
-NASE tracks whether Steam was already open when a game launched. When NASE owns
-that Steam launch, it gracefully closes Steam after the last game exits and a
-short sync grace period. Steam stays open when another game is active, a
-download or update is in progress, or the user explicitly opened Steam. **Kill
-All Wine Processes** remains the recovery option for a stuck bottle.
+Existing CLI commands remain supported while the native app continues moving
+toward a structured, observable, concurrency-friendly backend contract.
 
-External prefix examples:
+## Project Direction
 
-```bash
-python3 mysteamwine.py --prefix ~/.wine-bluearchive info
-python3 mysteamwine.py --prefix ~/.wine-bluearchive list-games
-python3 mysteamwine.py --prefix ~/.wine-bluearchive --wine /opt/homebrew/bin/wine doctor --fix
-```
+The near-term goal is a dependable public release with:
 
-The older local browser UI is still available for quick backend testing:
+- A friendly first-launch experience on a clean Mac
+- Internally managed, signed, and checksum-pinned dependencies
+- Clear compatibility profiles instead of exposed Wine complexity
+- Stronger per-title recommendations and repair workflows
+- Stable multi-store installs, updates, and launches
+- A polished library-first interface
 
-```bash
-python3 mysteamwine.py gui
-python3 mysteamwine.py gui --no-browser
-```
-
-## Graphics Defaults
-
-Graphics backend defaults are intentionally split:
-
-- `run-steam`: plain Wine by default. `--graphics-backend auto` resolves to `none`.
-- `launch-game`, `smart-launch-game`, and `debug-game`: DXMT by default. `--graphics-backend auto` resolves to `dxmt`.
-
-Games may use DXMT, DXVK, D3DMetal, or no override depending on compatibility.
-
-### 32-bit Windows applications
-
-NASE detects PE32 executables and runs them through Wine's WoW64 support inside the same isolated 64-bit profile bottles. Wine Stable 11 and managed Wine engines are checked for both `i386-windows` and `x86_64-windows` modules before launch. DXMT and Plain Wine are the recommended choices for 32-bit titles. D3DMetal is limited to 64-bit Direct3D applications, so NASE blocks that unsafe combination with a friendly recommendation instead of attempting a broken launch. A bundled PE32 probe under `Tools/WoW64Probe` provides a repeatable live runtime test.
-
-Legacy DirectDraw and Direct3D 1–7 titles can opt into a private dgVoodoo2 overlay from Game Settings. NASE requires a user-provided official ZIP or extracted directory, verifies the selected DLLs are PE32, and creates an overlay inside the selected profile bottle. Top-level game files and directories are symlinked into the overlay while `DDraw.dll`, `D3DImm.dll`, and configuration stay private, allowing the legacy API to feed a 32-bit D3D11 backend without modifying Steam's shared installation. The overlay has an explicit reset action and is never applied globally.
-
-## Development Direction
-
-Near-term priorities:
-
-- Keep the SwiftUI app as the primary user experience.
-- Keep Python backend commands stable and terminal-friendly.
-- Continue strengthening JSON/JSONL responses.
-- Add hidden/cleaner Steam launch work as explicit backend launch modes, not UI hacks.
-- Keep direct launch, through-Steam launch, and any future Steam API shim mode distinct and reversible.
+NASE is designed around a simple principle: the game library stays front and
+center, and operational complexity appears only when it is useful.
