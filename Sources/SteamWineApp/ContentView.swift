@@ -422,7 +422,7 @@ struct ContentView: View {
             Button {
                 model.stopAllWineProcesses()
             } label: {
-                Label("Stop Wine Processes", systemImage: "stop.circle")
+                Label("Stop All Wine Processes", systemImage: "stop.circle")
                     .font(.system(size: 12, weight: .medium))
                     .lineLimit(1)
                     .foregroundStyle(theme.textSecondary)
@@ -438,7 +438,7 @@ struct ContentView: View {
             }
             .buttonStyle(.plain)
             .disabled(model.hasActiveBackendWork && model.currentOperationJob?.action == "Kill Wine")
-            .help("Emergency stop for Wine processes in the current bottle or prefix")
+            .help("Emergency stop for Wine and game processes across every NASE bottle")
         }
         .padding(12)
         .background(theme.sidebarBackground)

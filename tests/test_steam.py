@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from mysteamwine.bottle import Bottle
+import mysteamwine.steam as steam
 from mysteamwine.steam import run_steam, steam_client_is_ready, validate_executable_compatibility
 
 
@@ -105,6 +106,36 @@ class SteamLaunchTests(unittest.TestCase):
         with log.open("a", encoding="utf-8") as handle:
             handle.write("[Logged On, 4, 7] fresh session\n")
         self.assertTrue(steam_client_is_ready(bottle, after_offset=offset))
+
+    def test_global_stop_covers_managed_and_tracked_external_prefixes(self) -> None:
+        root = Path(tempfile.mkdtemp(prefix="nase-stop-test-"))
+        managed_prefix = root / "bottles" / "Default-DXMT" / "prefix"
+        external_prefix = root / "external-game-prefix"
+        managed_prefix.mkdir(parents=True)
+        external_prefix.mkdir()
+        current = self.make_bottle(root / "bottles" / "Default-DXMT")
+        session = {
+            "session_id": "launch_test",
+            "status": "running",
+            "prefix": str(external_prefix),
+        }
+
+        with (
+            patch.object(steam, "app_support_root", return_value=root),
+            patch.object(steam, "reconcile_sessions", return_value=[session]),
+            patch.object(steam, "stop_session", return_value=(session, [101])) as stop,
+            patch.object(steam, "_terminate_prefix_server_processes", return_value=[303]) as terminate_server,
+            patch.object(steam, "_terminate_orphaned_prefix_processes", return_value=[202]) as terminate,
+            patch.object(steam, "_terminate_stale_macos_wineserver", return_value=(False, "")),
+        ):
+            code, message, targets = steam.kill_nase_wine_processes(current_bottle=current)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(set(targets), {str(managed_prefix), str(external_prefix)})
+        self.assertIn("Stopped 3 Wine/game processes", message)
+        stop.assert_called_once_with("launch_test")
+        self.assertEqual(terminate_server.call_count, 2)
+        self.assertEqual(terminate.call_count, 2)
 
 
 if __name__ == "__main__":

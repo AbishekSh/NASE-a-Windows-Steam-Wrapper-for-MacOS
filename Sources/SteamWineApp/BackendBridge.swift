@@ -697,9 +697,9 @@ enum BackendBridge {
         case .openWinecfg:
             return base + ["winecfg"]
         case .killWine:
-            return base + ["kill-wine"]
+            return base + ["kill-wine", "--all-managed"]
         case .listSessions:
-            return base + ["list-sessions"]
+            return context.targetArguments + ["--json", "list-sessions"]
         case .stopGame(let sessionID):
             return base + ["stop-game", "--session-id", sessionID]
         case .openSteam:
@@ -716,7 +716,7 @@ enum BackendBridge {
             return base + ["--graphics-backend", GraphicsBackendOption.dxmt.cliValue, "--compatibility-profile", GraphicsBackendOption.dxmt.compatibilityProfileID, "launch-game", "--appid", appid, "--dxmt-source", context.dxmtSource, "--no-wait"]
         case .smartLaunchGame(let appid, let graphicsBackend):
             var args = base
-            args += ["--graphics-backend", graphicsBackend.cliValue, "--compatibility-profile", graphicsBackend.compatibilityProfileID, "smart-launch-game", "--appid", appid]
+            args += ["--graphics-backend", graphicsBackend.cliValue, "--compatibility-profile", graphicsBackend.compatibilityProfileID, "smart-launch-game", "--appid", appid, "--no-wait"]
             if graphicsBackend == .dxmt {
                 args += ["--dxmt-source", context.dxmtSource]
             } else if graphicsBackend == .dxvk {

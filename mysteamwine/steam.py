@@ -10,11 +10,11 @@ import time
 from typing import Any, Iterator
 
 from . import DEFAULT_STEAM_WINDOWS_PATH, STEAM_SETUP_URL
-from .bottle import Bottle, ensure_bottle_dirs
+from .bottle import Bottle, app_support_root, ensure_bottle_dirs
 from .runtime import download, run_logged, run_logged_detached, supports_wow64
 from .pe import executable_architecture
 from .d3dmetal import d3dmetal_launch_environment
-from .sessions import steam_is_running
+from .sessions import ACTIVE_STATUSES, reconcile_sessions, steam_is_running, stop_session
 
 
 @dataclass(frozen=True)
@@ -45,13 +45,83 @@ def _wineserver_path(wine_path: Path) -> Path:
     raise FileNotFoundError(f"wineserver not found next to Wine binary: {candidate}")
 
 
+def _wine_server_dir(prefix: Path) -> Path:
+    prefix_stat = prefix.stat()
+    return Path("/tmp") / f".wine-{os.getuid()}" / f"server-{prefix_stat.st_dev:x}-{prefix_stat.st_ino:x}"
+
+
+def _terminate_pids(pids: list[int], *, timeout: float = 3) -> list[int]:
+    stopped: list[int] = []
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGTERM)
+            stopped.append(pid)
+        except ProcessLookupError:
+            pass
+    deadline = time.monotonic() + timeout
+    remaining = list(stopped)
+    while remaining and time.monotonic() < deadline:
+        next_remaining: list[int] = []
+        for pid in remaining:
+            try:
+                os.kill(pid, 0)
+                next_remaining.append(pid)
+            except ProcessLookupError:
+                pass
+        remaining = next_remaining
+        if remaining:
+            time.sleep(0.1)
+    for pid in remaining:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    return stopped
+
+
+def _terminate_prefix_server_processes(prefix: Path) -> list[int]:
+    """Stop Wine clients attached to this prefix, including detached store launchers."""
+    if os.name != "posix" or not Path("/usr/sbin/lsof").exists():
+        return []
+    server_dir = _wine_server_dir(prefix)
+    if not server_dir.is_dir():
+        return []
+    result = subprocess.run(
+        ["/usr/sbin/lsof", "-t", "+D", str(server_dir)],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+    owned_wine_pids: list[int] = []
+    for line in result.stdout.splitlines():
+        if not line.strip().isdigit():
+            continue
+        pid = int(line)
+        if pid == os.getpid():
+            continue
+        process = subprocess.run(
+            ["/bin/ps", "-p", str(pid), "-o", "uid=,command="],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        ).stdout.strip()
+        parts = process.split(maxsplit=1)
+        if len(parts) != 2 or not parts[0].isdigit() or int(parts[0]) != os.getuid():
+            continue
+        command = parts[1].lower()
+        if "wine" in command or ".exe" in command:
+            owned_wine_pids.append(pid)
+    return _terminate_pids(sorted(set(owned_wine_pids)))
+
+
 def _terminate_stale_macos_wineserver(prefix: Path) -> tuple[bool, str]:
     """Terminate only the wineserver that has this prefix's server directory open."""
     if os.name != "posix" or not Path("/usr/sbin/lsof").exists():
         return False, ""
 
-    prefix_stat = prefix.stat()
-    server_dir = Path("/tmp") / f".wine-{os.getuid()}" / f"server-{prefix_stat.st_dev:x}-{prefix_stat.st_ino:x}"
+    server_dir = _wine_server_dir(prefix)
     if not server_dir.is_dir():
         return False, ""
 
@@ -78,28 +148,7 @@ def _terminate_stale_macos_wineserver(prefix: Path) -> tuple[bool, str]:
     if not wineserver_pids:
         return False, ""
 
-    for pid in wineserver_pids:
-        os.kill(pid, signal.SIGTERM)
-    deadline = time.monotonic() + 3
-    while time.monotonic() < deadline:
-        remaining = []
-        for pid in wineserver_pids:
-            try:
-                os.kill(pid, 0)
-                remaining.append(pid)
-            except ProcessLookupError:
-                pass
-        if not remaining:
-            break
-        time.sleep(0.1)
-    else:
-        remaining = wineserver_pids
-
-    for pid in remaining:
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+    _terminate_pids(wineserver_pids)
     return True, f"Recovered stale Wine server for this prefix (PID {', '.join(map(str, wineserver_pids))})."
 
 
@@ -463,6 +512,63 @@ def kill_wine_processes(
         orphaned_tail = f"Stopped orphaned Wine processes for this prefix: {', '.join(map(str, orphaned_pids))}."
     combined_tail = "\n".join(part for part in (kill_tail, wait_tail, orphaned_tail) if part)
     return wait_code, combined_tail
+
+
+def kill_nase_wine_processes(*, current_bottle: Bottle) -> tuple[int, str, list[str]]:
+    """Stop Wine activity owned by NASE across managed and tracked prefixes."""
+    prefixes: set[Path] = set()
+    managed_root = app_support_root() / "bottles"
+    if managed_root.is_dir():
+        prefixes.update(
+            child / "prefix"
+            for child in managed_root.iterdir()
+            if child.is_dir() and (child / "prefix").is_dir()
+        )
+    if current_bottle.prefix.is_dir():
+        prefixes.add(current_bottle.prefix)
+
+    sessions = reconcile_sessions()
+    active_sessions = [
+        session for session in sessions
+        if session.get("status") in ACTIVE_STATUSES
+    ]
+    for session in sessions:
+        raw_prefix = str(session.get("prefix") or "").strip()
+        if raw_prefix:
+            prefix = Path(raw_prefix).expanduser()
+            if prefix.is_dir():
+                prefixes.add(prefix)
+
+    stopped_session_pids: set[int] = set()
+    for session in active_sessions:
+        session_id = str(session.get("session_id") or "")
+        if not session_id:
+            continue
+        _, stopped_pids = stop_session(session_id)
+        stopped_session_pids.update(stopped_pids)
+
+    stopped_prefix_pids: set[int] = set()
+    recovered_servers = 0
+    targets: list[str] = []
+    for prefix in sorted(prefixes, key=lambda path: str(path).casefold()):
+        targets.append(str(prefix))
+        stopped_prefix_pids.update(_terminate_prefix_server_processes(prefix))
+        stopped_prefix_pids.update(_terminate_orphaned_prefix_processes(prefix))
+        recovered, _ = _terminate_stale_macos_wineserver(prefix)
+        if recovered:
+            recovered_servers += 1
+
+    details = [
+        f"Checked {len(targets)} NASE prefix{'es' if len(targets) != 1 else ''}.",
+    ]
+    stopped_pids = stopped_session_pids | stopped_prefix_pids
+    if stopped_pids:
+        details.append(f"Stopped {len(stopped_pids)} Wine/game process{'es' if len(stopped_pids) != 1 else ''}.")
+    if recovered_servers:
+        details.append(f"Stopped {recovered_servers} Wine server{'s' if recovered_servers != 1 else ''}.")
+    if not stopped_pids and not recovered_servers:
+        details.append("No Wine processes were running.")
+    return 0, " ".join(details), targets
 
 
 def launch_app(

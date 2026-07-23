@@ -40,6 +40,7 @@ from .steam import (
     graphics_launch_environment,
     guess_game_executable,
     install_steam,
+    kill_nase_wine_processes,
     kill_wine_processes,
     launch_app,
     probe_steam_stability,
@@ -1044,13 +1045,19 @@ def cmd_run_winetricks(args: argparse.Namespace) -> None:
 
 
 def cmd_kill_wine(args: argparse.Namespace) -> None:
-    wine64 = _require_wine64(args)
     bottle = _resolve_bottle(args)
-    job_id = _stream_start(action="kill-wine", message=f"Killing Wine processes for {_target_label(args, bottle)}...") if _stream_enabled(args) else None
+    all_managed = bool(getattr(args, "all_managed", False))
+    target = "all NASE bottles" if all_managed else _target_label(args, bottle)
+    job_id = _stream_start(action="kill-wine", message=f"Killing Wine processes for {target}...") if _stream_enabled(args) else None
     if not _json_enabled(args):
-        print(f"Killing Wine processes for {_target_label(args, bottle)}...")
+        print(f"Killing Wine processes for {target}...")
 
-    code, tail = kill_wine_processes(bottle=bottle, wine64_path=wine64)
+    if all_managed:
+        code, tail, targets = kill_nase_wine_processes(current_bottle=bottle)
+    else:
+        wine64 = _require_wine64(args)
+        code, tail = kill_wine_processes(bottle=bottle, wine64_path=wine64)
+        targets = [str(bottle.prefix)]
     if code != 0:
         if _stream_enabled(args):
             _stream_result(
@@ -1059,7 +1066,7 @@ def cmd_kill_wine(args: argparse.Namespace) -> None:
                 ok=False,
                 status="failed",
                 message=f"Failed to stop Wine processes (exit {code}). Tail:\n{tail}",
-                data={"target": _target_label(args, bottle), "tail": tail},
+                data={"target": target, "targets": targets, "tail": tail},
                 errors=[f"Failed to stop Wine processes (exit {code})."],
             )
             raise SystemExit(code)
@@ -1072,7 +1079,7 @@ def cmd_kill_wine(args: argparse.Namespace) -> None:
             ok=True,
             status="completed",
             message="Stopped Wine processes.",
-            data={"target": _target_label(args, bottle), "tail": tail},
+            data={"target": target, "targets": targets, "tail": tail},
         )
         return
     if _json_enabled(args):
@@ -1080,7 +1087,7 @@ def cmd_kill_wine(args: argparse.Namespace) -> None:
             action="kill-wine",
             ok=True,
             message="Stopped Wine processes.",
-            data={"target": _target_label(args, bottle), "tail": tail},
+            data={"target": target, "targets": targets, "tail": tail},
             status="completed",
         )
         return
@@ -2079,7 +2086,7 @@ def cmd_launch_game(args: argparse.Namespace) -> None:
                 action="launch-game",
                 job_id=job_id or uuid.uuid4().hex,
                 ok=True,
-                status="started",
+                status="completed",
                 message="Launch request sent.",
                 data={"appid": app.appid, "name": app.name, "tail": tail, "session": launch_session},
             )
@@ -2090,7 +2097,7 @@ def cmd_launch_game(args: argparse.Namespace) -> None:
                 ok=True,
                 message="Launch request sent.",
                 data={"appid": app.appid, "name": app.name, "tail": tail, "session": launch_session},
-                status="started",
+                status="completed",
             )
         else:
             print("Launch request sent.")
@@ -2298,7 +2305,7 @@ def cmd_smart_launch_game(args: argparse.Namespace) -> None:
                         action="smart-launch-game",
                         job_id=job_id or uuid.uuid4().hex,
                         ok=True,
-                        status="started",
+                        status="completed",
                         message=message,
                         data=data,
                     )
@@ -2309,7 +2316,7 @@ def cmd_smart_launch_game(args: argparse.Namespace) -> None:
                         ok=True,
                         message=message,
                         data=data,
-                        status="started",
+                        status="completed",
                     )
                     return
                 print(message)
@@ -2389,7 +2396,7 @@ def cmd_smart_launch_game(args: argparse.Namespace) -> None:
             action="smart-launch-game",
             job_id=job_id or uuid.uuid4().hex,
             ok=True,
-            status="started" if args.no_wait else "completed",
+            status="completed",
             message=message,
             data=data,
             warnings=[direct_error] if direct_error else [],
@@ -2402,7 +2409,7 @@ def cmd_smart_launch_game(args: argparse.Namespace) -> None:
             message=message,
             data=data,
             warnings=[direct_error] if direct_error else [],
-            status="started" if args.no_wait else "completed",
+            status="completed",
         )
         return
     print(message)
@@ -2903,7 +2910,13 @@ def build_parser() -> argparse.ArgumentParser:
     tricks_cmd.add_argument("--interactive", action="store_true", help="Run winetricks without -q")
     tricks_cmd.set_defaults(func=cmd_run_winetricks)
 
-    sub.add_parser("kill-wine", help="Stop all Wine processes for the current bottle or prefix").set_defaults(func=cmd_kill_wine)
+    kill_wine_cmd = sub.add_parser("kill-wine", help="Stop Wine processes for one target or every NASE prefix")
+    kill_wine_cmd.add_argument(
+        "--all-managed",
+        action="store_true",
+        help="Stop Wine processes across all NASE-managed and tracked prefixes",
+    )
+    kill_wine_cmd.set_defaults(func=cmd_kill_wine)
 
     sessions_cmd = sub.add_parser("list-sessions", help="Reconcile and list tracked game launch sessions")
     sessions_cmd.add_argument("--all", action="store_true", help="Include exited and failed sessions")

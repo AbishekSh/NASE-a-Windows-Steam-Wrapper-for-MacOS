@@ -169,6 +169,8 @@ final class AppViewModel {
     private(set) var gameSettingsByPinID: [String: StoredGameSettings] = [:]
     private(set) var launchStatusByPinID: [String: GameLaunchStatus] = [:]
     private(set) var launchSessionByPinID: [String: GameLaunchSession] = [:]
+    private var launchStateGeneration = 0
+    @ObservationIgnored private var launchSessionMonitor: Task<Void, Never>?
     fileprivate var steamMetadataByAppID: [String: SteamLocalMetadata] = [:]
     private var runningHealthChecks = Set<RunnerKind>()
     private var isRefreshingLaunchSessions = false
@@ -230,10 +232,15 @@ final class AppViewModel {
         wineRuntimes = loadWineRuntimes()
         refreshWineRuntimes()
         selectedGame = nil
-        Task { [weak self] in
-            while let self {
+        launchSessionMonitor = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
                 self.refreshLaunchSessions()
-                try? await Task.sleep(for: .seconds(5))
+                do {
+                    try await Task.sleep(for: .seconds(5))
+                } catch {
+                    return
+                }
             }
         }
         refreshBackendJobs()
@@ -252,7 +259,7 @@ final class AppViewModel {
                 OperationCard(kind: .installD3DMetal, title: "Install D3DMetal", detail: "Install a configured D3DMetal payload into the current bottle or prefix.", symbolName: "sparkle.magnifyingglass"),
                 OperationCard(kind: .winecfg, title: "Wine Configuration", detail: "Open winecfg for the current managed bottle or external prefix.", symbolName: "slider.horizontal.3"),
                 OperationCard(kind: .winetricks, title: "Winetricks", detail: "Install runtime components like corefonts, vcrun, or dotnet into the current target.", symbolName: "shippingbox"),
-                OperationCard(kind: .killWine, title: "Kill All Wine Processes", detail: "Force-stop Wine processes for the current bottle or prefix when something gets stuck.", symbolName: "xmark.circle"),
+                OperationCard(kind: .killWine, title: "Kill All Wine Processes", detail: "Force-stop Wine and game processes across every NASE bottle.", symbolName: "xmark.circle"),
                 OperationCard(kind: .openSteam, title: "Open Steam", detail: "Launch Windows Steam without waiting for it to exit.", symbolName: "play.circle"),
                 OperationCard(kind: .refreshGames, title: "Refresh Games", detail: "Pull the current Steam manifest list from the Python backend.", symbolName: "arrow.clockwise"),
             ]
@@ -268,7 +275,7 @@ final class AppViewModel {
                 OperationCard(kind: .installD3DMetal, title: "Install D3DMetal", detail: "Install a configured D3DMetal payload into the current bottle or prefix.", symbolName: "sparkle.magnifyingglass"),
                 OperationCard(kind: .winecfg, title: "Wine Configuration", detail: "Open winecfg for the current managed bottle or external prefix.", symbolName: "slider.horizontal.3"),
                 OperationCard(kind: .winetricks, title: "Winetricks", detail: "Install runtime components like corefonts, vcrun, or dotnet into the current target.", symbolName: "shippingbox"),
-                OperationCard(kind: .killWine, title: "Kill All Wine Processes", detail: "Force-stop Wine processes for the current bottle or prefix when something gets stuck.", symbolName: "xmark.circle"),
+                OperationCard(kind: .killWine, title: "Kill All Wine Processes", detail: "Force-stop Wine and game processes across every NASE bottle.", symbolName: "xmark.circle"),
                 OperationCard(kind: .setupMetal, title: "Finish Setup", detail: "Run the managed Metal setup flow again.", symbolName: "hammer"),
             ]
         case .home, .mac:
@@ -429,6 +436,19 @@ final class AppViewModel {
     func clearLaunchStatus(for game: LibraryGame) {
         launchStatusByPinID.removeValue(forKey: game.pinID)
         launchSessionByPinID.removeValue(forKey: game.pinID)
+    }
+
+    private func clearWindowsLaunchStateAfterEmergencyStop() {
+        launchStateGeneration += 1
+        let windowsGameIDs = Set(
+            (discoveredSteamGames + wineApps + epicGames + gogGames).map(\.pinID)
+        )
+        launchStatusByPinID = launchStatusByPinID.filter { pinID, _ in
+            !windowsGameIDs.contains(pinID)
+        }
+        launchSessionByPinID = launchSessionByPinID.filter { pinID, _ in
+            !windowsGameIDs.contains(pinID)
+        }
     }
 
     func stop(_ game: LibraryGame) {
@@ -1851,8 +1871,8 @@ final class AppViewModel {
     func stopAllWineProcesses() {
         perform(OperationCard(
             kind: .killWine,
-            title: "Stop Wine",
-            detail: "Force-stop Wine processes for the current bottle or prefix.",
+            title: "Stop All Wine Processes",
+            detail: "Force-stop Wine and game processes across every NASE bottle.",
             symbolName: "stop.circle"
         ))
     }
@@ -3342,6 +3362,7 @@ final class AppViewModel {
             }
         }
         let activeJobID = beginBackendJob(for: action)
+        let actionLaunchGeneration = launchStateGeneration
 
         Task.detached(priority: .userInitiated) {
             do {
@@ -3382,6 +3403,10 @@ final class AppViewModel {
                     }
                     self.appendLog(response.output)
                     self.rightPanelMessage = response.job?.message ?? successMessage
+                    if case .killWine = action {
+                        self.clearWindowsLaunchStateAfterEmergencyStop()
+                        self.refreshLaunchSessions()
+                    }
                     if case .installHostDependency(let dependencyID, _) = action {
                         if dependencyID == "python", let pythonPath = self.detectInstalledPythonPath() {
                             self.backendContext = self.backendContext.overridingPythonCommand(pythonPath)
@@ -3395,7 +3420,7 @@ final class AppViewModel {
                     if case .installRuntime = action {
                         self.installingRuntimeID = nil
                     }
-                    if let game {
+                    if let game, actionLaunchGeneration == self.launchStateGeneration {
                         if case .sourceGameAction = action {
                             self.clearLaunchStatus(for: game)
                             if game.runner == .gog {
@@ -3427,7 +3452,7 @@ final class AppViewModel {
                     if case .installRuntime = action {
                         self.installingRuntimeID = nil
                     }
-                    if let game {
+                    if let game, actionLaunchGeneration == self.launchStateGeneration {
                         self.setLaunchStatus(.failed, for: game, message: self.launchFailureSummary(from: fullError))
                     }
                     if self.shouldPresentFailureAlert(for: action) {
