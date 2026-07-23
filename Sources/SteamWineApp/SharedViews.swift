@@ -5,22 +5,22 @@ import UniformTypeIdentifiers
 struct ThemePalette {
     let scheme: ColorScheme
 
-    var appBackground: Color { scheme == .dark ? Color(hex: "#0F1117") : Color(hex: "#F8FAFC") }
-    var sidebarBackground: Color { scheme == .dark ? Color(hex: "#151821") : Color(hex: "#F1F5F9") }
-    var toolbarBackground: Color { scheme == .dark ? Color(hex: "#151821") : Color(hex: "#F1F5F9") }
-    var panelBackground: Color { scheme == .dark ? Color(hex: "#1D2230") : Color(hex: "#FFFFFF") }
-    var panelRaised: Color { scheme == .dark ? Color(hex: "#252B3D") : Color(hex: "#F1F5F9") }
-    var panelBorder: Color { scheme == .dark ? Color(hex: "#2D354A") : Color(hex: "#E2E8F0") }
-    var panelHoverBorder: Color { scheme == .dark ? Color(hex: "#4F597A") : Color(hex: "#CBD5E1") }
-    var controlBackground: Color { scheme == .dark ? Color(hex: "#242A3C") : Color(hex: "#F8FAFC") }
-    var controlBorder: Color { scheme == .dark ? Color(hex: "#363E56") : Color(hex: "#E2E8F0") }
-    var textPrimary: Color { scheme == .dark ? Color(hex: "#F1F5F9") : Color(hex: "#0F172A") }
-    var textSecondary: Color { scheme == .dark ? Color(hex: "#94A3B8") : Color(hex: "#64748B") }
-    var textMuted: Color { scheme == .dark ? Color(hex: "#64748B") : Color(hex: "#94A3B8") }
-    var accentPrimary: Color { scheme == .dark ? Color(hex: "#38BDF8") : Color(hex: "#0284C7") }
-    var accentGreen: Color { scheme == .dark ? Color(hex: "#10B981") : Color(hex: "#059669") }
-    var accentRed: Color { scheme == .dark ? Color(hex: "#F43F5E") : Color(hex: "#E11D48") }
-    var accentAmber: Color { scheme == .dark ? Color(hex: "#F59E0B") : Color(hex: "#D97706") }
+    var appBackground: Color { scheme == .dark ? Color(hex: "#00111D") : Color(hex: "#F0F6F9") }
+    var sidebarBackground: Color { scheme == .dark ? Color(hex: "#000611") : Color(hex: "#E5EFF5") }
+    var toolbarBackground: Color { scheme == .dark ? Color(hex: "#000611") : Color(hex: "#E5EFF5") }
+    var panelBackground: Color { scheme == .dark ? Color(hex: "#001E29") : Color(hex: "#FFFFFF") }
+    var panelRaised: Color { scheme == .dark ? Color(hex: "#002B3A") : Color(hex: "#F0F6F9") }
+    var panelBorder: Color { scheme == .dark ? Color(hex: "#003843") : Color(hex: "#CBD5E1") }
+    var panelHoverBorder: Color { scheme == .dark ? Color(hex: "#00BAFE") : Color(hex: "#94A3B8") }
+    var controlBackground: Color { scheme == .dark ? Color(hex: "#002937") : Color(hex: "#F8FAFC") }
+    var controlBorder: Color { scheme == .dark ? Color(hex: "#003843") : Color(hex: "#E2E8F0") }
+    var textPrimary: Color { scheme == .dark ? Color(hex: "#FFD6A7") : Color(hex: "#0F172A") }
+    var textSecondary: Color { scheme == .dark ? Color(hex: "#90C4D4") : Color(hex: "#475569") }
+    var textMuted: Color { scheme == .dark ? Color(hex: "#5A8B9C") : Color(hex: "#94A3B8") }
+    var accentPrimary: Color { scheme == .dark ? Color(hex: "#00BAFE") : Color(hex: "#0284C7") }
+    var accentGreen: Color { scheme == .dark ? Color(hex: "#01DF72") : Color(hex: "#059669") }
+    var accentRed: Color { scheme == .dark ? Color(hex: "#F04E4F") : Color(hex: "#E11D48") }
+    var accentAmber: Color { scheme == .dark ? Color(hex: "#FFBF00") : Color(hex: "#D97706") }
 }
 extension RunnerKind {
     var brandGradient: LinearGradient {
