@@ -188,12 +188,12 @@ class EpicSourceTests(unittest.TestCase):
             client.write_text("", encoding="utf-8")
             client.chmod(0o755)
 
-            def runner(command, environment, timeout):
+            def launcher(command, environment, log_path):
                 captured["command"] = command
                 captured["environment"] = environment
-                return subprocess.CompletedProcess(command, 0, "", "")
+                captured["log_path"] = log_path
 
-            EpicSource(str(client), runner=runner).launch(
+            EpicSource(str(client), launcher=launcher).launch(
                 "Anemone",
                 wine_path=root / "wine",
                 wine_prefix=root / "prefix",
@@ -201,6 +201,7 @@ class EpicSourceTests(unittest.TestCase):
             )
         self.assertIn("--wine-prefix", captured["command"])
         self.assertEqual(captured["environment"]["WINEDLLOVERRIDES"], "d3d11=n,b")
+        self.assertEqual(captured["log_path"].name, "launch-Anemone.log")
 
 
 if __name__ == "__main__":

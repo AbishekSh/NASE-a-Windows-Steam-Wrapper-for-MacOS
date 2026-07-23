@@ -17,11 +17,36 @@ from .base import SourceGame, SourceStatus
 
 
 CommandRunner = Callable[[list[str], dict[str, str], int], subprocess.CompletedProcess[str]]
+LaunchRunner = Callable[[list[str], dict[str, str], Path], None]
 JSONFetcher = Callable[[str, dict[str, str]], Any]
 
 
 def _default_runner(command: list[str], environment: dict[str, str], timeout: int) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, env=environment, capture_output=True, text=True, check=False, timeout=timeout)
+
+
+def _default_launcher(command: list[str], environment: dict[str, str], log_path: Path) -> None:
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("a", encoding="utf-8") as output:
+        process = subprocess.Popen(
+            command,
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=output,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+            text=True,
+        )
+        try:
+            return_code = process.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            return
+    if return_code != 0:
+        try:
+            lines = log_path.read_text(encoding="utf-8", errors="replace").strip().splitlines()
+        except OSError:
+            lines = []
+        raise RuntimeError(f"GOG game launch failed: {lines[-1] if lines else 'gogdl exited immediately.'}")
 
 
 def _default_fetch_json(url: str, headers: dict[str, str]) -> Any:
@@ -33,9 +58,17 @@ def _default_fetch_json(url: str, headers: dict[str, str]) -> Any:
 class GOGSource:
     id = "gog"
 
-    def __init__(self, client: str = "gogdl", *, runner: CommandRunner = _default_runner, fetch_json: JSONFetcher = _default_fetch_json) -> None:
+    def __init__(
+        self,
+        client: str = "gogdl",
+        *,
+        runner: CommandRunner = _default_runner,
+        launcher: LaunchRunner = _default_launcher,
+        fetch_json: JSONFetcher = _default_fetch_json,
+    ) -> None:
         self.requested_client = client
         self.runner = runner
+        self.launcher = launcher
         self.fetch_json = fetch_json
 
     @property
@@ -235,10 +268,7 @@ class GOGSource:
         launch_environment = self._environment()
         launch_environment.update(environment)
         with self._lock():
-            result = self.runner(command, launch_environment, 300)
-        if result.returncode != 0:
-            lines = (result.stderr or result.stdout).strip().splitlines()
-            raise RuntimeError(f"GOG game launch failed: {lines[-1] if lines else 'unknown error'}")
+            self.launcher(command, launch_environment, self.root / "logs" / f"launch-{game_id}.log")
 
 
 def _authorization_code(value: str) -> str:

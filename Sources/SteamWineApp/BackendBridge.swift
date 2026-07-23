@@ -837,11 +837,13 @@ enum BackendBridge {
             }
         }
 
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            process.terminationHandler = { _ in
-                continuation.resume()
-            }
-        }
+        // `Process.terminationHandler` can miss very short-lived commands when
+        // it is installed after `run()`. Waiting on a utility task is safe for
+        // already-terminated processes and prevents a completed backend action
+        // from remaining active forever in the SwiftUI job list.
+        await Task.detached(priority: .utility) {
+            process.waitUntilExit()
+        }.value
 
         await reader.value
         if let trimmed = await state.appendTrailing(Data()) {

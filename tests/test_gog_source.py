@@ -117,6 +117,7 @@ class GOGSourceTests(unittest.TestCase):
 
     def test_install_and_launch_use_windows_profile(self) -> None:
         commands: list[list[str]] = []
+        launches: list[list[str]] = []
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             client = root / "gogdl"
@@ -129,13 +130,16 @@ class GOGSourceTests(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 0, '{"folder_name":"Game","versionName":"1.0"}', "")
                 return subprocess.CompletedProcess(command, 0, "", "")
 
+            def launcher(command, environment, log_path):
+                launches.append(command)
+
             with patch("mysteamwine.sources.gog.app_support_root", return_value=root / "support"):
-                source = GOGSource(str(client), runner=runner)
+                source = GOGSource(str(client), runner=runner, launcher=launcher)
                 source.install("123", base_path=root / "games")
                 (root / "games" / "Game").mkdir(parents=True, exist_ok=True)
                 source.launch("123", wine_path=root / "wine", wine_prefix=root / "prefix", environment={"DXVK_LOG_LEVEL": "info"})
         download = next(command for command in commands if "download" in command)
-        launch = next(command for command in commands if "launch" in command)
+        launch = launches[0]
         self.assertIn("windows", download)
         self.assertIn("--wine-prefix", launch)
 
