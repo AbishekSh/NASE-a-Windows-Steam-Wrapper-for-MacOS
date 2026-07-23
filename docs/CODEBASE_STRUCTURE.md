@@ -130,7 +130,7 @@ The CLI is the compatibility contract. Existing commands should keep working eve
 - `steam_identity.py`: a locked shared-auth boundary that extracts and merges only Steam login metadata and bounded account-auth subtrees. It refuses mutation while any managed Windows Steam process is running and never shares entire prefixes or configuration files.
 - `sources/base.py`: source-neutral status and game records used by future store adapters.
 - `sources/epic.py`: Legendary-backed Epic status, authentication, and library discovery. It forces Windows catalog resolution on macOS, stores provider state beneath NASE app support, locks API operations to prevent refresh-token races, and never exposes authorization codes in structured results.
-  - The managed Legendary wheel is checksum-pinned in `catalog.py` and installed into a native Python 3.10–3.13 virtual environment; the incompatible legacy x86 standalone is not selected.
+  - The managed Legendary wheel is checksum-pinned in `catalog.py` and installed with the same supported Python 3.10–3.14 interpreter that runs the backend. Packaged builds use NASE's private Python 3.13 runtime; the incompatible legacy x86 standalone is not selected.
   - Epic installs use a shared host directory; update, verify, repair, and uninstall remain provider jobs.
   - Launch delegates Epic online-auth parameter generation to Legendary while NASE supplies the selected Wine prefix and complete graphics-profile environment.
 - `sources/gog.py`: GOG account, library, install registry, and `gogdl` adapter.
@@ -181,9 +181,11 @@ Treat each graphics choice as a runtime profile, not only a DLL selection. DXMT 
 ### Packaged application layout
 
 `scripts/build-app.sh` turns the SwiftPM executable into `NASE.app`. The release
-bundle embeds the Python backend and probe tools at
-`Contents/Resources/Backend`; `BackendContext.default()` prefers that location
-and falls back to the repository only for development builds.
+bundle embeds a checksum-pinned relocatable Python 3.13 runtime at
+`Contents/Frameworks/Python.framework`, plus the Python backend and probe tools at
+`Contents/Resources/Backend`. `BackendContext.default()` uses the bundled
+interpreter and backend for packaged builds and falls back to the repository
+and `python3` only for development builds.
 
 Signing/notarization assets live under `release/`, release automation under
 `scripts/`, and the complete credential, update-feed, and clean-machine process
@@ -191,10 +193,10 @@ is documented in `docs/RELEASING.md`.
 - `sessions.py`: persistent launch-session registry, real process reconciliation, targeted per-game termination, and ownership-aware Steam cleanup. Session records already carry a compatibility-profile id so runtime fingerprints can be added without replacing the lifecycle contract.
 - `profiles.py`: compatibility-profile definitions and immutable per-bottle runtime/source fingerprints. A profile binds Wine, the graphics stack, and a dedicated bottle as one launch unit.
   - `setup-compatibility-profile` performs the observable setup workflow and only marks the profile manifest ready after Wine, Steam, and renderer setup succeed.
-- `dependencies.py`: read-only host readiness checks for macOS, Python, Rosetta, Winetricks, Wine Stable 11, managed DXMT 0.71, and optional GPTK components.
-  - Confirmed installation commands are generated as argument arrays without a shell. Rosetta license acceptance is mandatory, Homebrew installs Python/Wine Stable/Winetricks, and DXMT remains handled by the verified runtime catalog. A successful Python repair adopts and persists Homebrew's `python3` path before readiness is checked again.
+- `dependencies.py`: read-only host readiness checks for macOS, Python, Rosetta, private GStreamer, Winetricks, Wine Stable 11, managed DXMT 0.71, and optional GPTK components.
+  - Rosetta is the only host installer and requires explicit Apple license acceptance. Python ships in the app, while GStreamer, Wine Stable, Winetricks, and DXMT are checksum-pinned managed runtimes. The GStreamer package is extracted into private runtime storage without executing its system installer. Homebrew is not part of the consumer bootstrap.
   - `AppViewModel.startRecommendedBootstrap` is the guided state machine: check, confirm, install missing requirements, adopt paths, verify again, set up the DXMT profile, and open Steam. Retry starts from a fresh readiness scan, so successful work is not repeated.
-- `winetricks.py`: Winetricks invocation.
+- `winetricks.py`: managed Winetricks invocation with the selected profile's `WINE`, `WINE64`, and `WINESERVER` paths.
 - `scanner.py`: local game folder signal detection.
 - `advisor.py`: rule-based dependency recommendations from scanner signals.
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import signal
 import shutil
 import subprocess
@@ -16,7 +17,13 @@ from pathlib import Path
 from . import APP_NAME, DEFAULT_BOTTLE_NAME
 from .advisor import recommend_dependencies
 from .bottle import app_support_root, bottle_paths, ensure_bottle_dirs, external_prefix_paths, wipe_all_bottles
-from .catalog import install_runtime, list_installed_runtimes, list_runtime_catalog
+from .catalog import (
+    installed_runtime_executable,
+    install_runtime,
+    list_installed_runtimes,
+    list_runtime_catalog,
+    managed_gstreamer_environment,
+)
 from .d3dmetal import d3dmetal_launch_environment, install_d3dmetal, verify_d3dmetal_profile
 from .dependencies import dependency_install_command, dependency_status
 from .doctor import apply_doctor_fixes, run_doctor, set_prefix_windows_version
@@ -60,6 +67,14 @@ from .steam_identity import (
 )
 from .sources import EpicSource, GOGSource
 from .winetricks import run_winetricks
+
+
+def _resolve_winetricks(path_or_name: str = "winetricks") -> Path:
+    if path_or_name == "winetricks":
+        managed = installed_runtime_executable("winetricks-20260125")
+        if managed is not None:
+            return managed
+    return resolve_executable(path_or_name, "winetricks")
 
 
 _TRANSIENT_JOB_ACTIONS = {
@@ -445,6 +460,78 @@ def cmd_dependency_status(args: argparse.Namespace) -> None:
 
 def cmd_install_host_dependency(args: argparse.Namespace) -> None:
     action = "install-host-dependency"
+    managed_runtime_ids = {
+        "gstreamer": "gstreamer-1.28.2-macos-universal",
+        "wine-stable": "wine-stable-11.0_1-gcenx",
+        "winetricks": "winetricks-20260125",
+    }
+    if args.dependency in managed_runtime_ids:
+        runtime_id = managed_runtime_ids[args.dependency]
+        job_id = _stream_start(action=action, message=f"Installing managed {args.dependency}...") if _stream_enabled(args) else None
+
+        def callback(name: str, status: str, message: str) -> None:
+            if _stream_enabled(args):
+                _stream_step(
+                    action=action,
+                    job_id=job_id or uuid.uuid4().hex,
+                    name=name,
+                    status=status,
+                    message=message,
+                )
+
+        try:
+            installed, notes = install_runtime(
+                runtime_id=runtime_id,
+                install_into_bottle=False,
+                callback=callback,
+            )
+        except Exception as exc:
+            message = f"Could not install managed {args.dependency}: {exc}"
+            if _stream_enabled(args):
+                _stream_result(
+                    action=action,
+                    job_id=job_id or uuid.uuid4().hex,
+                    ok=False,
+                    status="failed",
+                    message=message,
+                    errors=[message],
+                )
+                raise SystemExit(1)
+            _json_error(args, action=action, message=message, code=1)
+            return
+        runtime = {
+            "id": installed.id,
+            "name": installed.name,
+            "version": installed.version,
+            "kind": installed.kind,
+            "path": installed.path,
+            "executable": installed.executable,
+            "installed_at": installed.installed_at,
+            "installed": True,
+        }
+        message = f"Installed managed {installed.name} {installed.version}."
+        data = {"dependency": args.dependency, "runtime": runtime, "notes": notes}
+        if _stream_enabled(args):
+            _stream_result(
+                action=action,
+                job_id=job_id or uuid.uuid4().hex,
+                ok=True,
+                status="completed",
+                message=message,
+                data=data,
+            )
+        elif _json_enabled(args):
+            _emit_json(action=action, ok=True, message=message, data=data)
+        else:
+            print(message)
+        return
+    if args.dependency == "python":
+        message = f"Python {sys.version_info.major}.{sys.version_info.minor} is already provided by the active NASE backend."
+        if _json_enabled(args) or _stream_enabled(args):
+            _emit_json(action=action, ok=True, message=message, data={"dependency": "python", "executable": sys.executable})
+        else:
+            print(message)
+        return
     try:
         command = dependency_install_command(
             args.dependency,
@@ -626,7 +713,7 @@ def cmd_setup_compatibility_profile(args: argparse.Namespace) -> None:
         if steam_exe.exists():
             steps.append({"name": "install-steam", "status": "ok"})
         else:
-            winetricks = resolve_executable(args.winetricks, "winetricks")
+            winetricks = _resolve_winetricks(args.winetricks)
             run_step(
                 "install-steam",
                 "Installing Steam...",
@@ -1005,12 +1092,19 @@ def cmd_winecfg(args: argparse.Namespace) -> None:
 
 def cmd_run_winetricks(args: argparse.Namespace) -> None:
     bottle = _resolve_bottle(args)
-    winetricks = resolve_executable(args.winetricks, "winetricks")
+    wine64 = _require_wine64(args)
+    winetricks = _resolve_winetricks(args.winetricks)
     verbs = [verb.strip() for verb in args.verbs.split(",") if verb.strip()]
     if not verbs:
         _json_error(args, action="winetricks", message="At least one winetricks verb is required")
     job_id = _stream_start(action="winetricks", message=f"Running winetricks for {', '.join(verbs)}...") if _stream_enabled(args) else None
-    code, tail = run_winetricks(bottle=bottle, winetricks_path=winetricks, verbs=verbs, unattended=not args.interactive)
+    code, tail = run_winetricks(
+        bottle=bottle,
+        winetricks_path=winetricks,
+        verbs=verbs,
+        unattended=not args.interactive,
+        wine_path=wine64,
+    )
     if code != 0:
         if _stream_enabled(args):
             _stream_result(
@@ -1621,7 +1715,7 @@ def cmd_setup_metal(args: argparse.Namespace) -> None:
             total_steps=total_steps,
         )
 
-    winetricks = resolve_executable(args.winetricks, "winetricks")
+    winetricks = _resolve_winetricks(args.winetricks)
     if not _json_enabled(args):
         print("Installing Steam via winetricks...")
     if _stream_enabled(args):
@@ -1632,6 +1726,7 @@ def cmd_setup_metal(args: argparse.Namespace) -> None:
         verbs=["steam"],
         log_name="02_winetricks_steam.log",
         unattended=not args.interactive,
+        wine_path=wine64,
     )
     if code != 0:
         if _stream_enabled(args):
@@ -2141,10 +2236,11 @@ def cmd_smart_launch_game(args: argparse.Namespace) -> None:
                 ("set-win10", lambda: set_prefix_windows_version(bottle, wine64, "win10")),
                 ("winetricks-steam", lambda: run_winetricks(
                     bottle=bottle,
-                    winetricks_path=resolve_executable(getattr(args, "winetricks", "winetricks"), "winetricks"),
+                    winetricks_path=_resolve_winetricks(getattr(args, "winetricks", "winetricks")),
                     verbs=["steam"],
                     log_name="02_winetricks_steam_d3dmetal.log",
                     unattended=True,
+                    wine_path=wine64,
                 )),
             )
             for step_name, step in setup_steps:
@@ -2865,7 +2961,11 @@ def build_parser() -> argparse.ArgumentParser:
     dependency_cmd.add_argument("--d3dmetal-source", help="Optional D3DMetal source directory")
     dependency_cmd.set_defaults(func=cmd_dependency_status)
     install_dependency_cmd = sub.add_parser("install-host-dependency", help="Install one confirmed host dependency")
-    install_dependency_cmd.add_argument("--dependency", choices=("python", "rosetta", "wine-stable", "winetricks"), required=True)
+    install_dependency_cmd.add_argument(
+        "--dependency",
+        choices=("python", "rosetta", "gstreamer", "wine-stable", "winetricks"),
+        required=True,
+    )
     install_dependency_cmd.add_argument("--confirm-rosetta-license", action="store_true", help="Confirm acceptance of Apple's Rosetta software license")
     install_dependency_cmd.set_defaults(func=cmd_install_host_dependency)
     profile_setup = sub.add_parser("setup-compatibility-profile", help="Prepare a dedicated bottle for a pinned graphics profile")
@@ -3087,6 +3187,7 @@ def main() -> None:
     global _JOB_TARGET
     parser = build_parser()
     args = parser.parse_args()
+    os.environ.update(managed_gstreamer_environment())
 
     _JOB_TARGET = {
         "kind": "external-prefix" if getattr(args, "prefix", None) else "managed-bottle",

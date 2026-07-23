@@ -41,9 +41,15 @@ export NASE_UPDATE_PUBLIC_KEY="BASE64_RAW_ED25519_PUBLIC_KEY"
 scripts/build-app.sh
 ```
 
-The script builds with SwiftPM in release mode, embeds `mysteamwine.py`, the
-Python package, and probe executables, enables the hardened runtime, signs the
-app, verifies it, and creates `dist/NASE-VERSION.dmg`.
+The script builds with SwiftPM in release mode, downloads and verifies the
+architecture-matched pinned Python 3.13 standalone runtime, and embeds it
+alongside `mysteamwine.py`, the Python package, and probe executables. It signs
+the nested Python Mach-O files before enabling the hardened runtime on the
+outer app, verifies the result, and creates `dist/NASE-VERSION.dmg`.
+
+The Python artifact versions, architecture-specific URLs, and SHA-256 values
+live in `scripts/prepare-python-runtime.sh`. Updating Python requires updating
+both architecture pins and running the clean-machine test on both architectures.
 
 ## Notarize and staple
 
@@ -78,9 +84,9 @@ Ed25519 signature and the downloaded DMG's SHA-256 before opening it.
 scripts/clean-machine-test.sh dist/NASE.app
 ```
 
-The test uses an isolated empty `HOME`, verifies bundle structure and signing,
-compiles the bundled backend with system Python, exercises its structured job
-contract, launches the packaged app for five seconds, and runs Gatekeeper when a
+The test uses an isolated empty `HOME` and a system-only `PATH`, verifies bundle
+structure and signing, compiles and exercises the backend with NASE's bundled
+Python, launches the packaged app for five seconds, and runs Gatekeeper when a
 Developer ID signature is present.
 
 Set `NASE_SKIP_LAUNCH_SMOKE=1` only on a headless runner.
@@ -95,7 +101,8 @@ and an Intel Mac if Intel remains supported:
 - Open the DMG and drag NASE into Applications.
 - Confirm Gatekeeper opens it without a security bypass.
 - Confirm first launch opens Setup Wizard automatically.
-- Verify missing Python, Rosetta, Wine, and Winetricks are explained clearly.
+- Verify bundled Python passes preflight without any system Python or Homebrew.
+- Verify missing Rosetta, Wine, and Winetricks are explained clearly.
 - Install the recommended dependencies through the app.
 - Complete DXMT profile setup, Steam login, library discovery, launch, stop, and
   repair.

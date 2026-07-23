@@ -12,8 +12,6 @@ struct SetupWizardSheet: View {
     @State private var dxmtSource: String = ""
     @State private var dxvkSource: String = ""
     @State private var bottleName: String = ""
-    @State private var downloadStatusMessage: String = ""
-    @State private var isDownloadingDXMT: Bool = false
     @State private var showRecommendedBootstrapConfirmation: Bool = false
 
     private let orderedSteps = SetupWizardStep.allCases
@@ -107,6 +105,7 @@ struct SetupWizardSheet: View {
         }
         .frame(width: 980, height: 720)
         .task {
+            model.refreshRuntimeCenter()
             model.refreshDependencyStatus()
             winePath = model.backendContext.winePath
             dxmtSource = model.backendContext.dxmtSource
@@ -119,7 +118,7 @@ struct SetupWizardSheet: View {
                 model.startRecommendedBootstrap(confirmRosettaLicense: true)
             }
         } message: {
-            Text("NASE will install missing required dependencies. On Apple Silicon this confirms Apple's Rosetta license, then installs Python, Wine Stable, Winetricks, and the verified DXMT runtime as needed before preparing the recommended profile.")
+            Text("NASE uses its bundled Python runtime. It will install missing managed Wine Stable, GStreamer, Winetricks, and DXMT components internally. On Apple Silicon this also confirms Apple's Rosetta license when Rosetta is missing.")
         }
     }
 
@@ -158,8 +157,8 @@ struct SetupWizardSheet: View {
                         title: "Install Guidance",
                         lines: [
                             "1. Install Rosetta 2 if needed: `softwareupdate --install-rosetta --agree-to-license`",
-                            "2. Install Wine Stable: `brew install --cask wine-stable`",
-                            "3. Verify: `which wine` and `wine --version`",
+                            "2. Choose Install Recommended Environment to download NASE's checksum-pinned Wine Stable runtime.",
+                            "3. NASE keeps managed Wine under Application Support instead of installing a system cask.",
                         ]
                     )
                 }
@@ -170,8 +169,8 @@ struct SetupWizardSheet: View {
                 guidanceBlock(
                     title: "Install Guidance",
                     lines: [
-                        "Install Winetricks with Homebrew: `brew install winetricks`",
-                        "Verify the install: `winetricks --version`",
+                        "Choose Install Recommended Environment to install NASE's checksum-pinned Winetricks script.",
+                        "No Homebrew installation is required.",
                         "The setup flow uses Winetricks to install Steam into the managed bottle.",
                     ]
                 )
@@ -190,16 +189,14 @@ struct SetupWizardSheet: View {
                         }
                         HStack(spacing: 10) {
                             Button {
-                                Task {
-                                    await downloadDXMT()
-                                }
+                                model.installRecommendedDXMT()
                             } label: {
-                                Label("Download DXMT 0.71", systemImage: "arrow.down.circle")
+                                Label("Install Verified DXMT 0.71", systemImage: "arrow.down.circle")
                             }
                             .buttonStyle(.borderedProminent)
-                            .disabled(isDownloadingDXMT)
+                            .disabled(model.installingRuntimeID != nil)
 
-                            if isDownloadingDXMT {
+                            if model.installingRuntimeID == "dxmt-0.71" {
                                 ProgressView()
                                     .controlSize(.small)
                             }
@@ -219,14 +216,16 @@ struct SetupWizardSheet: View {
                             .foregroundStyle(themeMutedForeground)
                         HStack(spacing: 10) {
                             Button {
-                                Task {
-                                    await downloadDXVK()
+                                if let runtime = model.runtimeCatalog.first(where: {
+                                    $0.id == "dxvk-macos-1.10.3-20230507-repack"
+                                }) {
+                                    model.installManagedRuntime(runtime)
                                 }
                             } label: {
-                                Label("Download DXVK 2.7.1", systemImage: "arrow.down.circle")
+                                Label("Install Verified DXVK-macOS", systemImage: "arrow.down.circle")
                             }
                             .buttonStyle(.bordered)
-                            .disabled(isDownloadingDXMT)
+                            .disabled(model.installingRuntimeID != nil)
                         }
                         statusBlock(lines: model.validateDXVKSourceForWizard(dxvkSource))
                         Button {
@@ -243,15 +242,6 @@ struct SetupWizardSheet: View {
                         .disabled(!canInstallDXVK || model.isBusy)
                     }
 
-                    if !downloadStatusMessage.isEmpty {
-                        Text(downloadStatusMessage)
-                            .font(.subheadline)
-                            .foregroundStyle(themeMutedForeground)
-                            .padding(12)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(themePanelRaised)
-                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    }
                 }
             }
 
@@ -518,50 +508,6 @@ struct SetupWizardSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-    }
-
-    private func appCacheURL() -> URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/MySteamWine", isDirectory: true)
-            .appendingPathComponent("cache", isDirectory: true)
-    }
-
-    private func downloadDXMT() async {
-        isDownloadingDXMT = true
-        downloadStatusMessage = "Downloading DXMT 0.71..."
-        do {
-            let cacheURL = appCacheURL().appendingPathComponent("downloads", isDirectory: true)
-            try FileManager.default.createDirectory(at: cacheURL, withIntermediateDirectories: true)
-            let destinationURL = cacheURL.appendingPathComponent("dxmt-0.71.tar.gz")
-            let remoteURL = URL(string: "https://github.com/3Shain/dxmt/releases/download/v0.71/dxmt-v0.71-builtin.tar.gz")!
-            let (temporaryURL, _) = try await URLSession.shared.download(from: remoteURL)
-            _ = try? FileManager.default.removeItem(at: destinationURL)
-            try FileManager.default.moveItem(at: temporaryURL, to: destinationURL)
-            dxmtSource = destinationURL.path
-            downloadStatusMessage = "DXMT 0.71 downloaded to \(destinationURL.path)"
-        } catch {
-            downloadStatusMessage = "Could not download DXMT automatically. You can still point the wizard at a local archive or folder.\n\(error.localizedDescription)"
-        }
-        isDownloadingDXMT = false
-    }
-
-    private func downloadDXVK() async {
-        isDownloadingDXMT = true
-        downloadStatusMessage = "Downloading pinned DXVK-macOS 1.10.3..."
-        do {
-            let cacheURL = appCacheURL().appendingPathComponent("downloads", isDirectory: true)
-            try FileManager.default.createDirectory(at: cacheURL, withIntermediateDirectories: true)
-            let destinationURL = cacheURL.appendingPathComponent("dxvk-macOS-async-v1.10.3-20230507-repack.tar.gz")
-            let remoteURL = URL(string: "https://github.com/Gcenx/DXVK-macOS/releases/download/v1.10.3-20230507-repack/dxvk-macOS-async-v1.10.3-20230507-repack.tar.gz")!
-            let (temporaryURL, _) = try await URLSession.shared.download(from: remoteURL)
-            _ = try? FileManager.default.removeItem(at: destinationURL)
-            try FileManager.default.moveItem(at: temporaryURL, to: destinationURL)
-            dxvkSource = destinationURL.path
-            downloadStatusMessage = "Pinned DXVK-macOS downloaded to \(destinationURL.path). Runtime Center setup will verify its checksum and paired MoltenVK."
-        } catch {
-            downloadStatusMessage = "Could not download DXVK automatically. You can still point the wizard at a local archive or folder.\n\(error.localizedDescription)"
-        }
-        isDownloadingDXMT = false
     }
 
     private func setupBullet(_ text: String) -> some View {

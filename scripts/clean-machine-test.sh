@@ -8,18 +8,20 @@ fi
 
 app=${1:A}
 backend="$app/Contents/Resources/Backend"
+bundled_python="$app/Contents/Frameworks/Python.framework/bin/python3"
 test_home=$(mktemp -d /tmp/nase-clean-home.XXXXXX)
 
 test -x "$app/Contents/MacOS/SteamWineApp"
 test -f "$app/Contents/Info.plist"
 test -f "$backend/mysteamwine.py"
 test -f "$backend/Tools/DXVKProbe/nase_graphics_probe.exe"
+test -x "$bundled_python"
 plutil -lint "$app/Contents/Info.plist"
 codesign --verify --deep --strict --verbose=2 "$app"
 
-HOME="$test_home" PYTHONPYCACHEPREFIX="$test_home/pycache" /usr/bin/python3 -m compileall -q "$backend/mysteamwine" "$backend/mysteamwine.py"
-HOME="$test_home" /usr/bin/python3 "$backend/mysteamwine.py" --json list-jobs --limit 1 > "$test_home/jobs.json"
-python3 -c 'import json,sys; payload=json.load(open(sys.argv[1])); assert payload["ok"] is True' "$test_home/jobs.json"
+HOME="$test_home" PYTHONPYCACHEPREFIX="$test_home/pycache" "$bundled_python" -m compileall -q "$backend/mysteamwine" "$backend/mysteamwine.py"
+HOME="$test_home" PATH="/usr/bin:/bin:/usr/sbin:/sbin" "$bundled_python" "$backend/mysteamwine.py" --json list-jobs --limit 1 > "$test_home/jobs.json"
+"$bundled_python" -c 'import json,sys; payload=json.load(open(sys.argv[1])); assert payload["ok"] is True' "$test_home/jobs.json"
 
 if [[ ${NASE_SKIP_LAUNCH_SMOKE:-0} != 1 ]]; then
     HOME="$test_home" "$app/Contents/MacOS/SteamWineApp" > "$test_home/app.log" 2>&1 &

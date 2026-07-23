@@ -7,7 +7,7 @@ import subprocess
 import sys
 from typing import Any
 
-from .catalog import list_installed_runtimes
+from .catalog import installed_runtime_executable, list_installed_runtimes
 from .gptk import inspect_gptk_installation
 
 
@@ -67,14 +67,16 @@ def dependency_status(
         )
     )
 
-    python_ok = sys.version_info >= (3, 10)
+    python_ok = (3, 10) <= sys.version_info < (3, 15)
     checks.append(
         _check(
             "ok" if python_ok else "fail",
             "Python",
             f"Python {platform.python_version()} at {sys.executable}.",
             required=True,
-            fix="Install Python 3.10 or newer and select it in Advanced Settings." if not python_ok else None,
+            fix="Use NASE's bundled Python 3.13 runtime or select Python 3.10–3.14 in Advanced Settings."
+            if not python_ok
+            else None,
         )
     )
 
@@ -95,7 +97,30 @@ def dependency_status(
     else:
         checks.append(_check("ok", "Rosetta 2", f"Not required on {machine or 'this Mac' }.", required=False))
 
-    resolved_winetricks = shutil.which(winetricks_path) if "/" not in winetricks_path else winetricks_path
+    installed = {runtime.id: runtime for runtime in list_installed_runtimes()}
+    gstreamer = installed.get("gstreamer-1.28.2-macos-universal")
+    gstreamer_library = (
+        Path(gstreamer.path) / "Versions" / "Current" / "lib" / "libgstreamer-1.0.0.dylib"
+        if gstreamer
+        else None
+    )
+    gstreamer_ok = bool(gstreamer_library and gstreamer_library.is_file())
+    checks.append(
+        _check(
+            "ok" if gstreamer_ok else "fail",
+            "GStreamer 1.28.2",
+            f"Managed framework at {gstreamer.path}." if gstreamer_ok else "The private Wine multimedia runtime is not installed.",
+            required=True,
+            fix="Install the checksum-pinned private GStreamer runtime." if not gstreamer_ok else None,
+        )
+    )
+
+    managed_winetricks = installed_runtime_executable("winetricks-20260125")
+    resolved_winetricks = (
+        str(managed_winetricks)
+        if winetricks_path == "winetricks" and managed_winetricks
+        else shutil.which(winetricks_path) if "/" not in winetricks_path else winetricks_path
+    )
     winetricks_ok = bool(resolved_winetricks and Path(resolved_winetricks).is_file())
     checks.append(
         _check(
@@ -119,7 +144,6 @@ def dependency_status(
         )
     )
 
-    installed = {runtime.id: runtime for runtime in list_installed_runtimes()}
     dxmt = installed.get("dxmt-0.71")
     checks.append(
         _check(
@@ -159,29 +183,14 @@ def dependency_status(
     }
 
 
-def homebrew_path() -> Path | None:
-    resolved = shutil.which("brew")
-    if resolved:
-        return Path(resolved)
-    for candidate in (Path("/opt/homebrew/bin/brew"), Path("/usr/local/bin/brew")):
-        if candidate.is_file():
-            return candidate
-    return None
-
-
 def dependency_install_command(dependency: str, *, confirm_rosetta_license: bool = False) -> list[str]:
     if dependency == "rosetta":
         if not confirm_rosetta_license:
             raise RuntimeError("Rosetta installation requires explicit acceptance of Apple's software license.")
         return ["/usr/sbin/softwareupdate", "--install-rosetta", "--agree-to-license"]
 
-    brew = homebrew_path()
-    if brew is None:
-        raise RuntimeError("Homebrew is required for automatic installation. Install Homebrew or import the dependency manually.")
-    if dependency == "wine-stable":
-        return [str(brew), "install", "--cask", "wine-stable"]
-    if dependency == "winetricks":
-        return [str(brew), "install", "winetricks"]
+    if dependency in {"gstreamer", "wine-stable", "winetricks"}:
+        raise RuntimeError(f"{dependency} is a managed NASE runtime and must be installed through the runtime catalog.")
     if dependency == "python":
-        return [str(brew), "install", "python"]
+        raise RuntimeError("Python is bundled inside NASE and is not installed as a host dependency.")
     raise RuntimeError(f"Unsupported host dependency: {dependency}")

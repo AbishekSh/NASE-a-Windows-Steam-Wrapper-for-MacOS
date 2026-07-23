@@ -42,17 +42,24 @@ swift build
 
 ## Host Requirements
 
-Install these on the Mac side before first setup:
+The distributed app bundles its own signed Python 3.13 runtime. The recommended
+DXMT setup downloads checksum-pinned Wine Stable 11, a private GStreamer
+framework, Winetricks, and DXMT into NASE's Application Support directory, so
+Homebrew and system package installers are not consumer dependencies. Rosetta 2
+remains an Apple-managed prerequisite on Apple Silicon and always requires
+explicit license confirmation.
 
-- `wine-stable 11.0` recommended
-- `winetricks`
-- Rosetta 2 on Apple Silicon
-- GStreamer.framework when using managed Gcenx Wine builds
-- D3DMetal payloads as needed by the graphics mode you choose
+D3DMetal and DXVK-macOS are optional advanced profiles. Their licensed
+D3DMetal/MoltenVK framework payloads must be imported from a compatible local
+installation; NASE does not silently download or redistribute those payloads.
 
 Settings → System Readiness checks these dependencies using structured backend results. Required DXMT components are separated from optional GPTK support, and every missing required component includes a suggested fix.
 
-Missing dependencies now expose explicit **Fix** actions. Python, Wine Stable, and Winetricks installations show the exact Homebrew-backed operation before running; after installing Python, NASE automatically selects Homebrew's supported `python3` instead of continuing to use an outdated Xcode Python. Rosetta requires a separate confirmation that accepts Apple's software license, and DXMT continues through the checksum-verified Runtime Center installer. Readiness checks themselves remain read-only.
+Missing managed dependencies expose explicit **Fix** actions. Wine Stable,
+Winetricks, and DXMT use the checksum-verified Runtime Center installer. Python
+comes from the signed app bundle rather than the host, and Rosetta requires a
+separate confirmation that accepts Apple's software license. Readiness checks
+themselves remain read-only.
 
 The **Recommended Gaming Environment** action completes the full bootstrap in dependency order. It installs only missing required components, automatically selects Wine Stable and the verified DXMT source, rescans before continuing, creates the dedicated `-DXMT` profile bottle, installs Steam, and opens Steam for sign-in. A failed run keeps completed work, shows the failing step, and can be retried after opening the profile-specific logs.
 

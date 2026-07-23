@@ -3,8 +3,10 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 import hashlib
 import json
+import os
 import shutil
 import subprocess
+import sys
 import tarfile
 import time
 import urllib.request
@@ -47,6 +49,45 @@ StepCallback = Callable[[str, str, str], None]
 
 
 CATALOG: tuple[RuntimeCatalogEntry, ...] = (
+    RuntimeCatalogEntry(
+        id="gstreamer-1.28.2-macos-universal",
+        name="GStreamer Runtime",
+        version="1.28.2",
+        kind="media-runtime",
+        source="GStreamer",
+        download_url="https://gstreamer.freedesktop.org/data/pkg/osx/1.28.2/gstreamer-1.0-1.28.2-universal.pkg",
+        sha256="964ff693002aaa69b2908f79967609b424ddc61210849e1afe5e8d8810f68b91",
+        archive_type="pkg",
+        install_layout="gstreamer-framework",
+        license="LGPL-2.1-or-later and bundled component licenses",
+        notes="Private GStreamer framework matching the pinned Wine Stable 11 build; extracted without a system installer.",
+    ),
+    RuntimeCatalogEntry(
+        id="winetricks-20260125",
+        name="Winetricks",
+        version="20260125",
+        kind="tool",
+        source="Winetricks/winetricks",
+        download_url="https://raw.githubusercontent.com/Winetricks/winetricks/20260125/src/winetricks",
+        sha256="431f82fc74000e6c864409f1d8fb495d696c03928808e3e8acffc45179312a7b",
+        archive_type="script",
+        install_layout="tool-script",
+        license="LGPL-2.1-or-later",
+        notes="Pinned Winetricks script used by every managed compatibility profile without requiring Homebrew.",
+    ),
+    RuntimeCatalogEntry(
+        id="wine-stable-11.0_1-gcenx",
+        name="Wine Stable",
+        version="11.0 update 1",
+        kind="wine",
+        source="Gcenx/macOS_Wine_builds",
+        download_url="https://github.com/Gcenx/macOS_Wine_builds/releases/download/11.0_1/wine-stable-11.0_1-osx64.tar.xz",
+        sha256="b50dc50ec7f41d58b115a6b685d4d1315ba3c797bd3aa0f49213f2703cb82388",
+        archive_type="tar.xz",
+        install_layout="gcenx-wine",
+        license="LGPL-2.1-or-later",
+        notes="Checksum-pinned Wine Stable 11 runtime managed entirely inside NASE app support.",
+    ),
     RuntimeCatalogEntry(
         id="gogdl-1.2.2-macos-arm64",
         name="GOG Download Client",
@@ -214,6 +255,39 @@ def list_installed_runtimes() -> list[InstalledRuntime]:
     return runtimes
 
 
+def installed_runtime_executable(runtime_id: str) -> Path | None:
+    for runtime in list_installed_runtimes():
+        if runtime.id == runtime_id and runtime.executable:
+            executable = Path(runtime.executable)
+            if executable.is_file():
+                return executable
+    return None
+
+
+def managed_gstreamer_environment() -> dict[str, str]:
+    runtime = next(
+        (item for item in list_installed_runtimes() if item.id == "gstreamer-1.28.2-macos-universal"),
+        None,
+    )
+    if runtime is None:
+        return {}
+    framework = Path(runtime.path)
+    current = framework / "Versions" / "Current"
+    libraries = framework / "Libraries"
+    plugins = current / "lib" / "gstreamer-1.0"
+    scanner = current / "libexec" / "gstreamer-1.0" / "gst-plugin-scanner"
+    environment = {
+        "GST_PLUGIN_SYSTEM_PATH": str(plugins),
+        "GST_PLUGIN_SCANNER": str(scanner),
+        "GIO_EXTRA_MODULES": str(current / "lib" / "gio" / "modules"),
+    }
+    existing_fallback = os.environ.get("DYLD_FALLBACK_LIBRARY_PATH", "")
+    environment["DYLD_FALLBACK_LIBRARY_PATH"] = ":".join(
+        item for item in (str(libraries), existing_fallback) if item
+    )
+    return environment
+
+
 def _write_installed_runtimes(runtimes: list[InstalledRuntime]) -> None:
     path = installed_state_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -235,16 +309,31 @@ def _download(entry: RuntimeCatalogEntry, callback: StepCallback | None = None) 
     file_name = entry.download_url.rsplit("/", 1)[-1]
     destination = downloads_root() / file_name
     if destination.exists() and destination.stat().st_size > 0:
-        if callback:
-            callback("download", "ok", f"Using cached download {destination.name}.")
-        return destination
+        try:
+            _verify(destination, entry.sha256, callback)
+        except ValueError:
+            destination.unlink(missing_ok=True)
+            if callback:
+                callback("download", "started", f"Discarded corrupt cached download {destination.name}.")
+        else:
+            if callback:
+                callback("download", "ok", f"Using verified cached download {destination.name}.")
+            return destination
 
     if callback:
         callback("download", "started", f"Downloading {entry.name} {entry.version}...")
-    with urllib.request.urlopen(entry.download_url) as response, destination.open("wb") as handle:
-        shutil.copyfileobj(response, handle)
+    partial = destination.with_name(destination.name + ".partial")
+    partial.unlink(missing_ok=True)
+    try:
+        with urllib.request.urlopen(entry.download_url, timeout=120) as response, partial.open("wb") as handle:
+            shutil.copyfileobj(response, handle)
+        _verify(partial, entry.sha256, callback)
+        partial.replace(destination)
+    except BaseException:
+        partial.unlink(missing_ok=True)
+        raise
     if callback:
-        callback("download", "ok", f"Downloaded {destination.name}.")
+        callback("download", "ok", f"Downloaded and verified {destination.name}.")
     return destination
 
 
@@ -365,16 +454,16 @@ def _install_legendary_venv(archive: Path, entry: RuntimeCatalogEntry, callback:
         if check.returncode == 0 and "0.20.34" in (check.stdout or check.stderr):
             return destination, str(executable)
         shutil.rmtree(destination)
-    python = next(
-        (path for name in ("python3.13", "python3.12", "python3.11", "python3.10") if (path := shutil.which(name))),
-        None,
-    )
-    if not python:
-        raise RuntimeError("Legendary requires Homebrew Python 3.10–3.13. Install Python from NASE setup, then retry.")
+    python = sys.executable
+    if sys.version_info < (3, 10) or sys.version_info >= (3, 15):
+        raise RuntimeError(
+            f"Legendary requires NASE Python 3.10–3.14; the active backend is Python "
+            f"{sys.version_info.major}.{sys.version_info.minor} at {python}."
+        )
     destination.parent.mkdir(parents=True, exist_ok=True)
     if callback:
         callback("extract", "started", "Creating a native managed Legendary environment...")
-    subprocess.run([python, "-m", "venv", str(destination)], check=True, capture_output=True, text=True, timeout=120)
+    subprocess.run([python, "-m", "venv", "--copies", str(destination)], check=True, capture_output=True, text=True, timeout=120)
     pip = destination / "bin" / "pip"
     result = subprocess.run(
         [str(pip), "install", "--disable-pip-version-check", str(archive)],
@@ -417,6 +506,98 @@ def _install_source_client_binary(
     return destination, str(executable)
 
 
+def _install_tool_script(
+    archive: Path, entry: RuntimeCatalogEntry, callback: StepCallback | None
+) -> tuple[Path, str]:
+    destination = runtime_root() / entry.kind / entry.id
+    executable = destination / "bin" / "winetricks"
+    destination.mkdir(parents=True, exist_ok=True)
+    executable.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(archive, executable)
+    executable.chmod(0o755)
+    check = subprocess.run([str(executable), "--version"], capture_output=True, text=True, check=False, timeout=30)
+    version = (check.stdout or check.stderr).strip()
+    if check.returncode != 0 or entry.version not in version:
+        shutil.rmtree(destination, ignore_errors=True)
+        raise RuntimeError(f"Unexpected Winetricks version: {version or 'unknown'}")
+    if callback:
+        callback("extract", "ok", f"Installed the verified {entry.name} script.")
+    return destination, str(executable)
+
+
+def _merge_tree(source: Path, destination: Path) -> None:
+    destination.mkdir(parents=True, exist_ok=True)
+    for item in source.iterdir():
+        target = destination / item.name
+        if item.is_symlink():
+            if target.is_symlink() or target.is_file():
+                target.unlink()
+            elif target.is_dir():
+                shutil.rmtree(target)
+            target.symlink_to(item.readlink())
+        elif item.is_dir():
+            if target.is_symlink() or target.is_file():
+                target.unlink()
+            _merge_tree(item, target)
+        else:
+            if target.is_symlink() or target.is_file():
+                target.unlink()
+            elif target.is_dir():
+                shutil.rmtree(target)
+            shutil.copy2(item, target)
+
+
+def _install_gstreamer_framework(
+    archive: Path, entry: RuntimeCatalogEntry, callback: StepCallback | None
+) -> tuple[Path, None]:
+    destination = runtime_root() / entry.kind / entry.id / "GStreamer.framework"
+    versioned_library = destination / "Versions" / "Current" / "lib" / "libgstreamer-1.0.0.dylib"
+    if versioned_library.is_file():
+        return destination, None
+
+    package_root = destination.parent.with_name(destination.parent.name + ".pkg-expand")
+    staging = destination.parent.with_name(destination.parent.name + ".tmp")
+    shutil.rmtree(package_root, ignore_errors=True)
+    shutil.rmtree(staging, ignore_errors=True)
+    package_root.parent.mkdir(parents=True, exist_ok=True)
+    if callback:
+        callback("extract", "started", "Extracting the private GStreamer framework...")
+    result = subprocess.run(
+        ["/usr/sbin/pkgutil", "--expand-full", str(archive), str(package_root)],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=600,
+    )
+    if result.returncode != 0:
+        shutil.rmtree(package_root, ignore_errors=True)
+        raise RuntimeError(f"Could not extract GStreamer package: {(result.stderr or result.stdout).strip()}")
+    framework_payload = next(package_root.glob("osx-framework-*.pkg/Payload"), None)
+    if framework_payload is None:
+        shutil.rmtree(package_root, ignore_errors=True)
+        raise RuntimeError("GStreamer package did not contain its framework payload.")
+    staging.mkdir(parents=True, exist_ok=True)
+    staged_framework = staging / "GStreamer.framework"
+    shutil.copytree(framework_payload, staged_framework, symlinks=True)
+    version_root = staged_framework / "Versions" / "1.0"
+    for component in sorted(package_root.glob("*.pkg")):
+        payload = component / "Payload"
+        if payload == framework_payload or not payload.is_dir():
+            continue
+        _merge_tree(payload, version_root)
+    staged_library = staged_framework / "Versions" / "Current" / "lib" / "libgstreamer-1.0.0.dylib"
+    if not staged_library.is_file():
+        shutil.rmtree(package_root, ignore_errors=True)
+        shutil.rmtree(staging, ignore_errors=True)
+        raise RuntimeError("Extracted GStreamer framework is missing libgstreamer-1.0.0.dylib.")
+    shutil.rmtree(destination.parent, ignore_errors=True)
+    staging.replace(destination.parent)
+    shutil.rmtree(package_root, ignore_errors=True)
+    if callback:
+        callback("extract", "ok", "Installed the private GStreamer framework.")
+    return destination, None
+
+
 def _record_install(entry: RuntimeCatalogEntry, path: Path, executable: str | None) -> InstalledRuntime:
     runtimes = [runtime for runtime in list_installed_runtimes() if runtime.id != entry.id]
     installed = InstalledRuntime(
@@ -444,11 +625,14 @@ def install_runtime(
 ) -> tuple[InstalledRuntime, list[str]]:
     entry = _catalog_entry(runtime_id)
     archive = _download(entry, callback)
-    _verify(archive, entry.sha256, callback)
     if entry.install_layout == "legendary-python-venv":
         extracted, executable = _install_legendary_venv(archive, entry, callback)
     elif entry.install_layout == "source-client-binary":
         extracted, executable = _install_source_client_binary(archive, entry, callback)
+    elif entry.install_layout == "tool-script":
+        extracted, executable = _install_tool_script(archive, entry, callback)
+    elif entry.install_layout == "gstreamer-framework":
+        extracted, executable = _install_gstreamer_framework(archive, entry, callback)
     else:
         extracted = _extract(archive, entry, callback)
         executable = _find_wine_executable(extracted) if entry.kind == "wine" else None

@@ -777,7 +777,7 @@ struct SettingsSheet: View {
                                 Text("Installing…").font(.caption.weight(.semibold))
                             }
                             .foregroundStyle(themeMutedForeground)
-                        } else if check.status == "fail" {
+                        } else if check.status == "fail", dependencyID != nil {
                             Button("Fix") {
                                 beginDependencyInstall(for: check.name)
                             }
@@ -801,11 +801,13 @@ struct SettingsSheet: View {
         case "rosetta":
             return "NASE will run Apple's Rosetta installer. Continuing explicitly accepts Apple's software license agreement."
         case "wine-stable":
-            return "NASE will ask Homebrew to install the Wine Stable cask and its dependencies. Homebrew currently marks this cask as deprecated because it does not pass Gatekeeper checks."
+            return "NASE will download, checksum-verify, and install its pinned Wine Stable 11 runtime inside NASE app support."
+        case "gstreamer":
+            return "NASE will download and extract the checksum-pinned private GStreamer framework required by managed Wine. It will not run a system package installer."
         case "winetricks":
-            return "NASE will ask Homebrew to install Winetricks and its required packages."
+            return "NASE will download and checksum-verify its pinned Winetricks script inside NASE app support."
         case "python":
-            return "NASE will ask Homebrew to install the current supported Python 3 release, then select its python3 executable for the backend."
+            return "Python is bundled with NASE. Reinstall NASE if its private runtime is unavailable."
         default:
             return "NASE will install the selected dependency."
         }
@@ -832,12 +834,14 @@ struct SettingsSheet: View {
         case "Wine Stable 11":
             pendingDependencyInstall = "wine-stable"
             showDependencyConfirmation = true
+        case "GStreamer 1.28.2":
+            pendingDependencyInstall = "gstreamer"
+            showDependencyConfirmation = true
         case "Winetricks":
             pendingDependencyInstall = "winetricks"
             showDependencyConfirmation = true
         case "Python":
-            pendingDependencyInstall = "python"
-            showDependencyConfirmation = true
+            break
         default:
             break
         }
@@ -848,8 +852,9 @@ struct SettingsSheet: View {
         case "DXMT 0.71": "dxmt-0.71"
         case "Rosetta 2": "rosetta"
         case "Wine Stable 11": "wine-stable"
+        case "GStreamer 1.28.2": "gstreamer"
         case "Winetricks": "winetricks"
-        case "Python": "python"
+        case "Python": nil
         default: nil
         }
     }

@@ -74,6 +74,13 @@ enum BackendDebugSection: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+enum BackendPreflightState: Equatable {
+    case unchecked
+    case checking
+    case bootstrapRequired
+    case ready
+}
+
 @MainActor
 @Observable
 final class AppViewModel {
@@ -160,6 +167,7 @@ final class AppViewModel {
     private(set) var gogSetupMessage: String = "Checking GOG setup…"
     private(set) var installingDependencyID: String?
     private(set) var installingRuntimeID: String?
+    private(set) var backendPreflightState: BackendPreflightState = .unchecked
     private(set) var nativeApps: [LibraryGame] = []
     private(set) var wineApps: [LibraryGame] = []
     private(set) var pinnedGameIDs: [String] = []
@@ -232,18 +240,6 @@ final class AppViewModel {
         wineRuntimes = loadWineRuntimes()
         refreshWineRuntimes()
         selectedGame = nil
-        launchSessionMonitor = Task { [weak self] in
-            while !Task.isCancelled {
-                guard let self else { return }
-                self.refreshLaunchSessions()
-                do {
-                    try await Task.sleep(for: .seconds(5))
-                } catch {
-                    return
-                }
-            }
-        }
-        refreshBackendJobs()
         if !UserDefaults.standard.bool(forKey: "onboarding.hasSeenSetupWizard") {
             isShowingSetupWizard = true
         }
@@ -818,6 +814,7 @@ final class AppViewModel {
     }
 
     func refreshRuntimeCenter() {
+        guard backendPreflightState == .ready else { return }
         let context = backendContext
         Task.detached(priority: .userInitiated) {
             do {
@@ -838,6 +835,7 @@ final class AppViewModel {
     }
 
     func refreshDependencyStatus() {
+        guard backendPreflightState == .ready else { return }
         let context = effectiveBackendContext()
         Task.detached(priority: .utility) {
             do {
@@ -874,6 +872,11 @@ final class AppViewModel {
 
     func startRecommendedBootstrap(confirmRosettaLicense: Bool) {
         guard !isDependencyBootstrapRunning else { return }
+        guard backendPreflightState == .ready else {
+            dependencyBootstrapPhase = .failed
+            dependencyBootstrapMessage = "The NASE backend must pass preflight before setup can begin."
+            return
+        }
         dependencyBootstrapPhase = .checking
         dependencyBootstrapMessage = "Checking required components..."
         dependencyBootstrapProgress = 0.05
@@ -884,7 +887,7 @@ final class AppViewModel {
                 let initial = try await BackendBridge.execute(.dependencyStatus, context: initialContext)
                 let checks = initial.structured?.checks ?? []
                 let missing = Set(checks.filter { $0.required && $0.status == "fail" }.map(\.name))
-                let unsupported = missing.intersection(["macOS"])
+                let unsupported = missing.intersection(["macOS", "Python"])
                 if !unsupported.isEmpty {
                     throw NSError(
                         domain: "SteamWineApp.DependencyBootstrap",
@@ -901,8 +904,10 @@ final class AppViewModel {
                 }
 
                 var completed = 0
-                var workingContext = initialContext
-                let installCount = ["Python", "Rosetta 2", "Winetricks", "Wine Stable 11", "DXMT 0.71"].filter(missing.contains).count
+                let workingContext = initialContext
+                var managedWinePath: String?
+                let installCount = ["Rosetta 2", "GStreamer 1.28.2", "Winetricks", "Wine Stable 11", "DXMT 0.71"]
+                    .filter(missing.contains).count
                 func report(_ message: String, completedSteps: Int) async {
                     await MainActor.run {
                         self.dependencyBootstrapPhase = .installing
@@ -911,22 +916,17 @@ final class AppViewModel {
                     }
                 }
 
-                if missing.contains("Python") {
-                    await report("Installing a supported Python 3...", completedSteps: completed)
-                    _ = try await BackendBridge.execute(.installHostDependency(id: "python", confirmLicense: false), context: workingContext)
-                    guard let pythonPath = await MainActor.run(body: { self.detectInstalledPythonPath() }) else {
-                        throw NSError(
-                            domain: "SteamWineApp.DependencyBootstrap",
-                            code: 5,
-                            userInfo: [NSLocalizedDescriptionKey: "Python 3.10 or newer was not found after installation."]
-                        )
-                    }
-                    workingContext = workingContext.overridingPythonCommand(pythonPath)
-                    completed += 1
-                }
                 if missing.contains("Rosetta 2") {
                     await report("Installing Rosetta 2...", completedSteps: completed)
                     _ = try await BackendBridge.execute(.installHostDependency(id: "rosetta", confirmLicense: true), context: workingContext)
+                    completed += 1
+                }
+                if missing.contains("GStreamer 1.28.2") {
+                    await report("Downloading and verifying private GStreamer...", completedSteps: completed)
+                    _ = try await BackendBridge.execute(
+                        .installHostDependency(id: "gstreamer", confirmLicense: false),
+                        context: workingContext
+                    )
                     completed += 1
                 }
                 if missing.contains("Winetricks") {
@@ -935,12 +935,17 @@ final class AppViewModel {
                     completed += 1
                 }
                 if missing.contains("Wine Stable 11") {
-                    await report("Installing Wine Stable 11...", completedSteps: completed)
-                    _ = try await BackendBridge.execute(.installHostDependency(id: "wine-stable", confirmLicense: false), context: workingContext)
+                    await report("Downloading and verifying managed Wine Stable 11...", completedSteps: completed)
+                    let response = try await BackendBridge.execute(
+                        .installHostDependency(id: "wine-stable", confirmLicense: false),
+                        context: workingContext
+                    )
+                    managedWinePath = response.runtimes.first(where: { $0.id == "wine-stable-11.0_1-gcenx" })?.executable
                     completed += 1
                 }
 
-                let winePath = await MainActor.run { self.detectInstalledWineStablePath() }
+                let detectedWinePath = await MainActor.run { self.detectInstalledWineStablePath() }
+                let winePath = managedWinePath ?? detectedWinePath
                 guard let winePath else {
                     throw NSError(
                         domain: "SteamWineApp.DependencyBootstrap",
@@ -1197,6 +1202,7 @@ final class AppViewModel {
     func detectedWinetricksPath() -> String? {
         let fileManager = FileManager.default
         let commonPaths = [
+            "\(NSHomeDirectory())/Library/Application Support/MySteamWine/runtimes/tool/winetricks-20260125/bin/winetricks",
             "/opt/homebrew/bin/winetricks",
             "/usr/local/bin/winetricks",
             "/opt/local/bin/winetricks",
@@ -2132,12 +2138,45 @@ final class AppViewModel {
 
     func initialLoad() {
         refreshWineRuntimes()
-        performInitialSetupIfNeeded()
-        if !hasAttemptedSteamDetection, !isActionRunning(.listGames) {
-            refreshSteamGames(announce: false)
+        guard backendPreflightState == .unchecked else { return }
+        backendPreflightState = .checking
+        let context = backendContext
+        Task {
+            let backendReady = await BackendBridge.preflight(context: context)
+            guard backendReady else {
+                backendPreflightState = .bootstrapRequired
+                isShowingSetupWizard = true
+                rightPanelMessage = "The bundled NASE backend is unavailable. Reinstall NASE or select a supported Python runtime in Advanced Settings."
+                appendLog("Backend preflight failed before source refresh.")
+                return
+            }
+            backendPreflightState = .ready
+            startBackendServices()
+            refreshRuntimeCenter()
+            refreshDependencyStatus()
+            performInitialSetupIfNeeded()
+            if !hasAttemptedSteamDetection, !isActionRunning(.listGames) {
+                refreshSteamGames(announce: false)
+            }
+            refreshEpicLibrary(forceRefresh: false)
+            refreshGOGLibrary(forceRefresh: false)
         }
-        refreshEpicLibrary(forceRefresh: false)
-        refreshGOGLibrary(forceRefresh: false)
+    }
+
+    private func startBackendServices() {
+        guard launchSessionMonitor == nil else { return }
+        refreshBackendJobs()
+        launchSessionMonitor = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                self.refreshLaunchSessions()
+                do {
+                    try await Task.sleep(for: .seconds(5))
+                } catch {
+                    return
+                }
+            }
+        }
     }
 
     func testSettings(winePath: String, dxmtSource: String, bottleName: String, externalPrefix: String?, useExternalPrefix: Bool) -> String {
@@ -3408,11 +3447,16 @@ final class AppViewModel {
                         self.refreshLaunchSessions()
                     }
                     if case .installHostDependency(let dependencyID, _) = action {
-                        if dependencyID == "python", let pythonPath = self.detectInstalledPythonPath() {
-                            self.backendContext = self.backendContext.overridingPythonCommand(pythonPath)
+                        if dependencyID == "wine-stable",
+                           let winePath = response.runtimes.first(where: { $0.id == "wine-stable-11.0_1-gcenx" })?.executable {
+                            self.backendContext = self.contextAdoptingWineStable(
+                                winePath,
+                                baseContext: self.backendContext
+                            )
                             self.backendContext.persist()
-                            self.rightPanelMessage = "Installed Python and selected \(pythonPath)."
+                            self.rightPanelMessage = "Installed and selected managed Wine Stable 11."
                         }
+                        self.refreshRuntimeCenter()
                         self.refreshWineRuntimes()
                         self.refreshDependencyStatus()
                         self.installingDependencyID = nil

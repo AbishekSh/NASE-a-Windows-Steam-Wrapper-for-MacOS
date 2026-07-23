@@ -20,13 +20,32 @@ bin_dir=$(swift build -c "$configuration" --show-bin-path)
 if [[ -e "$app_path" ]]; then
     rm -rf -- "$app_path"
 fi
-mkdir -p "$app_path/Contents/MacOS" "$app_path/Contents/Resources/Backend"
+mkdir -p "$app_path/Contents/MacOS" "$app_path/Contents/Resources/Backend" "$app_path/Contents/Frameworks"
 cp "$bin_dir/SteamWineApp" "$app_path/Contents/MacOS/SteamWineApp"
 cp release/Info.plist "$app_path/Contents/Info.plist"
 cp "assets/NASE App Logo.icns" "$app_path/Contents/Resources/NASE App Logo.icns"
 cp mysteamwine.py "$app_path/Contents/Resources/Backend/mysteamwine.py"
 cp -R mysteamwine "$app_path/Contents/Resources/Backend/mysteamwine"
 cp -R Tools "$app_path/Contents/Resources/Backend/Tools"
+python_runtime=$(scripts/prepare-python-runtime.sh)
+python_framework="$app_path/Contents/Frameworks/Python.framework"
+cp -R "$python_runtime" "$python_framework"
+mkdir -p "$python_framework/Resources"
+cp release/PythonRuntime-Info.plist "$python_framework/Resources/Info.plist"
+cp "$python_framework/lib/libpython3.13.dylib" "$python_framework/Python"
+find "$python_framework/bin" -type f ! -name python3.13 -delete
+find "$python_framework/bin" -type l ! -name python ! -name python3 -delete
+rm -rf -- \
+    "$python_framework/lib/tcl9" \
+    "$python_framework/lib/tcl9.0" \
+    "$python_framework/lib/tk9.0" \
+    "$python_framework/lib/thread3.0.4" \
+    "$python_framework/lib/itcl4.3.5" \
+    "$python_framework/lib/python3.13/tkinter"
+rm -f -- \
+    "$python_framework/lib/libtcl9.0.dylib" \
+    "$python_framework/lib/libtcl9tk9.0.dylib" \
+    "$python_framework/lib/python3.13/lib-dynload/_tkinter.cpython-313-darwin.so"
 
 resource_bundle=$(find "$bin_dir" -maxdepth 1 -type d -name 'SteamWineApp_*.bundle' -print -quit)
 if [[ -n "$resource_bundle" ]]; then
@@ -40,6 +59,14 @@ fi
 /usr/libexec/PlistBuddy -c "Set :NASEUpdatePublicKey $update_key" "$app_path/Contents/Info.plist"
 
 find "$app_path/Contents/Resources/Backend" -type d -name __pycache__ -prune -exec rm -rf {} +
+while IFS= read -r executable; do
+    if /usr/bin/file "$executable" | /usr/bin/grep -q 'Mach-O'; then
+        codesign --force --timestamp --options runtime --sign "$sign_identity" "$executable"
+    elif [[ -x "$executable" ]]; then
+        chmod a-x "$executable"
+    fi
+done < <(find "$python_framework" -type f)
+codesign --force --timestamp --options runtime --sign "$sign_identity" "$python_framework"
 codesign --force --timestamp --options runtime --entitlements release/NASE.entitlements --sign "$sign_identity" "$app_path"
 codesign --verify --deep --strict --verbose=2 "$app_path"
 

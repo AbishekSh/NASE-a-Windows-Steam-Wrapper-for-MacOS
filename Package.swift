@@ -17,5 +17,10 @@ let package = Package(
                 .process("Resources"),
             ]
         ),
+        .testTarget(
+            name: "SteamWineAppTests",
+            dependencies: ["SteamWineApp"],
+            path: "Tests/SteamWineAppTests"
+        ),
     ]
 )

@@ -279,10 +279,20 @@ struct BackendContext {
         } else {
             repoRoot = sourceRepoRoot
         }
+        let bundledPython = Bundle.main.bundleURL
+            .appendingPathComponent("Contents/Frameworks/Python.framework/bin/python3")
+        let storedPython = defaults.string(forKey: BackendSettingsKey.pythonCommand)
+        let bundledPythonIsAvailable = FileManager.default.isExecutableFile(atPath: bundledPython.path)
+        let defaultPython: String
+        if bundledPythonIsAvailable, storedPython == nil || storedPython == "python3" {
+            defaultPython = bundledPython.path
+        } else {
+            defaultPython = storedPython ?? "python3"
+        }
 
         return BackendContext(
             repoRoot: repoRoot,
-            pythonCommand: defaults.string(forKey: BackendSettingsKey.pythonCommand) ?? "python3",
+            pythonCommand: defaultPython,
             winePath: defaults.string(forKey: BackendSettingsKey.winePath) ?? "/opt/homebrew/bin/wine",
             dxmtSource: defaults.string(forKey: BackendSettingsKey.dxmtSource) ?? "\(NSHomeDirectory())/Downloads/dxmt",
             dxvkSource: defaults.string(forKey: BackendSettingsKey.dxvkSource) ?? "\(NSHomeDirectory())/Downloads/dxvk",
@@ -540,8 +550,35 @@ enum BackendBridge {
     }
 
     static func preview(_ action: BackendAction, context: BackendContext) -> String {
-        (["python3", "mysteamwine.py"] + arguments(for: action, context: context))
+        ([context.pythonCommand, "mysteamwine.py"] + arguments(for: action, context: context))
             .joined(separator: " ")
+    }
+
+    static func preflight(context: BackendContext) async -> Bool {
+        let script = context.repoRoot.appendingPathComponent("mysteamwine.py")
+        guard FileManager.default.fileExists(atPath: script.path) else { return false }
+        let process = Process()
+        if context.pythonCommand.contains("/") {
+            guard FileManager.default.isExecutableFile(atPath: context.pythonCommand) else { return false }
+            process.executableURL = URL(fileURLWithPath: context.pythonCommand)
+            process.arguments = ["-c", "import sys; raise SystemExit(0 if (3, 10) <= sys.version_info < (3, 15) else 1)"]
+        } else {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            process.arguments = [
+                context.pythonCommand,
+                "-c",
+                "import sys; raise SystemExit(0 if (3, 10) <= sys.version_info < (3, 15) else 1)",
+            ]
+        }
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        } catch {
+            return false
+        }
     }
 
     static func execute(_ action: BackendAction, context: BackendContext) async throws -> BackendResponse {
@@ -555,8 +592,13 @@ enum BackendBridge {
     ) async throws -> BackendResponse {
         let process = Process()
         process.currentDirectoryURL = context.repoRoot
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = [context.pythonCommand, "mysteamwine.py"] + arguments(for: action, context: context)
+        if context.pythonCommand.contains("/") {
+            process.executableURL = URL(fileURLWithPath: context.pythonCommand)
+            process.arguments = ["mysteamwine.py"] + arguments(for: action, context: context)
+        } else {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            process.arguments = [context.pythonCommand, "mysteamwine.py"] + arguments(for: action, context: context)
+        }
 
         let output = Pipe()
         process.standardOutput = output
@@ -594,7 +636,7 @@ enum BackendBridge {
         return result
     }
 
-    private static func arguments(for action: BackendAction, context: BackendContext) -> [String] {
+    static func arguments(for action: BackendAction, context: BackendContext) -> [String] {
         let base = context.targetArguments + ["--wine", context.winePath, "--jsonl"]
 
         switch action {
@@ -684,8 +726,7 @@ enum BackendBridge {
         case .doctorFix:
             return base + ["doctor", "--fix", "--dxmt-source", context.dxmtSource]
         case .runWinetricks(let verbs, let interactive):
-            return context.targetArguments
-                + ["--jsonl"]
+            return base
                 + ["winetricks", "--verbs", verbs.joined(separator: ",")]
                 + (interactive ? ["--interactive"] : [])
         case .installDXMT:
@@ -711,7 +752,7 @@ enum BackendBridge {
         case .listInstalledRuntimes:
             return context.targetArguments + ["--jsonl", "list-installed-runtimes"]
         case .installRuntime(let id):
-            return base + ["install-runtime", "--runtime", id]
+            return base + ["install-runtime", "--runtime", id, "--no-bottle-install"]
         case .launchGame(let appid):
             return base + ["--graphics-backend", GraphicsBackendOption.dxmt.cliValue, "--compatibility-profile", GraphicsBackendOption.dxmt.compatibilityProfileID, "launch-game", "--appid", appid, "--dxmt-source", context.dxmtSource, "--no-wait"]
         case .smartLaunchGame(let appid, let graphicsBackend):

@@ -388,6 +388,10 @@ struct ManagedRuntime: Identifiable, Codable, Hashable {
             return "DXMT"
         case "d3dmetal":
             return "D3DMetal"
+        case "media-runtime":
+            return "Media"
+        case "tool":
+            return "Tool"
         case "source-client":
             return "Store Client"
         default:
